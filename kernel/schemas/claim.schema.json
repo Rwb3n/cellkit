@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cellkit/claim/0.1",
+  "title": "Claim",
+  "description": "One statement, from one observation, about one or more subjects. The base kinds below are what the kit itself uses; add your project's kinds to the enum and give each an allOf rule (see README: 'Your ontology').",
+  "type": "object",
+  "required": ["about", "kind", "says", "from", "voice"],
+  "additionalProperties": false,
+  "properties": {
+    "about": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^((thing|party|voice):[^ ]+|claim:[0-9]{6})$" },
+      "description": "Subjects: thing:…, party:…, voice:…, or an earlier claim (claim:000412)."
+    },
+    "kind": {
+      "enum": ["fact", "opinion", "same-as", "part-of", "relation", "rule", "hypothesis", "check"],
+      "description": "Base kinds. Extend for your domain."
+    },
+    "says": { "description": "The statement. String or structured." },
+    "from": { "type": "string", "pattern": "^[0-9]{6}$", "description": "The observation this claim was read from." },
+    "voice": { "type": "string", "minLength": 1, "description": "Who said it. Agreement should count distinct voices, never posts or checks." },
+    "by": { "type": "string", "pattern": "^voice:model/[^ ]+$", "description": "The model that wrote the claim down, when the speaker is someone else." },
+    "valid_from": { "type": "string", "format": "date-time" },
+    "valid_until": { "type": "string", "format": "date-time" },
+    "sure": { "type": "number", "minimum": 0, "maximum": 1 },
+    "status": { "enum": ["guess", "some", "evidence", "refuted"], "description": "Only for kind=hypothesis." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["same-as", "part-of", "relation"] } } },
+      "then": { "properties": { "about": { "minItems": 2 } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "hypothesis" } } },
+      "then": {
+        "required": ["status"],
+        "properties": { "says": { "type": "object", "anyOf": [{ "required": ["statement"] }, { "required": ["note"] }] } }
+      },
+      "else": { "not": { "required": ["status"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "check" } } },
+      "then": {
+        "properties": {
+          "about": { "minItems": 1, "maxItems": 1, "items": { "pattern": "^claim:[0-9]{6}$" } },
+          "voice": { "pattern": "^voice:model/[^ ]+$" },
+          "says": {
+            "type": "object",
+            "required": ["p"],
+            "additionalProperties": false,
+            "properties": { "p": { "type": "number", "minimum": 0, "maximum": 1 }, "question": { "type": "string" } }
+          }
+        }
+      }
+    }
+  ]
+}

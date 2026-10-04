@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cellkit/observation/0.1",
+  "title": "Observation",
+  "description": "One thing that came in through a cell's entry. Never edited.",
+  "type": "object",
+  "required": ["source", "observed_at", "reliability", "licence"],
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "type": "object",
+      "required": ["adapter"],
+      "additionalProperties": false,
+      "properties": {
+        "adapter": { "type": "string", "description": "which entry adapter brought it in, e.g. operator, claude, kernel, an API name" },
+        "provider": { "type": "string" },
+        "capability": { "type": "string" }
+      }
+    },
+    "url": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "reliability": { "type": "array", "items": { "type": "string" }, "description": "The source's own flags, verbatim. Empty = none stated." },
+    "licence": {
+      "type": "object",
+      "required": ["store"],
+      "additionalProperties": false,
+      "properties": {
+        "store": { "enum": ["full", "link-only"], "description": "link-only: append strips the payload before it reaches disk." },
+        "note": { "type": "string" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": ["amount", "unit"],
+      "additionalProperties": false,
+      "properties": { "amount": { "type": "number", "minimum": 0 }, "unit": { "type": "string" } }
+    },
+    "ids": { "type": "object", "additionalProperties": { "type": "string" }, "description": "External identifiers, kept even under link-only." },
+    "payload": { "description": "The content. Absent when stripped." },
+    "payload_stripped": { "type": "boolean" }
+  }
+}

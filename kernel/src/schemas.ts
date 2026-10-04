@@ -1,0 +1,32 @@
+// Loads the kernel's JSON Schemas once and exposes validators.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import type { Ajv2020 as Ajv2020Class, ErrorObject } from 'ajv/dist/2020.js';
+import type { FormatsPlugin } from 'ajv-formats';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const schemaDir = join(here, '..', 'schemas');
+const load = (name: string) => JSON.parse(readFileSync(join(schemaDir, name), 'utf8'));
+
+// ajv ships CommonJS; load it with require so the class and plugin keep their types.
+const require = createRequire(import.meta.url);
+const { Ajv2020 } = require('ajv/dist/2020.js') as { Ajv2020: typeof Ajv2020Class };
+const addFormats = require('ajv-formats') as FormatsPlugin;
+
+const ajv = new Ajv2020({ allErrors: true, strict: false });
+addFormats(ajv);
+
+export const validators = {
+  envelope: ajv.compile(load('envelope.schema.json')),
+  observation: ajv.compile(load('observation.schema.json')),
+  claim: ajv.compile(load('claim.schema.json')),
+};
+
+export type Kind = 'observation' | 'claim';
+
+export function check(kind: 'envelope' | Kind, value: unknown): string[] {
+  const v = validators[kind];
+  return v(value) ? [] : (v.errors ?? []).map((e: ErrorObject) => `${kind}${e.instancePath} ${e.message}`);
+}

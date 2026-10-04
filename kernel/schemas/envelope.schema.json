@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cellkit/envelope/0.1",
+  "title": "Log entry envelope",
+  "description": "Every log entry. Written only by kernel append. Append-only, hash-chained (bedrock rules 1, 7, 8).",
+  "type": "object",
+  "required": ["id", "kind", "at", "cell", "prev", "causes", "hash", "body"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^[0-9]{6}$", "description": "Gapless sequence within the cell." },
+    "kind": { "enum": ["observation", "claim"], "description": "The two entry kinds. Claim kinds live in claim.schema.json." },
+    "at": { "type": "string", "format": "date-time", "description": "When the entry was appended." },
+    "cell": { "type": "string", "minLength": 1 },
+    "prev": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$", "description": "Hash of the previous entry; null only for 000001." },
+    "causes": { "type": "array", "items": { "type": "string", "pattern": "^[0-9]{6}$" }, "description": "Entries that led to this one." },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "sha256 over canonical JSON of the entry without this field." },
+    "body": { "type": "object" }
+  }
+}

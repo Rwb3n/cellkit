@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
+
+# Rebuilt locally from the log — never committed (every cell: **/)
+**/state/views/
+**/state/out/*
+!**/state/out/.gitkeep
+
+# Cell mail is transient; the log is the record
+cells/*/inbox/
+cells/*/outbox/
+cells/*/data/
