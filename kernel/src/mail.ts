@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { append } from './log.ts';
 
 export type MailKind = 'task' | 'reply' | 'blocked' | 'question' | 'done';
 export interface Message { id: string; kind: MailKind; from: string; to: string; at: string; body: string; reply_to?: string }
@@ -58,7 +59,23 @@ export function send(fromDir: string, to: string, body: string, kind: MailKind =
   const text = JSON.stringify(m, null, 2) + '\n';
   writeFileSync(join(inbox(toDir), `${m.id}.json`), text, { flag: 'wx' });
   writeFileSync(join(sent(resolve(fromDir)), `${m.id}.json`), text, { flag: 'wx' });
+  logMail(resolve(fromDir), m);   // the files are transport; the log is the record — on both sides
+  logMail(toDir, m);
   return m;
+}
+
+// One observation per message, on a box's own log. Two sessions (root and a cell's Stop hook) can append to the same
+// log at once; the kernel's `wx` refuses a clash, so re-read and retry.
+function logMail(dir: string, m: Message): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      append(dir, { kind: 'observation', body: { source: { adapter: 'kernel', provider: 'mail', capability: 'mail' }, observed_at: m.at, reliability: [], licence: { store: 'full' },
+        payload: { id: m.id, kind: m.kind, from: m.from, to: m.to, ...(m.reply_to ? { reply_to: m.reply_to } : {}), body: m.body } } });
+      return;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= 5) throw e;
+    }
+  }
 }
 
 // Take unread mail from a box (marks it read). --for narrows to replies to one message.

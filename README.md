@@ -111,7 +111,7 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 
 - One writer per cell at a time. `append` re-reads the log; bulk adapters use `writer(cell)`.
 - Log files are one JSON file per entry: fine to tens of thousands, then it needs a packed format.
-- Mail isn't on the log yet (it's transient files; the log is the record).
+- Mail is on the log: every message is an observation on both sides; the files are transport.
 - The Bash guard is a heuristic; `lint` (hash chain + bedrock hashes) is the backstop.
 - A cell's Claude session also loads parent-folder CLAUDE.md files. Keep the root's CLAUDE.md a pointer.
 

@@ -63,3 +63,21 @@ test('mail: a cell may raise blocked/question/done to root, and nothing else', (
   assert.throws(() => send(root, 'c1', 'fine', 'reply'), MailError);     // root sends tasks
   assert.throws(() => send(root, 'nope', 'x'), MailError);               // unknown cell
 });
+
+test('mail is on the log: every message is an observation on the sender\'s and the recipient\'s log, body included', async () => {
+  const { readLog } = await import('../src/log.ts');
+  const { lint } = await import('../src/lint.ts');
+  const { root, c1 } = world();
+  const t = send(root, 'c1', 'count the places');
+  stop(c1, 'started');                // hands t over
+  stop(c1, '445 places');             // files the reply
+  const mailOn = (dir: string) => readLog(dir).filter((e) => (e.body as { source: { capability?: string } }).source?.capability === 'mail').map((e) => (e.body as { payload: { id: string; kind: string; body: string; reply_to?: string } }).payload);
+  const r = mailOn(root), c = mailOn(c1);
+  assert.deepEqual(r.map((m) => m.kind), ['task', 'reply']);
+  assert.deepEqual(c.map((m) => m.kind), ['task', 'reply']);
+  assert.equal(r[0].id, t.id);
+  assert.equal(c[1].reply_to, t.id);
+  assert.equal(c[1].body, '445 places');
+  assert.deepEqual(lint(root).errors, []);
+  assert.deepEqual(lint(c1).errors, []);
+});
