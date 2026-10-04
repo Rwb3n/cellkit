@@ -17,7 +17,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" fold && node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" lint" }
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" cell sync && node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" lint" }
         ]
       }
     ]

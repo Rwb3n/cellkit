@@ -96,3 +96,27 @@ test('cell new: born by script with brief, hooks, mailboxes, first entries, and 
   assert.deepEqual(lint(dir).errors, []);
   assert.throws(() => cellNew(root, { name: 'lisbon', binding: b }), AppendError);
 });
+
+test('cell sync: root records a cell\'s head + published numbers once per move; lint catches a cell log changed under it', async () => {
+  const { cellNew, cellSync, foldCells } = await import('../src/cell.ts');
+  const { rmSync, mkdirSync: mk } = await import('node:fs');
+  const root = freshCell();
+  writeFileSync(join(root, 'b.json'), JSON.stringify({ scope: { city: 'X' } }));
+  cellNew(root, { name: 'c1', binding: join(root, 'b.json') });
+  const dir = join(root, 'cells', 'c1');
+  const o = append(dir, { kind: 'observation', body: obs() });
+  assert.equal(o.cell, 'c1');
+  mk(join(dir, 'state', 'out'), { recursive: true });
+  writeFileSync(join(dir, 'state', 'out', 'metrics.json'), JSON.stringify({ ranked: 7, note: 'ignored, not a number' }));
+  cellSync(root);
+  const c = foldCells(readLog(root)).c1;
+  assert.equal(c.entries, 4);
+  assert.equal((c.summary as { ranked: number }).ranked, 7);
+  assert.equal((c.summary as { note?: string }).note, undefined);
+  const n = readLog(root).length;
+  cellSync(root);
+  assert.equal(readLog(root).length, n);
+  assert.deepEqual(lint(root).errors, []);
+  rmSync(join(dir, 'state', 'log', '000004.observation.json'));
+  assert.ok(lint(root).errors.some((m) => m.includes('no longer in its log')));
+});

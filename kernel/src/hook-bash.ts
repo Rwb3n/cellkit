@@ -22,6 +22,10 @@ if (/cli\.ts["']?\s+approve\b/.test(command)) {
   block('bedrock approval is the operator\'s. Ask them to run it from their prompt: ! node kernel/src/cli.ts approve --doc <doc>');
 }
 
+if (/cli\.ts["']?\s+review\s+decide\b/.test(command)) {
+  block('review decisions are the operator\'s. Ask them to run it from their prompt: ! node kernel/src/cli.ts review decide --cell <cell> --id R-NNNN --yes|--no');
+}
+
 const protectedPath = /(state[\\/](log|views|bedrock|out)[\\/]|docs[\\/]assumptions\.md)/;
 const writes = /((^|[^=\-0-9])>>?(?!&)|\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync)/;
 // `git rm --cached` only untracks; it never changes or deletes the files themselves.

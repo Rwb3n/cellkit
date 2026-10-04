@@ -29,13 +29,15 @@ function lastAnswer(): string {
 
 fileReply(cell, lastAnswer());
 
-const waitS = Number(process.env.CELLKIT_MAIL_WAIT ?? process.env.CARNET_MAIL_WAIT ?? 1800);
+const waitS = Number(process.env.CELLKIT_MAIL_WAIT ?? 1800);
 const until = Date.now() + waitS * 1000;
 let m = takeNext(cell);
 while (!m && Date.now() < until) { await new Promise((r) => setTimeout(r, 3000)); m = takeNext(cell); }
 
 if (m) {
-  const reason = `📬 Mail ${m.id} from ${m.from} (${m.at}). Do what it asks inside this cell, then end your turn with your answer — your final message is sent back as the reply automatically; don't write any reply file yourself.\n\n${m.body}`;
+  const reason = `📬 Task ${m.id} from ${m.from} (${m.at}). Do what it asks inside this cell, then end your turn with your answer — your final message is sent back as the reply automatically; don't write any reply file yourself.\n` +
+    `Blocked or need root to decide something before you can go on? Send it and end your turn (root's answer arrives as your next task):\n` +
+    `  node "${process.env.CLAUDE_PROJECT_DIR ?? '.'}/../../kernel/src/mail.ts" send --to root --kind blocked|question --body "…"\n\n${m.body}`;
   console.log(JSON.stringify({ decision: 'block', reason }));
 }
 process.exit(0);

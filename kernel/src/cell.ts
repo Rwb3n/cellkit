@@ -2,9 +2,11 @@
 //   cells/<name>/  AGENTS.md · CLAUDE.md · .claude/settings.json · binding.json · adapters/ · state/log/ · inbox/ · outbox/
 // Its log opens with "born" + its binding (as a rule claim); the parent's log records the birth and the child's head.
 // Rules flow down: a cell has no bedrock of its own and can't amend the parent's.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
-import { AppendError, readLog, writer } from './log.ts';
+import { AppendError, readLog, writer, type Entry } from './log.ts';
+import { fold } from './fold.ts';
+import { foldReviews } from './review.ts';
 
 // A binding is the cell's domain: its scope plus whatever your project needs (registries, thresholds, vocabularies…).
 export interface Binding { name: string; scope: Record<string, string>; [k: string]: unknown }
@@ -18,11 +20,27 @@ const agentsMd = (b: Binding, toRoot: string) => `# cell: ${b.name}
 
 A cell: \`(state, input) → (state′, output)\`. Born by \`kernel/src/cli.ts cell new\`; regenerate this file with \`cell refresh\`.
 
-- **Binding:** [\`binding.json\`](binding.json) — scope ${Object.entries(b.scope).map(([k, v]) => `${k} ${v}`).join(' · ')}.
-- **Rules flow down** from the root: [\`${toRoot}/state/bedrock/\`](${toRoot}/state/bedrock/). This cell has no bedrock and can't amend the root's.
+## Read first
+
+1. [\`MODEL.md\`](MODEL.md) — **this cell's model** (write it if it's missing): what it holds, what comes in, what leaves, its tests, where it stands.
+2. **The project's model** (read-only, flows down from root):
+${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md']).map((r) => `   - [\`${r}\`](${toRoot}/${r})`).join('\n')}
+3. [\`binding.json\`](binding.json) — scope ${Object.entries(b.scope).map(([k, v]) => `${k} ${v}`).join(' · ')}.
+
+## Boundary
+
+- **You write only inside this folder** (hook-enforced): \`adapters/\` (entry), \`exit/\` (exit code), \`test/\`, \`MODEL.md\`, \`state/out/\`. Your log is written only through the kernel.
+- **Read-only above you:** \`${toRoot}/kernel/\`, root bedrock and docs, other cells.
+- **Need a kernel or root change?** Don't work around it — say so (what, why, smallest change). Root decides.
+- **The rule says no, the evidence says probably yes?** Raise a review proposing ONE exact claim with its evidence: \`node ${toRoot}/kernel/src/cli.ts review raise --cell . --file r.json\` (\`{ question, proposes: { about, kind, says }, evidence }\`). Root is mailed; only the operator decides.
+- **Done means tested:** your tests, the kernel's (\`cd ${toRoot}/kernel && npm test\`), then fold + lint. Keep \`MODEL.md\` current. Publish numbers in \`state/out/metrics.json\` (\`{ name: number }\`); root's \`cell sync\` records them.
+- Rules flow down from the root: [\`${toRoot}/state/bedrock/\`](${toRoot}/state/bedrock/). This cell has no bedrock and can't amend the root's.
+
+## How it runs
+
 - **Entry:** \`adapters/\` — the only code that brings the world in. **Exit:** \`state/out/\`.
 - **Memory:** \`state/log/\` (append-only, kernel-written) → \`state/views/\` (folded, not committed).
-- **Mail:** \`inbox/\` → you · \`outbox/\` → root. A Stop hook runs the loop: when you end a turn it sends your final answer back as the reply, waits for the next message (up to 30 min) and gives it to you as your next instruction. Never write mail files yourself. To start the loop, end a turn (e.g. say "waiting for mail").
+- **Mail:** tasks from root arrive in \`inbox/\`. A Stop hook runs the loop: when you end a turn it sends your final answer to root as the reply, waits for the next task (up to 30 min) and gives it to you as your next instruction. Never write mail files yourself. Blocked, or need root to decide? \`node ${toRoot}/kernel/src/mail.ts send --to root --kind blocked|question --body "…"\`, then end your turn. You can only write to root. To start the loop, end a turn (e.g. say "waiting for mail").
 
 \`\`\`
 node ${toRoot}/kernel/src/cli.ts fold --cell .
@@ -88,4 +106,66 @@ export function cellNew(parent: string, o: { name?: string; binding?: string }):
   const po = P.append({ kind: 'observation', body: obs({ cell: `cells/${o.name}`, head }) });
   const pc = P.append({ kind: 'claim', body: { about: [`thing:cell/${o.name}`], kind: 'fact', says: { born: now, path: `cells/${o.name}`, head, scope: b.scope }, from: po.id, voice: 'voice:kernel' } });
   return [`cells/${o.name} (3 entries)`, po.id, pc.id];
+}
+
+// ── reporting up: root learns each cell's state without reading its log ─────────────
+// `cell sync` appends, per cell whose head or published numbers moved, one observation + one fact about thing:cell/<name>:
+// { synced, head, entries, summary } (summary = fold counts + the cell's state/out/metrics.json). Root's lint checks every
+// recorded head still exists in that cell's log — so a cell log rewritten after a sync is caught.
+export interface CellPicture { name: string; path: string; head: string; entries?: number; synced?: string; born?: string; summary?: Record<string, unknown>; entry: string }
+
+export function foldCells(log: Entry[]): Record<string, CellPicture> {
+  const out: Record<string, CellPicture> = {};
+  for (const e of log) {
+    if (e.kind !== 'claim') continue;
+    const b = e.body as { about: string[]; kind: string; says: { born?: string; synced?: string; path?: string; head?: string; entries?: number; summary?: Record<string, unknown> } };
+    const s = b.about.find((a) => a.startsWith('thing:cell/'));
+    if (!s || b.kind !== 'fact' || !b.says?.head) continue;
+    const name = s.slice('thing:cell/'.length);
+    out[name] = { ...(out[name] ?? {}), name, path: b.says.path ?? out[name]?.path ?? `cells/${name}`, head: b.says.head, entry: e.id,
+      ...(b.says.born ? { born: b.says.born } : {}), ...(b.says.synced ? { synced: b.says.synced, entries: b.says.entries, summary: b.says.summary } : {}) };
+  }
+  return out;
+}
+
+export function cellSync(parent: string, o: { name?: string } = {}): string[] {
+  const dir = join(parent, 'cells');
+  const names = (o.name ? [o.name] : existsSync(dir) ? readdirSync(dir) : []).filter((n) => existsSync(join(dir, n, 'binding.json')));
+  const known = foldCells(readLog(parent));
+  const P = writer(parent);
+  const out: string[] = [];
+  for (const n of names) {
+    const cdir = join(dir, n);
+    const log = readLog(cdir);
+    const head = log.at(-1)?.hash;
+    if (!head) continue;
+    const p = fold(log);
+    const mpath = join(cdir, 'state', 'out', 'metrics.json');
+    const published = existsSync(mpath) ? Object.fromEntries(Object.entries(JSON.parse(readFileSync(mpath, 'utf8')) as Record<string, unknown>).filter(([, v]) => typeof v === 'number')) : {};
+    const summary = { ...published, observations: p.summary.observations, claims: p.summary.claims, reviews_open: Object.values(foldReviews(log)).filter((r) => r.status === 'open').length };
+    if (known[n]?.head === head && JSON.stringify(known[n]?.summary) === JSON.stringify(summary)) continue;
+    const now = new Date().toISOString();
+    const ob = P.append({ kind: 'observation', body: { source: { adapter: 'kernel', capability: 'cell-sync' }, observed_at: now, reliability: [], licence: { store: 'full' }, payload: { cell: `cells/${n}`, head, entries: log.length } } });
+    const c = P.append({ kind: 'claim', body: { about: [`thing:cell/${n}`], kind: 'fact', says: { synced: now, path: `cells/${n}`, head, entries: log.length, summary }, from: ob.id, voice: 'voice:kernel' } });
+    out.push(`${n} @ ${log.length}`, ob.id, c.id);
+  }
+  return out.length ? out : ['(all cells already in sync)'];
+}
+
+export function lintCells(parent: string, log: Entry[]): string[] {
+  const errors: string[] = [];
+  const recorded = new Map<string, Set<string>>();
+  for (const e of log) {
+    if (e.kind !== 'claim') continue;
+    const b = e.body as { about: string[]; kind: string; says?: { head?: string } };
+    const s = b.about.find((a) => a.startsWith('thing:cell/'));
+    if (s && b.kind === 'fact' && b.says?.head) (recorded.get(s.slice(10)) ?? recorded.set(s.slice(10), new Set()).get(s.slice(10))!).add(b.says.head);
+  }
+  for (const [n, heads] of recorded) {
+    const cdir = join(parent, 'cells', n);
+    if (!existsSync(cdir)) { errors.push(`cells/${n}: recorded in the log but missing on disk`); continue; }
+    const hashes = new Set(readLog(cdir).map((x) => x.hash));
+    for (const h of heads) if (!hashes.has(h)) errors.push(`cells/${n}: recorded head ${h.slice(0, 19)}… is no longer in its log (rewritten?)`);
+  }
+  return errors;
 }

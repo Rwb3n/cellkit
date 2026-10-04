@@ -10,8 +10,10 @@
 //   register   --doc <doc> --layer meta  (a doc that predates the guard)
 //   cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script
 //   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
+//   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
+//   review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (OPERATOR ONLY)
 //   fold · lint
-// Mail between cells has its own CLI: node kernel/src/mail.ts send|recv|status --cell cells/<name>
+// Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
 // Every write refolds: state/views/* and docs/assumptions.md (generated; hook-blocked).
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -22,7 +24,9 @@ import { lint } from './lint.ts';
 import { writeDocs } from './render.ts';
 import { assume, constraint, evidence } from './generators.ts';
 import { amend, approve, bedrockDir, foldBedrock, register } from './bedrock.ts';
-import { cellNew, cellRefresh } from './cell.ts';
+import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
+import { decide, foldReviews, raise } from './review.ts';
+import { isCell, send as sendMail } from './mail.ts';
 import type { Kind } from './schemas.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -35,7 +39,8 @@ function refold(): number {
   const log = readLog(cell);
   const p = fold(log);
   writeViews(cell, p);
-  writeFileSync(join(cell, 'state', 'views', 'bedrock.json'), JSON.stringify(foldBedrock(log), null, 2) + '\n', 'utf8');
+  for (const [name, v] of Object.entries({ bedrock: foldBedrock(log), reviews: foldReviews(log), cells: foldCells(log) }))
+    writeFileSync(join(cell, 'state', 'views', `${name}.json`), JSON.stringify(v, null, 2) + '\n', 'utf8');
   if (cell === repoRoot) { mkdirSync(join(repoRoot, 'docs'), { recursive: true }); writeDocs(repoRoot, p); }
   console.log(JSON.stringify(p.summary));
   return 0;
@@ -79,9 +84,35 @@ function main(): number {
       return write(() => (cmd === 'amend' ? amend(cell, o) : cmd === 'approve' ? approve(cell, o) : register(cell, o)));
     }
     case 'cell':
+      if (rest[0] === 'sync') return write(() => cellSync(cell, { name: opt('name') }));
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }
       if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name>'); return 2; }
       return write(() => cellNew(cell, { name: opt('name'), binding: opt('binding') }));
+    case 'review': {
+      const name = (d: string) => (d === repoRoot ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);
+      if (rest[0] === 'raise') {
+        const r = JSON.parse(readFileSync(opt('file') ?? 0, 'utf8'));
+        let id = '';
+        const code = write(() => { const x = raise(cell, { ...r, voice: r.voice ?? (isCell(cell) ? `voice:cell/${name(cell)}` : 'voice:root') }); id = x.id; return [x.id, ...x.entries]; });
+        if (!code && isCell(cell)) sendMail(cell, 'root', `Review ${id} raised: ${r.question}\nOperator decides from their own prompt (review decide --cell cells/${name(cell)} --id ${id} --yes|--no).`, 'question');
+        return code;
+      }
+      if (rest[0] === 'decide') return write(() => decide(cell, { id: opt('id'), yes: rest.includes('--yes') ? true : rest.includes('--no') ? false : undefined, note: opt('note') }));
+      if (rest[0] === 'list') {
+        const cellsDir = join(repoRoot, 'cells');
+        const all = rest.includes('--all') ? [repoRoot, ...(existsSync(cellsDir) ? readdirSync(cellsDir).map((c) => join(cellsDir, c)).filter(isCell) : [])] : [cell];
+        let n = 0;
+        for (const c of all) for (const r of Object.values(foldReviews(readLog(c)))) {
+          if (r.status !== 'open' && !rest.includes('--decided')) continue;
+          n++;
+          console.log(`${r.id} · ${name(c)} · ${r.status} · ${r.question}\n   proposes: ${String(r.proposes.kind)} ${JSON.stringify(r.proposes.about)} — ${JSON.stringify(r.proposes.says)}\n   evidence: ${JSON.stringify(r.evidence)}`);
+        }
+        if (!n) console.log('(no open reviews)');
+        return 0;
+      }
+      console.error('usage: review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (operator only)');
+      return 2;
+    }
     case 'fold':
       return refold();
     case 'lint': {

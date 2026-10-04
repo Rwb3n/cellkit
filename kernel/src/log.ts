@@ -16,6 +16,16 @@ export interface Entry {
 }
 
 export const logDir = (cellDir: string) => join(cellDir, 'state', 'log');
+
+// The envelope's `cell`: a cell's name comes from its binding.json; anything else is the root.
+const names = new Map<string, string>();
+export function cellName(cellDir: string): string {
+  if (!names.has(cellDir)) {
+    const b = join(cellDir, 'binding.json');
+    names.set(cellDir, existsSync(b) ? (JSON.parse(readFileSync(b, 'utf8')) as { name?: string }).name ?? 'root' : 'root');
+  }
+  return names.get(cellDir)!;
+}
 const fileName = (id: string, kind: string) => `${id}.${kind}.json`;
 
 export function readLog(cellDir: string): Entry[] {
@@ -94,7 +104,7 @@ function appendTo(cellDir: string, input: AppendInput, byId: Map<string, Entry>,
     id,
     kind: input.kind,
     at: input.at ?? new Date().toISOString(),
-    cell: input.cell ?? 'root',
+    cell: input.cell ?? cellName(cellDir),
     prev: last ? last.hash : null,
     causes: input.causes ?? [],
     body,

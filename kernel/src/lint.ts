@@ -5,6 +5,7 @@ import { claimRefError, entryHash, logDir, readLog, type Entry } from './log.ts'
 import { viewsDir } from './fold.ts';
 import { check } from './schemas.ts';
 import { lintBedrock } from './bedrock.ts';
+import { lintCells } from './cell.ts';
 
 export interface LintResult { errors: string[]; warnings: string[]; entries: number }
 
@@ -46,6 +47,7 @@ export function lint(cellDir: string): LintResult {
     const b = lintBedrock(cellDir, readLog(cellDir));
     errors.push(...b.errors);
     warnings.push(...b.warnings);
+    errors.push(...lintCells(cellDir, readLog(cellDir))); // every cell head the parent recorded still exists
   }
 
   const summaryPath = join(viewsDir(cellDir), 'summary.json');
