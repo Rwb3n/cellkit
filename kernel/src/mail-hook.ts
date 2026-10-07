@@ -2,9 +2,12 @@
 //   1. the session just stopped → if it was working on a message, file its last answer as the reply (outbox/)
 //   2. wait for the next message in inbox/ (poll every 3 s, up to CELLKIT_MAIL_WAIT seconds; default 1800)
 //   3. a message arrives → block the stop and hand it over as the next instruction; none → let the session stop
+//   A session opened in the wrong checkout (worktree.ts `misplaced`) files any in-flight reply but is handed no new
+//   mail, so the queue waits for the session in the cell's own worktree.
 // Input (stdin): { cwd, transcript_path, last_assistant_message?, stop_hook_active, … }.
 import { readFileSync, existsSync } from 'node:fs';
 import { fileReply, takeNext } from './mail.ts';
+import { misplaced } from './worktree.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -28,6 +31,9 @@ function lastAnswer(): string {
 }
 
 fileReply(cell, lastAnswer());
+
+const wrong = misplaced(cell);
+if (wrong) { console.error(wrong); process.exit(0); }
 
 const waitS = Number(process.env.CELLKIT_MAIL_WAIT ?? 1800);
 const until = Date.now() + waitS * 1000;

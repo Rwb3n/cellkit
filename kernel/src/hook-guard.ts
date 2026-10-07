@@ -6,6 +6,7 @@
 
 import { existsSync } from 'node:fs';
 import { posix } from 'node:path';
+import { misplaced } from './worktree.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -23,7 +24,11 @@ const path = (input.tool_input?.file_path ?? input.tool_input?.notebook_path ?? 
 // Cell boundary: a session running in a cell (its project dir has a binding.json) writes only inside that cell.
 // Everything above it — kernel, root bedrock, root docs, other cells — is read-only from here; ask root by reply.
 const project = (process.env.CLAUDE_PROJECT_DIR ?? '').replaceAll('\\', '/').replace(/\/+$/, '');
+// A cell session opened in the wrong checkout (worktree.ts) writes nothing at all. Writes from a cell's worktree into
+// the main checkout or another worktree need no extra rule: they are outside the cell's folder.
 if (project && existsSync(`${project}/binding.json`)) {
+  const wrong = misplaced(project);
+  if (wrong) { console.error(`Blocked: ${wrong}`); process.exit(2); }
   const abs = posix.normalize(/^[a-zA-Z]:\//.test(path) || path.startsWith('/') ? path : `${project}/${path}`).toLowerCase(); // no ../ escapes
   if (!abs.startsWith(project.toLowerCase() + '/')) {
     console.error(`Blocked: ${path} is outside this cell (${project}). A cell writes only inside its own folder; if the kernel or root docs need a change, say so in your reply.`);

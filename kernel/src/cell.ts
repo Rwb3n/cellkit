@@ -1,5 +1,5 @@
 // Cell birth. A cell is born by script, never by hand:
-//   cells/<name>/  AGENTS.md · CLAUDE.md · .claude/settings.json · binding.json · adapters/ · state/log/ · inbox/ · outbox/
+//   cells/<name>/  AGENTS.md · CLAUDE.md · .claude/settings.json · binding.json · adapters/ · state/log/ — and a mailbox (mail.ts: under the git common dir, else inbox/ · outbox/ here)
 // Its log opens with "born" + its binding (as a rule claim); the parent's log records the birth and the child's head.
 // Rules flow down: a cell has no bedrock of its own and can't amend the parent's.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { AppendError, readLog, writer, type Entry } from './log.ts';
 import { fold } from './fold.ts';
 import { foldReviews } from './review.ts';
+import { ensure as ensureMailbox } from './mail.ts';
 
 // A binding is the cell's domain: its scope plus whatever your project needs (registries, thresholds, vocabularies…).
 export interface Binding { name: string; scope: Record<string, string>; [k: string]: unknown }
@@ -40,7 +41,13 @@ ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md'
 
 - **Entry:** \`adapters/\` — the only code that brings the world in. **Exit:** \`state/out/\`.
 - **Memory:** \`state/log/\` (append-only, kernel-written) → \`state/views/\` (folded, not committed).
-- **Mail:** tasks from root arrive in \`inbox/\`. A Stop hook runs the loop: when you end a turn it sends your final answer to root as the reply, waits for the next task (up to 30 min) and gives it to you as your next instruction. Never write mail files yourself. Blocked, or need root to decide? \`node ${toRoot}/kernel/src/mail.ts send --to root --kind blocked|question --body "…"\`, then end your turn. You can only write to root. To start the loop, end a turn (e.g. say "waiting for mail").
+- **Mail:** tasks from root arrive in your mailbox (under the repository's \`.git/cellkit-mail/\`, shared with root; not in this folder). A Stop hook runs the loop: when you end a turn it sends your final answer to root as the reply, waits for the next task (up to 30 min, or as \`CELLKIT_MAIL_WAIT\` says) and gives it to you as your next instruction. Never write mail files yourself. Make each final message a complete reply: what you did, files changed, test results, anything root must decide. Blocked, or need root to decide? \`node ${toRoot}/kernel/src/mail.ts send --to root --kind blocked|question --body "…"\`, then end your turn. You can only write to root. To start the loop, end a turn (e.g. say "waiting for mail").
+
+## Your worktree
+
+- You work in your own git worktree, on branch \`cell/${b.name}\`: nothing you change touches the main checkout or another cell until root merges it. Your log here travels on your branch; root-log writes (mail to root) land in the main checkout's log automatically.
+- **Don't run git commands that write** (commit, merge, checkout, reset, stash). Root verifies your work, commits it on your branch, merges it, and merges main into your branch between tasks (that is how kernel changes reach you: your hooks run the kernel copy on your branch). Root's \`cell audit\` fails on any change outside this folder.
+- **Opened in the wrong checkout** (the main checkout's copy of this folder, or another cell's worktree)? The hooks refuse every write and no mail is handed over; the message says where to reopen. End your turn.
 
 \`\`\`
 node ${toRoot}/kernel/src/cli.ts fold --cell .
@@ -65,7 +72,8 @@ const settings = (toRoot: string) => {
 
 // The generated parts of a cell (brief, hooks, mailboxes). Re-run by `cell refresh` when the kit's template changes.
 function scaffold(dir: string, b: Binding, toRoot: string) {
-  for (const d of ['.claude', 'inbox/read', 'outbox/read']) mkdirSync(join(dir, d), { recursive: true });
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  ensureMailbox(dir);
   writeFileSync(join(dir, 'AGENTS.md'), agentsMd(b, toRoot));
   writeFileSync(join(dir, 'CLAUDE.md'), '# CLAUDE.md\n\nRead [`AGENTS.md`](AGENTS.md) in this folder.\n');
   writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify(settings(toRoot), null, 2) + '\n');
@@ -76,11 +84,12 @@ export function cellRefresh(parent: string, o: { name?: string }): string[] {
   const b = readBinding(dir);
   if (!o.name || !b) throw new AppendError(`no cell cells/${o.name ?? ''} with a binding.json`);
   scaffold(dir, b, relative(dir, parent).replaceAll('\\', '/'));
-  return [`cells/${o.name}: AGENTS.md, CLAUDE.md, .claude/settings.json, inbox/, outbox/ regenerated`];
+  return [`cells/${o.name}: AGENTS.md, CLAUDE.md, .claude/settings.json regenerated; mailbox ready`];
 }
 
 export function cellNew(parent: string, o: { name?: string; binding?: string }): string[] {
   if (!o.name || !/^[a-z0-9-]+$/.test(o.name)) throw new AppendError('cell new needs --name (lowercase, digits, dashes)');
+  if (o.name === 'root') throw new AppendError('a cell can\'t be named root (that name is the root\'s mailbox)');
   const b: Binding = { scope: {}, ...(o.binding ? JSON.parse(readFileSync(o.binding, 'utf8')) : {}), name: o.name };
   const dir = join(parent, 'cells', o.name);
   if (existsSync(dir)) throw new AppendError(`cells/${o.name} already exists`);

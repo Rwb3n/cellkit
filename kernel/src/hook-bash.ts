@@ -3,7 +3,12 @@
 //    (`! node kernel/src/cli.ts approve --doc …`), which does not pass through this hook.
 // 2. The agent may not write kernel-owned paths with shell tricks (redirects, sed -i, cp, mv, rm, tee).
 //    Heuristic — lint (hash chain + bedrock hashes) is the backstop at every session start.
+// 3. A cell session opened in the wrong checkout (worktree.ts `misplaced`) may not write: no shell writes, no git, no
+//    kernel CLI command that appends (only fold, lint, review list). Mail to root stays open (`mail.ts send`): it is
+//    logged by box name, never in the wrong checkout's copy of a log.
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
+import { existsSync } from 'node:fs';
+import { misplaced } from './worktree.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -30,6 +35,13 @@ const protectedPath = /(state[\\/](log|views|bedrock|out)[\\/]|docs[\\/]assumpti
 const writes = /((^|[^=\-0-9])>>?(?!&)|\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync)/;
 // `git rm --cached` only untracks; it never changes or deletes the files themselves.
 const viaKernel = /kernel[\\/](src[\\/](cli|mail)\.ts|scripts[\\/])|^\s*git\s+rm\s+(-r\s+)?--cached\b/;
+const project = process.env.CLAUDE_PROJECT_DIR ?? '';
+if (project && existsSync(`${project}/binding.json`)
+  && (writes.test(command) || /\bgit\b/.test(command) || /cli\.ts["']?\s+(?!fold\b|lint\b|review\s+list\b)\S/.test(command))) {
+  const wrong = misplaced(project);
+  if (wrong) block(wrong);
+}
+
 if (protectedPath.test(command) && writes.test(command) && !viaKernel.test(command)) {
   const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)
     && !/state[\\/]bedrock[\\/][a-z0-9-]+\.md/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.md/g, ''));

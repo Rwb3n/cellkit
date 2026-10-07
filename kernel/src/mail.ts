@@ -1,8 +1,11 @@
 // Mail between cells — files, not chat. Agents never write message structure; this module does.
-// Every cell has an inbox, root included (root = the repo root; a cell = cells/<name>):
+// Every cell has a mailbox, root included (root = the repo root; a cell = cells/<name>):
 //   <box>/inbox/<id>.json          unread  → <box>/inbox/read/<id>.json once taken
 //   <box>/outbox/read/<id>.json    what this box sent (a record; never polled)
 //   <box>/inbox/.current           the message a cell session is working on (its next stop = the reply)
+// <box> is <git common dir>/cellkit-mail/<root|cell>/: shared by the main checkout and every cell worktree, inside no
+// checkout, so root (in the main checkout) and a cell (in its worktree) reach the same box. Outside git (tests in a
+// temp folder) it is the box's own folder.
 // Addressed by name: --to root | --to <cell>. Replies go to the asker's inbox.
 //
 // Who may say what:
@@ -19,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { append } from './log.ts';
+import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
 
 export type MailKind = 'task' | 'reply' | 'blocked' | 'question' | 'done';
 export interface Message { id: string; kind: MailKind; from: string; to: string; at: string; body: string; reply_to?: string }
@@ -36,9 +40,24 @@ export function rootOf(dir: string): string {
 export const nameOf = (dir: string) => (isCell(dir) ? resolve(dir).replaceAll('\\', '/').split('/').at(-1)! : 'root');
 export const dirOf = (root: string, name: string) => (name === 'root' ? resolve(root) : join(resolve(root), 'cells', name));
 
-const inbox = (dir: string) => join(dir, 'inbox');
-const sent = (dir: string) => join(dir, 'outbox', 'read');
-const ensure = (dir: string) => { mkdirSync(join(inbox(dir), 'read'), { recursive: true }); mkdirSync(sent(dir), { recursive: true }); };
+// The mailbox of the box at `dir` (see the header).
+export const MAIL_DIR = 'cellkit-mail';
+export function mailbox(dir: string): string {
+  const d = resolve(dir), common = gitCommonDir(rootOf(d));
+  return common ? join(common, MAIL_DIR, nameOf(d)) : d;
+}
+// The folder whose log records a box's mail, by name, so no checkout's copy of a log ever forks: root's log in the main
+// checkout; a cell's in its worktree when it has one (its log travels on its branch), else the main checkout's copy.
+export function logHome(root: string, name: string): string {
+  const main = inMain(root);
+  if (name === 'root') return main;
+  const wt = cellWorktree(main, name);
+  return wt ? join(wt, 'cells', name) : join(main, 'cells', name);
+}
+
+const inbox = (dir: string) => join(mailbox(dir), 'inbox');
+const sent = (dir: string) => join(mailbox(dir), 'outbox', 'read');
+export const ensure = (dir: string) => { mkdirSync(join(inbox(dir), 'read'), { recursive: true }); mkdirSync(sent(dir), { recursive: true }); };
 const jsons = (d: string) => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.json')) : []);
 // ids sort in arrival order: timestamp (ms) + a per-box sequence (two messages in the same ms keep their order)
 const newId = (dir: string) => `${new Date().toISOString().replace(/[-:.]/g, '').replace('Z', '')}-${String(jsons(inbox(dir)).length + jsons(join(inbox(dir), 'read')).length + 1).padStart(5, '0')}-${randomBytes(2).toString('hex')}`;
@@ -47,7 +66,7 @@ const markRead = (dir: string, id: string) => renameSync(join(inbox(dir), `${id}
 
 // ── sending ──────────────────────────────────────────────────────────────────────
 export function send(fromDir: string, to: string, body: string, kind: MailKind = 'task', reply_to?: string): Message {
-  const from = nameOf(fromDir), root = rootOf(fromDir);
+  const from = nameOf(fromDir), root = inMain(rootOf(fromDir));
   if (!body.trim()) throw new MailError('empty message');
   if (from === 'root' && kind !== 'task') throw new MailError('root sends tasks');
   if (from !== 'root' && to !== 'root') throw new MailError(`a cell writes only to root (not ${to})`);
@@ -59,8 +78,8 @@ export function send(fromDir: string, to: string, body: string, kind: MailKind =
   const text = JSON.stringify(m, null, 2) + '\n';
   writeFileSync(join(inbox(toDir), `${m.id}.json`), text, { flag: 'wx' });
   writeFileSync(join(sent(resolve(fromDir)), `${m.id}.json`), text, { flag: 'wx' });
-  logMail(resolve(fromDir), m);   // the files are transport; the log is the record — on both sides
-  logMail(toDir, m);
+  logMail(logHome(root, from), m);   // the files are transport; the log is the record — on both sides
+  logMail(logHome(root, to), m);
   return m;
 }
 
@@ -107,6 +126,8 @@ export function takeNext(cell: string): Message | null {
   return m;
 }
 
+export const status = (dir: string) => ({ box: nameOf(dir), unread: unread(dir).length, working_on: current(dir) });
+
 // ── CLI ──────────────────────────────────────────────────────────────────────────
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -129,8 +150,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       if (!got.length) console.log('(no unread mail)');
       for (const m of got) console.log(`── ${m.kind} from ${m.from} · ${m.id}${m.reply_to ? ` · re ${m.reply_to}` : ''} · ${m.at}\n${m.body}\n`);
     } else if (cmd === 'status') {
-      const box = boxOf(opt('as'));
-      console.log(JSON.stringify({ box: nameOf(box), unread: unread(box).length, working_on: current(box) }));
+      console.log(JSON.stringify(status(boxOf(opt('as')))));
     } else {
       throw new MailError('usage: mail.ts send|watch|status …');
     }

@@ -11,10 +11,14 @@
 //   cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script
 //   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
 //   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
+//   cell checkout --name <name> [--path <dir>]          → its git worktree on branch cell/<name> (<repo>-cells/<name>)
+//   cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/
 //   review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (OPERATOR ONLY)
 //   fold · lint
 // Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
 // Every write refolds: state/views/* and docs/assumptions.md (generated; hook-blocked).
+// Run from a cell's worktree, every command that writes root's log writes the main checkout's (worktree.ts), so root's
+// hash chain never forks; fold and lint stay local. A cell's own log (--cell <cell>) is untouched.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,13 +31,17 @@ import { amend, approve, bedrockDir, foldBedrock, register } from './bedrock.ts'
 import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, send as sendMail } from './mail.ts';
+import { cellAudit, cellBranch, cellCheckout, inMain, WorktreeError } from './worktree.ts';
 import type { Kind } from './schemas.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 try { process.loadEnvFile(join(repoRoot, '.env')); } catch { /* no .env */ }
 const [cmd, ...rest] = process.argv.slice(2);
 const opt = (name: string) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined; };
-const cell = resolve(opt('cell') ?? repoRoot);
+const WRITES = ['init', 'append', 'assume', 'evidence', 'constraint', 'amend', 'approve', 'register', 'cell', 'review'];
+const local = resolve(opt('cell') ?? repoRoot);
+const cell = WRITES.includes(cmd) && !isCell(local) ? inMain(local) : local;
+const isRoot = cell === repoRoot || cell === inMain(repoRoot);
 
 function refold(): number {
   const log = readLog(cell);
@@ -41,7 +49,7 @@ function refold(): number {
   writeViews(cell, p);
   for (const [name, v] of Object.entries({ bedrock: foldBedrock(log), reviews: foldReviews(log), cells: foldCells(log) }))
     writeFileSync(join(cell, 'state', 'views', `${name}.json`), JSON.stringify(v, null, 2) + '\n', 'utf8');
-  if (cell === repoRoot) { mkdirSync(join(repoRoot, 'docs'), { recursive: true }); writeDocs(repoRoot, p); }
+  if (isRoot) { mkdirSync(join(repoRoot, 'docs'), { recursive: true }); writeDocs(repoRoot, p); }
   console.log(JSON.stringify(p.summary));
   return 0;
 }
@@ -85,11 +93,26 @@ function main(): number {
     }
     case 'cell':
       if (rest[0] === 'sync') return write(() => cellSync(cell, { name: opt('name') }));
+      if (rest[0] === 'checkout') {
+        try {
+          const dest = cellCheckout(cell, { name: opt('name'), path: opt('path') });
+          console.log(`cell ${opt('name')}: worktree ${dest} on branch ${cellBranch(opt('name')!)}; open its session at ${join(dest, 'cells', opt('name')!)}`);
+          return 0;
+        } catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
+      }
+      if (rest[0] === 'audit') {
+        const except = rest.flatMap((a, i) => (a === '--except' && rest[i + 1] ? [rest[i + 1]] : []));
+        let bad: string[];
+        try { bad = cellAudit(cell, opt('name') ?? '', except); } catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
+        for (const p of bad) console.error(`OUTSIDE  ${p}`);
+        console.log(`cell audit ${opt('name')}: ${bad.length} path(s) outside cells/${opt('name')}/${bad.length ? '' : ' (clean)'}`);
+        return bad.length ? 1 : 0;
+      }
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }
-      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name>'); return 2; }
+      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]…'); return 2; }
       return write(() => cellNew(cell, { name: opt('name'), binding: opt('binding') }));
     case 'review': {
-      const name = (d: string) => (d === repoRoot ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);
+      const name = (d: string) => (!isCell(d) ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);
       if (rest[0] === 'raise') {
         const r = JSON.parse(readFileSync(opt('file') ?? 0, 'utf8'));
         let id = '';
