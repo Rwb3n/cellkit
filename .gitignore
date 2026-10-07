@@ -11,7 +11,8 @@ Thumbs.db
 **/state/out/*
 !**/state/out/.gitkeep
 
-# Cell mail is transient; the log is the record
+# Cell mail is transient; the log is the record. In a git repo it lives under .git/cellkit-mail/; these are the
+# fallback outside git
 cells/*/inbox/
 cells/*/outbox/
 cells/*/data/
