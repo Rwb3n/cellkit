@@ -3,6 +3,7 @@
 //   <box>/inbox/<id>.json          unread  → <box>/inbox/read/<id>.json once taken
 //   <box>/outbox/read/<id>.json    what this box sent (a record; never polled)
 //   <box>/inbox/.current           the message a cell session is working on (its next stop = the reply)
+//   <box>/runs/<stamp>.jsonl       a headless run's transcript (cellrun.ts)
 // <box> is <git common dir>/cellkit-mail/<root|cell>/: shared by the main checkout and every cell worktree, inside no
 // checkout, so root (in the main checkout) and a cell (in its worktree) reach the same box. Outside git (tests in a
 // temp folder) it is the box's own folder.

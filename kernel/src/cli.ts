@@ -96,7 +96,7 @@ function main(): number {
       if (rest[0] === 'checkout') {
         try {
           const dest = cellCheckout(cell, { name: opt('name'), path: opt('path') });
-          console.log(`cell ${opt('name')}: worktree ${dest} on branch ${cellBranch(opt('name')!)}; open its session at ${join(dest, 'cells', opt('name')!)}`);
+          console.log(`cell ${opt('name')}: worktree ${dest} on branch ${cellBranch(opt('name')!)}; run it headless (node kernel/src/cellrun.ts --cell ${opt('name')}) or open its session at ${join(dest, 'cells', opt('name')!)}`);
           return 0;
         } catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
       }

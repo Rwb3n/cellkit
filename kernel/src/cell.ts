@@ -42,6 +42,7 @@ ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md'
 - **Entry:** \`adapters/\` — the only code that brings the world in. **Exit:** \`state/out/\`.
 - **Memory:** \`state/log/\` (append-only, kernel-written) → \`state/views/\` (folded, not committed).
 - **Mail:** tasks from root arrive in your mailbox (under the repository's \`.git/cellkit-mail/\`, shared with root; not in this folder). A Stop hook runs the loop: when you end a turn it sends your final answer to root as the reply, waits for the next task (up to 30 min, or as \`CELLKIT_MAIL_WAIT\` says) and gives it to you as your next instruction. Never write mail files yourself. Make each final message a complete reply: what you did, files changed, test results, anything root must decide. Blocked, or need root to decide? \`node ${toRoot}/kernel/src/mail.ts send --to root --kind blocked|question --body "…"\`, then end your turn. You can only write to root. To start the loop, end a turn (e.g. say "waiting for mail").
+- **Usually headless:** root runs you with \`kernel/src/cellrun.ts\` (\`claude -p "waiting for mail"\`, no permission prompts; your hooks are the guard rail). You then exit once your queue is empty. Nothing changes for you: do each task and end your turn with the reply.
 
 ## Your worktree
 

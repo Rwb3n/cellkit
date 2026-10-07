@@ -1,6 +1,6 @@
 // One git worktree per cell: a shared mailbox outside both checkouts, root-log writes from a worktree land in the main
-// checkout, a session opened in the wrong checkout is refused, the audit reads only the cell's branch.
-
+// checkout, a session opened in the wrong checkout is refused, the audit reads only the cell's branch, and cellrun
+// starts a cell headless in its own worktree only when mail is queued.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -173,4 +173,21 @@ test('worktree: cell audit reads only the cell\'s branch and worktree', (t) => {
   git(wt, 'rm', '-q', 'kernel/.gitkeep');
   git(wt, 'commit', '-qm', 'outside, committed');
   assert.deepEqual(cellAudit(main, 'demo'), ['kernel/.gitkeep']);
+});
+
+test('cellrun: starts the cell headless in its own worktree, only with mail queued and nothing in flight', (t) => {
+  const { main, cellWt } = world(t);
+  const cellrun = (...args: string[]) => { const r = run('cellrun.ts', ['--root', main, ...args]); return { code: r.status, out: r.stdout + r.stderr }; };
+  assert.equal(cellrun('--cell', 'demo', '--dry-run').code, 4);             // nothing queued: nothing started
+  send(main, 'demo', 'task one');
+  send(main, 'demo', 'task two');
+  const { code, out } = cellrun('--cell', 'demo', '--dry-run', '--wait', '5');
+  assert.equal(code, 0, out);
+  assert.ok(out.includes(`cwd ${cellWt}`), out);
+  assert.ok(out.includes('env CELLKIT_MAIL_WAIT=5'), out);
+  assert.ok(/claude(\.exe|\.cmd)?"? -p "waiting for mail" --permission-mode bypassPermissions --output-format stream-json --verbose/.test(out), out);
+  assert.ok(out.includes(join(mailbox(cellWt), 'runs')), out);
+  assert.equal(cellrun('--cell', 'other', '--dry-run').code, 2);            // no worktree: refused
+  takeNext(cellWt);
+  assert.equal(cellrun('--cell', 'demo', '--dry-run').code, 3);             // a session is already on a task
 });

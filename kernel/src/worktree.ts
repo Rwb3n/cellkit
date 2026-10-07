@@ -110,11 +110,11 @@ export function misplaced(cellDir: string): string | null {
     const branch = currentBranch(root);
     if (!branch.startsWith('cell/') || branch === cellBranch(name)) return null;
     return `cell \`${name}\` session opened in the worktree of branch ${branch}, not its own. Nothing here may be written and no mail is handed over. ` +
-      `End your turn and ask the operator to reopen this cell at ${where}.`;
+      `End your turn and ask the operator to reopen this cell at ${where} (or to run it headless: node kernel/src/cellrun.ts --cell ${name}).`;
   }
   if (!wt || samePath(wt, root)) return null;
   return `cell \`${name}\` has its own worktree, but this session was opened in the main checkout (${dir}). Nothing here may be written and no mail is handed over. ` +
-    `End your turn and ask the operator to reopen this cell at ${where}.`;
+    `End your turn and ask the operator to reopen this cell at ${where} (or to run it headless: node kernel/src/cellrun.ts --cell ${name}).`;
 }
 
 // ── audit: detection backs up prevention ─────────────────────────────────────────
