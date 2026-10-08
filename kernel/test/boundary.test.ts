@@ -40,4 +40,5 @@ test('shell guard: kernel-owned paths are refused from bash and from PowerShell'
   assert.equal(tryShell('Copy-Item draft.md state/bedrock/proposed/ontology.md'), 0); // staging a proposal is allowed
   assert.equal(tryShell('Get-Content state\\log\\000001.observation.json'), 0);      // reading is fine
   assert.equal(tryShell('node kernel/src/cli.ts fold'), 0);
+  assert.equal(tryShell('node -e "const v=require(\'./state/views/x.json\'); v.n>=1"'), 0);      // a comparison is not a redirect
 });
