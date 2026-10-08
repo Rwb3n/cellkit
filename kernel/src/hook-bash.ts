@@ -34,7 +34,10 @@ if (/cli\.ts["']?\s+review\s+decide\b/.test(command)) {
 
 const protectedPath = /(state[\\/](log|views|bedrock|out)[\\/]|docs[\\/]assumptions\.md)/;
 // PowerShell (same hook, matcher Bash|PowerShell): its cmdlets, aliases and .NET file writes, case-insensitive like the shell.
-const writes = /((^|[^=\-0-9])>>?(?![&=])|\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b|(^|[;|&({]\s*)(del|erase|ri|copy|move|ren|sc|ac)\s|\[(System\.)?IO\.File\]::)/i;
+// A redirect is never inside quotes: `>` in "a <b@c.com>" or node -e "a > b" is text, so look for it with quoted parts blanked.
+const redirect = /(^|[^=\-0-9])>>?(?![&=])/;
+const verbs = /(\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b|(^|[;|&({]\s*)(del|erase|ri|copy|move|ren|sc|ac)\s|\[(System\.)?IO\.File\]::)/i;
+const writes = { test: (c: string) => redirect.test(c.replace(/"[^"]*"|'[^']*'/g, '""')) || verbs.test(c) };
 // `git rm --cached` only untracks; it never changes or deletes the files themselves.
 const viaKernel = /kernel[\\/](src[\\/](cli|mail)\.ts|scripts[\\/])|^\s*git\s+rm\s+(-r\s+)?--cached\b/;
 const project = process.env.CLAUDE_PROJECT_DIR ?? '';

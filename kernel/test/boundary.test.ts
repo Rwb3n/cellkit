@@ -44,4 +44,7 @@ test('shell guard: kernel-owned paths are refused from bash and from PowerShell'
   assert.equal(tryShell('node -e "require(\'./state/views/x.json\'); /copy|backup/.test(n)"'), 0); // an alias is a command only where a command starts
   assert.equal(tryShell('cd x; copy a.json state/log/000009.claim.json'), 2);
   assert.equal(tryShell('del state\\views\\summary.json'), 2);
+  assert.equal(tryShell('git commit -m "x <noreply@anthropic.com>"; node -e "require(\'./state/views/p.json\')"'), 0); // an email in quotes is not a redirect
+  assert.equal(tryShell('echo x > "state/log/000009.claim.json"'), 2);                      // a redirect to a quoted path still is
+  assert.equal(tryShell('node -e "require(\'fs\').writeFileSync(\'state/log/x.json\', \'x\')"'), 2); // a script write inside quotes still is
 });
