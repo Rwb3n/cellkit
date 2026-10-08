@@ -25,3 +25,19 @@ test('boundary: a cell session writes inside its folder only', () => {
   assert.equal(tryWrite(cell, `${cell}/state/log/000001.observation.json`), 2); // inside, but kernel-owned
   assert.equal(tryWrite(root, `${root}/kernel/src/x.ts`), 0);          // root session: no cell boundary
 });
+
+const bashHook = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'hook-bash.ts');
+const tryShell = (command: string) =>
+  spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '' }, encoding: 'utf8' }).status;
+
+test('shell guard: kernel-owned paths are refused from bash and from PowerShell', () => {
+  assert.equal(tryShell('echo x > state/log/000009.claim.json'), 2);
+  assert.equal(tryShell('Set-Content state\\log\\000009.claim.json "x"'), 2);
+  assert.equal(tryShell('"x" | Out-File docs/assumptions.md'), 2);
+  assert.equal(tryShell('Remove-Item state\\views\\summary.json'), 2);
+  assert.equal(tryShell('move-item a.md state/bedrock/ontology.md'), 2);
+  assert.equal(tryShell('[IO.File]::WriteAllText("state/log/x.json", "x")'), 2);
+  assert.equal(tryShell('Copy-Item draft.md state/bedrock/proposed/ontology.md'), 0); // staging a proposal is allowed
+  assert.equal(tryShell('Get-Content state\\log\\000001.observation.json'), 0);      // reading is fine
+  assert.equal(tryShell('node kernel/src/cli.ts fold'), 0);
+});
