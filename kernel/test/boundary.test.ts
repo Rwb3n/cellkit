@@ -41,4 +41,7 @@ test('shell guard: kernel-owned paths are refused from bash and from PowerShell'
   assert.equal(tryShell('Get-Content state\\log\\000001.observation.json'), 0);      // reading is fine
   assert.equal(tryShell('node kernel/src/cli.ts fold'), 0);
   assert.equal(tryShell('node -e "const v=require(\'./state/views/x.json\'); v.n>=1"'), 0);      // a comparison is not a redirect
+  assert.equal(tryShell('node -e "require(\'./state/views/x.json\'); /copy|backup/.test(n)"'), 0); // an alias is a command only where a command starts
+  assert.equal(tryShell('cd x; copy a.json state/log/000009.claim.json'), 2);
+  assert.equal(tryShell('del state\\views\\summary.json'), 2);
 });
