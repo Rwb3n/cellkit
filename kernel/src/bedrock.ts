@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { sha256 } from './canon.ts';
 import { append, AppendError, readLog, type Entry } from './log.ts';
 import { checkGuards } from './config.ts';
+import { checkKinds } from './kinds.ts';
 
 // Line endings are normalised to LF before hashing: git checks bedrock out as LF (.gitattributes),
 // editors on Windows write CRLF. A hash must mean the same text on every machine.
@@ -33,6 +34,7 @@ const basePath = (cell: string, doc: string) => join(bedrockDir(cell), 'proposed
 // kernel reads must also make sense to it. Returns the problems (empty = fine).
 export const docChecks: Record<string, (cell: string, value: unknown) => string[]> = {
   guards: (_cell, value) => checkGuards(value),
+  kinds: (cell, value) => checkKinds(cell, value),
 };
 export function docCheck(cell: string, doc: string, f: Format, content: string): string[] {
   if (f !== 'json') return [];

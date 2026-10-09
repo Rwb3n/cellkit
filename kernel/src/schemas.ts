@@ -22,15 +22,37 @@ const addFormats = require('ajv-formats') as FormatsPlugin;
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 
+// ── claim kinds ──────────────────────────────────────────────────────────────────
+// The kit's own kinds are in claim.schema.json. A project's kinds are bedrock: state/bedrock/kinds.json, proposed and
+// approved like the ontology (kinds.ts checks a proposal against every claim already logged):
+//   { "kinds": { "visit": { "description": "…", "schema": { <JSON Schema for the claim when kind = visit> } } } }
+// e.g. "schema": { "properties": { "says": { "type": "object", "required": ["at"] } } }. The kernel adds each to the kind
+// enum with an if/then rule. (A project that still lists its kinds in claim.schema.json keeps working: the enums merge.)
+export const BASE_KINDS = ['fact', 'opinion', 'same-as', 'part-of', 'relation', 'rule', 'hypothesis', 'check'];
+export interface KindDef { description?: string; schema?: Record<string, unknown> }
+export const kindsPath = (root = join(kernelDir, '..')) => join(root, 'state', 'bedrock', 'kinds.json');
+
+export function compileClaim(kinds: Record<string, KindDef> = {}) {
+  const s = load('claim.schema.json');
+  delete s.$id;                                                     // compiled once per kinds doc: no id clash
+  const own = s.properties.kind.enum as string[];
+  s.properties.kind.enum = [...new Set([...own, ...Object.keys(kinds)])];
+  for (const [k, d] of Object.entries(kinds)) if (d.schema) s.allOf.push({ if: { properties: { kind: { const: k } } }, then: d.schema });
+  return ajv.compile(s);
+}
+const projectKinds = (): Record<string, KindDef> =>
+  existsSync(kindsPath()) ? (JSON.parse(readFileSync(kindsPath(), 'utf8')) as { kinds?: Record<string, KindDef> }).kinds ?? {} : {};
+
 export const validators = {
   envelope: ajv.compile(load('envelope.schema.json')),
   observation: ajv.compile(load('observation.schema.json')),
-  claim: ajv.compile(load('claim.schema.json')),
+  claim: compileClaim(projectKinds()),
 };
 
 export type Kind = 'observation' | 'claim';
 
+export const errorsOf = (v: { errors?: ErrorObject[] | null }, kind: string) => (v.errors ?? []).map((e: ErrorObject) => `${kind}${e.instancePath} ${e.message}`);
 export function check(kind: 'envelope' | Kind, value: unknown): string[] {
   const v = validators[kind];
-  return v(value) ? [] : (v.errors ?? []).map((e: ErrorObject) => `${kind}${e.instancePath} ${e.message}`);
+  return v(value) ? [] : errorsOf(v, kind);
 }

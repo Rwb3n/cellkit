@@ -275,3 +275,28 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.equal(run('cli.ts', ['lint', '--cell', main]).status, 0);
   assert.match(land().stdout, /nothing to land/);
 });
+
+test('kinds: a project\'s claim kinds are bedrock; a kinds doc that would invalidate a logged claim is refused', (t) => {
+  const { main } = world(t, { kernel: true });
+  // the project's own kernel copy reads the project's bedrock, as in a real project
+  const cli = (...args: string[]) => { const r = spawnSync(process.execPath, [join(main, 'kernel', 'src', 'cli.ts'), ...args, '--cell', main], { encoding: 'utf8' }); return { code: r.status, out: r.stdout + r.stderr }; };
+  const file = (name: string, v: unknown) => { const f = join(main, name); writeFileSync(f, JSON.stringify(v)); return f; };
+  const proposed = join(main, 'state', 'bedrock', 'proposed');
+  mkdirSync(proposed, { recursive: true });
+  const visit = { kinds: { visit: { description: 'a visit', schema: { properties: { says: { type: 'object', required: ['at'] } } } } } };
+  const o = cli('append', '--kind', 'observation', '--body', file('o.json', { source: { adapter: 'test' }, observed_at: '2026-01-01T00:00:00Z', reliability: [], licence: { store: 'full' }, payload: {} }));
+  assert.equal(o.code, 0, o.out);
+  const from = /appended (\d{6})/.exec(o.out)![1];
+  const claim = (says: unknown) => cli('append', '--kind', 'claim', '--body', file('c.json', { about: ['thing:x'], kind: 'visit', says, from, voice: 'claude' }));
+  writeFileSync(join(proposed, 'kinds.json'), JSON.stringify({ kinds: { fact: {} } }));
+  assert.match(cli('amend', '--doc', 'kinds', '--layer', 'kinds', '--reason', 'r').out, /one of the kit's own kinds/);
+  writeFileSync(join(proposed, 'kinds.json'), JSON.stringify(visit));
+  assert.equal(cli('amend', '--doc', 'kinds', '--layer', 'kinds', '--reason', 'visits').code, 0);
+  assert.equal(claim({ at: 'x' }).code, 1);                                  // proposed is not approved: no such kind yet
+  assert.equal(cli('approve', '--doc', 'kinds').code, 0);                    // (the operator, from their prompt)
+  assert.equal(claim({ at: 'x' }).code, 0);
+  assert.match(claim({ when: 'x' }).out, /refused: .*must have required property 'at'/);
+  writeFileSync(join(proposed, 'kinds.json'), JSON.stringify({ kinds: {} }));   // dropping a kind the log uses
+  assert.match(cli('amend', '--doc', 'kinds', '--layer', 'kinds', '--reason', 'drop').out, /\(kind visit\) would no longer be valid/);
+  assert.equal(cli('lint').code, 0);
+});
