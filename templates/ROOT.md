@@ -27,7 +27,7 @@ Root is the cell that contains the others. Its session is the operator's working
 | A cell's own view of itself | `cells/<name>/MODEL.md` | — |
 | <your board / tracker> | | |
 
-## Resume (every new root session)
+## Resume (every new root session) — the `/session-open` skill runs this
 
 1. SessionStart already ran `cell sync` and `lint`. If lint shows errors, fix those first. Run `lint --all` if any cell worked since the last session.
 2. Read `AGENTS.md`, then this file.
@@ -44,10 +44,10 @@ Root is the cell that contains the others. Its session is the operator's working
 ## When a cell replies
 
 1. Read the reply in full. Note what it says is for root. Don't take "all pass" on trust.
-2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails. Read why, then send the cell a follow-up task.
+2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails, or if the cell's tests got weaker. Read why, then send the cell a follow-up task. If weaker tests are right (a test moved, a case became obsolete), show the operator the findings; landing them is the operator's call (`--accept-weaker "<why>"`).
 3. Take its "for root" items: decide what's root's, ask the operator about theirs.
 
-## Hand over (end of a session)
+## Hand over (end of a session) — the `/session-close` skill runs this
 
 1. Nothing half-done is uncommitted: `git status` is clean, or each leftover is explained.
 2. Every in-flight task is visible in `mail.ts status --as <cell>`.
@@ -58,6 +58,7 @@ Root is the cell that contains the others. Its session is the operator's working
 
 - **The Bash guard is deliberately strict.** It blocks commands that only *mention* `approve`, `review decide` or a kernel-owned path next to a write. Don't loosen it. Use the Edit/Write tools, a file for the message body (`git commit -F`, `mail.ts send --file`), or split the command.
 - **Bedrock:** `stage` the live doc before editing it. Diff the staged text against the live one before `amend`.
+- **Never put regexes or other backslash-bearing text through a shell heredoc.** Use Edit/Write, then compile or test it.
 - **"Lint passed first time" deserves a negative test.** Inject a bad reference and see it caught.
 - **IDs are never removed.** A closed item is retired, not deleted.
 - **Tag honestly:** only what the operator actually decided is a decision; your own wording of it is a guess.

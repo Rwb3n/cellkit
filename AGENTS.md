@@ -12,6 +12,8 @@ Read in order:
 3. [`docs/ROOT.md`](docs/ROOT.md) — root's role, routines and lessons (copy it from `templates/ROOT.md` at the start)
 4. `cells/*/AGENTS.md` — each cell's brief
 
+Start each session with `/session-open`, and end it with `/session-close`.
+
 ## Working rules
 
 - **Sketch → check → schema → code**, always against real data. Cheap text first.
@@ -25,7 +27,7 @@ Read in order:
   - Create with `node kernel/src/cli.ts cell new --name <name> --binding <file>`, commit it, then `node kernel/src/cli.ts cell checkout --name <name>`: its own git worktree at `<repo>-cells/<name>`, branch `cell/<name>`.
   - Give it work by mail, **one task per mail**: `node kernel/src/mail.ts send --to <name> --body "…"`. Then run it **headless** (the default), in the background: `node kernel/src/cellrun.ts --cell <name>`. It refuses an empty queue or a task already in flight. Read the reply with `node kernel/src/mail.ts watch --as root --wait 600`.
   - Interactive fallback: the operator opens `claude` in `<repo>-cells/<name>/cells/<name>` and says "waiting for mail". Never both at once for one cell. A session opened anywhere else (the main checkout's copy, another cell's worktree) is refused: no writes, no mail.
-  - Land a reply with `node kernel/src/cli.ts cell land --name <name> --message "…" --check "<tests>"`. It commits the cell's work on its branch, merges main in, audits it (every change inside `cells/<name>/`), runs the check on the merged result, merges it into main and commits root's log. It refuses, or undoes itself, if any step fails.
+  - Land a reply with `node kernel/src/cli.ts cell land --name <name> --message "…" --check "<tests>"`. It commits the cell's work on its branch, merges main in, audits it (every change inside `cells/<name>/`), runs the check on the merged result, merges it into main and commits root's log. It refuses, or undoes itself, if any step fails or the cell's tests got weaker (landing weaker tests is the operator's call).
   - A session that died mid-task: `node kernel/src/mail.ts release --as <name>`, then resend the task.
   - Project configuration is bedrock, never `kernel/`: claim kinds in `state/bedrock/kinds.json`, guards and cell ownership (`cells.<x>.owns`) in `state/bedrock/guards.json`. Propose them like the ontology (stage/amend); only the operator approves. A cell's `binding.json` changes only by `cell rebind`.
   - Worktrees on Windows can hold CRLF copies of LF files (`git ls-files --eol`); re-check them out if a hash or fixture differs in one worktree only.

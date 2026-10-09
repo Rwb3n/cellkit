@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.1 — the rest of the lessons (2026-10-09)
+
+- **`cell land` refuses weaker tests.** If the cell's diff drops test files, cases or assertions, or adds skips or loosening (`|| true`, tolerances), the land stops and undoes itself. Only the operator lands it anyway, with `--accept-weaker "<why>"`; the hook blocks that flag for agents, and the reason goes into the merge commit. From AI-MMO: a cell loosened a test so a regression passed.
+- **Independent voices.** The fold counts, per subject, the voices that aren't the kit's, a model's or a check (`independent`), and the summary counts subjects with two or more (`agreed`). From carnet.
+- **Stale handover warning.** Root's lint warns when `docs/ROOT.md` hasn't changed in 20 commits. From DTG.
+- **`/session-open` and `/session-close` skills** (`.claude/skills/`) run the routines in `templates/ROOT.md`. From carnet, rewritten for land, `lint --all` and release.
+- **README:** every guarantee names the test that proves it. New traps: no backslash-bearing text through a shell heredoc (from SF-DEV, and hit three times while building v0.2), and weaker tests.
+- **`docs/assumptions.md` is committed** in the template (empty, generated), as a project commits it.
+
 ## v0.2 — lessons from the projects (2026-10-09)
 
 What carnet, 01-HAIOS-PERS, PS5-STUDY, SF-DEV, PORTOFOLIO-MANAGER, loyalty-code-app, AI-MMO and DTG ran into.

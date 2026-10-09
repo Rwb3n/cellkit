@@ -20,21 +20,25 @@ Extracted from **carnet**, where it runs a London food map. Nothing here is food
 
 ## What you get
 
-| | What | Enforced by |
-|---|---|---|
-| **Log** | every input is an observation; every statement is a claim from one observation, by one voice; entries are hash-chained with gapless ids and never edited | `append` (only writer, `wx`), `lint` (chain, schemas, references) |
-| **Pictures** | state = fold(log); views are disposable and never committed | `fold`, `.gitignore`, hooks |
-| **Bedrock** | the docs the system rests on (`state/bedrock/`) change only by amendment; **only the operator approves** | Write/Edit hook, Bash hook, `lint` hashes |
-| **Assumptions** | every guess is a hypothesis claim with a status (guess → some → evidence · refuted); `docs/assumptions.md` is generated | `assume` / `evidence` / `constraint` CLI; hook blocks hand edits |
-| **Checks** | a model's verification is a claim *about a claim* — it adjusts belief, never counts as a voice | claim schema + `append` |
-| **Cells** | `cell new` creates a cell with its own brief, hooks, binding, log and mailboxes; the parent logs the birth | `cell new` / `cell refresh` |
-| **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply — no agent writes message files | Stop hook + `mail.ts` |
-| **Worktrees** | each cell works in its own git worktree on branch `cell/<name>`, so its changes touch nothing else until root merges them; a session opened in the wrong checkout writes nothing and gets no mail | `cell checkout`, the three hooks, `cell audit` |
-| **Headless cells** | root queues a task, then runs the cell's session without a terminal; it does the queued mail and exits; a run that dies mid-task says so instead of locking the cell | `cellrun.ts`, `mail.ts release` |
-| **Landing** | root's loop in one command: commit the cell's work, merge main in, audit, run your check on the merged result, merge `--no-ff`, sync, commit root's log, or undo and refuse | `cell land` |
-| **Configuration** | your claim kinds, guards (operator-only commands, script-written paths) and the repo paths each cell owns, as bedrock JSON docs; nothing in `kernel/` to edit | amend → operator approves; checked against the log; read by the hooks, audit, land, lint |
-| **Bindings** | a cell's domain is root's to set, and every change is on the cell's log | `cell rebind`, hooks, `lint` |
-| **Session start** | every Claude Code session folds, then lints | SessionStart hook |
+Each guarantee names the mechanism that enforces it and the test that proves it (`kernel/test/`). A guarantee with no test is a hope; add the test before you rely on it.
+
+| | What | Enforced by | Proven by |
+|---|---|---|---|
+| **Log** | every input is an observation; every statement is a claim from one observation, by one voice; entries are hash-chained with gapless ids and never edited | `append` (only writer, `wx`), `lint` (chain, schemas, references) | `core`: append chains · lint catches an edited entry · a claim must come from an earlier observation |
+| **Pictures** | state = fold(log); views are disposable and never committed; agreement counts **independent** voices (not the kit's, not a model's, not checks) | `fold`, `.gitignore`, hooks | `core`: fold counts independent voices |
+| **Bedrock** | the docs the system rests on (`state/bedrock/`) change only by amendment; **only the operator approves** | Write/Edit hook, Bash hook, `lint` hashes | `core`: bedrock (3 tests) · `boundary`: shell guard |
+| **Assumptions** | every guess is a hypothesis claim with a status (guess → some → evidence · refuted, or parked); `docs/assumptions.md` is generated | `assume` / `evidence` / `constraint` CLI; hook blocks hand edits | `core`: assumptions and constraints |
+| **Checks** | a model's verification is a claim *about a claim*; it adjusts belief, never counts as a voice | claim schema + `append` | `core`: a check must be about an earlier, non-check claim |
+| **Cells** | `cell new` creates a cell with its own brief, hooks, binding, log and mailboxes; the parent logs the birth | `cell new` / `cell refresh` | `core`: cell new · cell sync |
+| **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply. No agent writes message files | Stop hook + `mail.ts` | `mail` (4 tests) |
+| **Hand approval** | a cell proposes one exact claim against a rule; only the operator decides | `review`, Bash hook | `review` (4 tests) |
+| **Worktrees** | each cell works in its own git worktree on branch `cell/<name>`, so its changes touch nothing else until root merges them; a session opened in the wrong checkout writes nothing and gets no mail | `cell checkout`, the three hooks, `cell audit` | `worktree`: checkout · wrong checkout (2) · audit · writes never fork a chain (2) |
+| **Boundary** | a cell writes only in its folder and the paths it owns, from Write/Edit and from the shell | both hooks (`shell.ts`) | `boundary` (2 tests) · `worktree`: owns |
+| **Headless cells** | root queues a task, then runs the cell's session without a terminal; it does the queued mail and exits; a run that dies mid-task says so instead of locking the cell | `cellrun.ts`, `mail.ts release` | `worktree`: cellrun (2 tests) |
+| **Landing** | root's loop in one command: commit the cell's work, merge main in, audit, check that its tests didn't get weaker, run your check on the merged result, merge `--no-ff`, sync and commit root's log; otherwise undo and refuse. Only the operator lands weaker tests | `cell land`, `weaker.ts`, Bash hook | `worktree`: cell land (2 tests) · `weaker` (3 tests) |
+| **Configuration** | your claim kinds, guards (operator-only commands, script-written paths) and the repo paths each cell owns, as bedrock JSON docs; nothing in `kernel/` to edit | amend → operator approves; checked against the log; read by the hooks, audit, land, lint | `core`: a .json doc · `boundary`: guards.json · `worktree`: kinds · owns |
+| **Bindings** | a cell's domain is root's to set, and every change is on the cell's log | `cell rebind`, hooks, `lint` | `worktree`: binding |
+| **Session start** | every Claude Code session folds, then lints; root's lint also warns on a stale handover | SessionStart hook | `worktree`: lint handover |
 
 ## Quick start
 
@@ -48,7 +52,7 @@ node kernel/src/cli.ts init                      # state/ + starter ontology, re
 ! node kernel/src/cli.ts approve --doc ontology   # from your own Claude Code prompt
 ```
 
-Then open Claude Code at the root. `AGENTS.md` is its brief; replace the placeholders with your project.
+Then open Claude Code at the root. `AGENTS.md` is its brief; replace the placeholders with your project. Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover; the `/session-open` and `/session-close` skills (`.claude/skills/`) run its routines.
 
 ## A cell, and talking to it
 
@@ -162,6 +166,7 @@ node kernel/src/cli.ts amend --doc ontology --layer shape|kinds|rules|binding|me
 node kernel/src/cli.ts cell new --name <name> [--binding <file>] · cell refresh --name <name> · cell rebind --name <name> [--binding <file>]
 node kernel/src/cli.ts cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]…
 node kernel/src/cli.ts cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
+! node kernel/src/cli.ts cell land … --accept-weaker "<why>"                                         (operator only)
 node kernel/src/cli.ts lint --all                                                                     (root and every cell's log)
 node kernel/src/mail.ts send --to <name> · watch [--as root] · status [--as <name>] · release --as <cell>
 node kernel/src/cellrun.ts --cell <name> [--wait <s>] [--model <m>] [--dry-run] [--root <repo>]
@@ -191,6 +196,8 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - **Mentions trip the guard.** The kernel's own rules refuse a command that merely mentions `approve`, `review decide` or a kernel-owned path next to a write, a `sed` replacement string included. This is deliberate. Use the Edit/Write tools, or a file for the message (`git commit -F`, `mail.ts send --file`). It is the same for `guards.json`'s `operator_only` commands: a mention is refused. Its `protected` paths look at write targets only.
 - **Upgrading a project whose kinds are in `claim.schema.json`:** get `kinds.json` approved first, *while* your old `claim.schema.json` is still in place, then take the kit's copy. The other order leaves lint red. The two enums merge, so both states work.
 - **On Windows a folder rename can fail** while something holds a handle on it (an editor, a watcher). Move its contents entry by entry instead.
+- **Never put backslash-bearing text through a shell heredoc** (regexes, Windows paths, `\n` in code). Depending on the shell and interpreter, `\b` becomes a backspace and `\d` becomes `d`, or `\n` becomes a real line break inside a string literal. SF-DEV lost a binding's redaction patterns this way, and the kit's own v0.2 work broke TypeScript three times the same way. Use the Edit/Write tools, then compile or test what you wrote.
+- **Weaker tests stop a land.** If a cell's change drops test cases or assertions, or adds skips or tolerances, `cell land` refuses. If the change is right, show the operator the findings; they land it with `--accept-weaker "<why>"` and the reason is recorded in the merge. The check counts lines, so a moved test can look like a dropped one.
 - The Bash guard is a heuristic; `lint` (hash chain + bedrock hashes) is the backstop. A hook "fails open" if its script crashes, and hooks can't see inside the scripts a command runs, so `cell audit` stays the check.
 - A cell's Claude session also loads parent-folder CLAUDE.md files. Keep the root's CLAUDE.md a pointer.
 
