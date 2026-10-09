@@ -1,0 +1,10 @@
+{
+  "operator_only": [
+    { "command": "tools/release.ts publish", "message": "publishing is the operator's. Show them the draft, then ask them to run it from their prompt: ! node tools/release.ts publish --draft <slug>" },
+    { "pattern": "\\bgit\\s+push\\s+(-f|--force)\\b", "message": "force-pushing is the operator's." }
+  ],
+  "protected": [
+    { "path": "docs/report/", "by": "tools/report.ts" },
+    { "path": "docs/models/trace.md" }
+  ]
+}

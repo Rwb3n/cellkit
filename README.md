@@ -30,7 +30,9 @@ Extracted from **carnet**, where it runs a London food map. Nothing here is food
 | **Cells** | `cell new` creates a cell with its own brief, hooks, binding, log and mailboxes; the parent logs the birth | `cell new` / `cell refresh` |
 | **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply — no agent writes message files | Stop hook + `mail.ts` |
 | **Worktrees** | each cell works in its own git worktree on branch `cell/<name>`, so its changes touch nothing else until root merges them; a session opened in the wrong checkout writes nothing and gets no mail | `cell checkout`, the three hooks, `cell audit` |
-| **Headless cells** | root queues a task, then runs the cell's session without a terminal; it does the queued mail and exits | `cellrun.ts` |
+| **Headless cells** | root queues a task, then runs the cell's session without a terminal; it does the queued mail and exits; a run that dies mid-task says so instead of locking the cell | `cellrun.ts`, `mail.ts release` |
+| **Landing** | root's loop in one command: commit the cell's work, merge main in, audit, run your check on the merged result, merge `--no-ff`, sync, commit root's log, or undo and refuse | `cell land` |
+| **Project guards** | your own operator-only commands and script-written paths, in `cellkit.json`: no need to edit the kernel's hooks | both hooks (`config.ts`); the file guards itself |
 | **Session start** | every Claude Code session folds, then lints | SessionStart hook |
 
 ## Quick start
@@ -61,6 +63,7 @@ node kernel/src/cli.ts cell checkout --name lisbon                       # <repo
   ├── .claude/settings.json        guard hooks + fold/lint at start + the mail Stop hook
   ├── binding.json                 the cell's domain: scope, registries, thresholds, vocabularies
   ├── adapters/                    ENTRY: the only code that brings the world in
+  ├── exit/ · test/                EXIT code and durable reports (committed) · the cell's tests
   └── state/log/ · state/out/      memory · EXIT
 
   .git/cellkit-mail/<root|lisbon>/  the mailboxes: inbox/ · outbox/read/ · runs/ (under the git common dir: shared by every checkout, in none)
@@ -80,9 +83,20 @@ node kernel/src/cli.ts cell checkout --name lisbon                       # <repo
 2. **Interactive (fallback):** open a terminal in `<repo>-cells/lisbon/cells/lisbon`, run `claude`, say *"waiting for mail"*. Its turn ends, and the Stop hook starts listening (3 s polls, up to 30 min, `CELLKIT_MAIL_WAIT` to change). Never run a cell headless and interactively at once: both read one mailbox.
 3. The hook hands each task to the cell's session as its next instruction. When the session ends its turn, its final answer lands in **root's** inbox as the reply. Unread = in the box; read = moved to `read/`; each box keeps a sent record in `outbox/read/`. Outside git (e.g. tests in a temp folder) each box lives in its own folder instead.
 4. **Who may say what:** root → cell `task`; cell → root `reply` (by the hook) · `blocked` · `question` · `done`. Never cell → cell, and a cell can't give root tasks — no agent chatter.
-5. **Root's loop.** Verify the reply in the cell's worktree, after `git -C <worktree> merge main` (see Traps). `node kernel/src/cli.ts cell audit --name lisbon` reads only the cell's branch (commits since it left main) and its worktree (uncommitted), and fails on any changed path outside `cells/lisbon/`; root's log on a cell branch counts as a fork. Then commit on the cell's branch in its worktree, merge `cell/lisbon` into main from the main checkout, and commit the root-log entries the cell's mail wrote there with the merge.
+5. **Root's loop: `cell land`.** Read the reply, then:
+   ```
+   node kernel/src/cli.ts cell land --name lisbon --message "what it did" --check "cd kernel && npm test"   # --dry-run to see the plan
+   ```
+   It refuses before changing anything if the cell is mid-task, if root has uncommitted work of its own, or if `cell audit` finds a change outside `cells/lisbon/`. The audit reads only the cell's branch (commits since it left main) and its worktree (uncommitted); root's log on a cell branch counts as a fork. Otherwise it:
+   - commits the cell's work on `cell/lisbon`;
+   - merges main into it and audits again;
+   - runs `--check` in the worktree, so the merged result is what gets tested;
+   - merges into main with `--no-ff`, so one `git revert -m 1` undoes it;
+   - runs `cell sync` and commits root's log (the mail entries).
 
-**Boundary.** A session running in a cell writes only inside that cell (hook-enforced, `../` escapes caught), so a cell in its worktree can't write into the main checkout or another worktree either. The kernel, root docs and other cells are read-only from there; a cell that needs a change says so.
+   If the merge, the audit or the check fails, the cell's branch goes back to where it was, with its work staged. `--into <branch>` targets another branch than the one the main checkout is on. Each of these steps can still be done by hand.
+
+**Boundary.** A session running in a cell writes only inside that cell, so a cell in its worktree can't write into the main checkout or another worktree either. Both the Write/Edit hook and the shell hook enforce this: `../` escapes, `cd`, redirects and file verbs are followed, and the temp folder is allowed. Durable output goes in the cell's `exit/` (committed). `state/out/` is git-ignored except `metrics.json`. The kernel, root docs and other cells are read-only from there; a cell that needs a change says so.
 
 **Wrong checkout.** A cell session opened in the main checkout's copy of a cell that has a worktree, or in another cell's worktree (a linked worktree on branch `cell/<other>`), is refused: the Write/Edit hook blocks every write, the Bash hook blocks shell writes, `git` and appending kernel commands, and the Stop hook files any in-flight reply but hands over no new mail. The message names the folder to reopen it in. Mail to root (`mail.ts send --to root`) still works from there.
 
@@ -99,6 +113,11 @@ The kit ships the envelope and base claim kinds (`fact · opinion · same-as · 
 3. Add the kinds to `kernel/schemas/claim.schema.json` (enum + an `allOf` rule each).
 4. Write tests first (fixtures as journeys), then a fold for your pictures; merge it into `fold()`.
 5. Put domain values (thresholds, registries, vocabularies) in each cell's `binding.json`, not in code.
+6. Put your own guards in **`cellkit.json`** at the root (see `templates/cellkit.example.json`), not in the kernel's hooks:
+   - `operator_only` holds commands only the operator runs, as `{ "command": "tools/x.ts publish" }` (script and subcommand, quoted or not, any folder) or `{ "pattern": "<regex>" }`, each with a `message`;
+   - `protected` holds paths only a named script writes: `{ "path": "docs/report/", "by": "tools/report.ts" }`.
+
+   Agents can't edit the file; you edit it by hand. If it is invalid, everything is refused until you fix it.
 
 ## Working method
 
@@ -113,11 +132,14 @@ The kit ships the envelope and base claim kinds (`fact · opinion · same-as · 
 node kernel/src/cli.ts init | fold | lint [--cell <dir>]
 node kernel/src/cli.ts append --kind observation|claim --body <file|->
 node kernel/src/cli.ts assume --id A1 --statement "…" [--test "…"] · evidence --id A1 --status some --note "…" · constraint --slug x --text "…"
+node kernel/src/cli.ts stage --doc ontology                                                          (copy the live doc to proposed/, with its base)
 node kernel/src/cli.ts amend --doc ontology --layer shape|kinds|rules|binding|meta --reason "…"   (after staging state/bedrock/proposed/)
-! node kernel/src/cli.ts approve --doc ontology                                                    (operator only)
+! node kernel/src/cli.ts approve --doc ontology [--proposal <entry>]                               (operator only)
 node kernel/src/cli.ts cell new --name <name> [--binding <file>] · cell refresh --name <name>
 node kernel/src/cli.ts cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]…
-node kernel/src/mail.ts send --to <name> · watch [--as root] · status [--as <name>]
+node kernel/src/cli.ts cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
+node kernel/src/cli.ts lint --all                                                                     (root and every cell's log)
+node kernel/src/mail.ts send --to <name> · watch [--as root] · status [--as <name>] · release --as <cell>
 node kernel/src/cellrun.ts --cell <name> [--wait <s>] [--model <m>] [--dry-run] [--root <repo>]
 node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator only)
 ```
@@ -127,16 +149,23 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - One writer per cell at a time. `append` re-reads the log; bulk adapters use `writer(cell)`.
 - Log files are one JSON file per entry: fine to tens of thousands, then it needs a packed format.
 - Mail is on the log: every message is an observation on both sides; the files are transport.
-- Cells don't run git: root commits a cell's work on its branch and merges it. The Bash hook doesn't enforce that (it only blocks `git` for a session in the wrong checkout); `cell audit` is the check.
+- Cells don't run git: root commits a cell's work on its branch and merges it (`cell land`). The Bash hook doesn't enforce that (it only blocks `git` for a session in the wrong checkout); `cell audit` is the check.
+- A cell owns its folder, not paths elsewhere in the repo. Projects with real code outside `cells/` (AI-MMO, DTG) gave cells `owns: [globs]`; that is an open design question, not in the kit yet.
 
 ## Traps
 
 - **One task per mail.** A mail is one turn and one reply: bundle two tasks and the cell replies after the first, and the second is lost. Queue a second mail instead; the cell takes it next.
-- **A cell branch can be stale against main.** If main moved while the cell worked, its work is green on its branch but may fail once merged. Before verifying a reply, commit the cell's work on its branch, then `git -C <worktree> merge main` and test there. A cell's hooks run the kernel copy on its own branch, so a kernel change reaches a cell only by that merge too; do it between tasks, never over uncommitted cell work.
+- **A cell branch can be stale against main.** If main moved while the cell worked, its work is green on its branch but may fail once merged. Before verifying a reply, commit the cell's work on its branch, then `git -C <worktree> merge main` and test there (`cell land --check` does exactly this). A cell's hooks run the kernel copy on its own branch, so a kernel change reaches a cell only by that merge too; do it between tasks, never over uncommitted cell work.
 - **Never run a cell headless and interactively at once.** Both read one mailbox; `cellrun` refuses while a message is in flight, but an idle interactive session would still take the next one.
 - **CRLF copies in worktrees on Windows.** With `core.autocrlf=true` a worktree can hold CRLF copies of LF files (`git ls-files --eol` shows `i/lf w/crlf`). Git status stays clean, but anything that hashes file bytes (fixtures, golden files) differs in that worktree only. Delete those files and `git checkout -- <files>` in the worktree, or set `core.autocrlf=false` for the repo.
-- **A session can die mid-task** (machine sleep, closed terminal, idle exit): `status` shows `working_on` set and no reply comes, and `cellrun` refuses to start (exit 3). Don't edit mail files: send the task again, and open the cell interactively once. Its first stop files a placeholder reply to the stale message (ignore it) and takes the resent one; after that, `cellrun` works again.
-- The Bash guard is a heuristic; `lint` (hash chain + bedrock hashes) is the backstop.
+- **A session can die mid-task.** A headless run that dies files a reply saying the task was not done, and the cell is free again. An interactive session that died (machine sleep, closed terminal) leaves `working_on` set, and `cellrun` refuses (exit 3). If no session is running, `node kernel/src/mail.ts release --as <cell>` files a placeholder reply and frees the cell. Then send the task again. Don't edit mail files.
+- **A cell must work synchronously.** If it ends its turn while sub-agents or background commands still run, its "waiting for…" becomes the reply, and a headless run's exit kills the rest. The brief says so; check replies for it (PS5-STUDY lost two this way).
+- **Durable output goes in `exit/`.** `state/out/` is git-ignored except `metrics.json`, so a report left there never reaches root.
+- **Brief changes reach existing cells only via `cell refresh --name <cell>`** (commit, then land or merge main into the cell's branch).
+- **Bedrock with several proposals pending:** `approve` refuses until you name one with `--proposal`. Approving a newer one drops the older ones. Bedrock doc names are `[a-z0-9-]+` (no folders).
+- **Mentions trip the guard.** The kernel's own rules refuse a command that merely mentions `approve`, `review decide` or a kernel-owned path next to a write, a `sed` replacement string included. This is deliberate. Use the Edit/Write tools, or a file for the message (`git commit -F`, `mail.ts send --file`). Project guards (`cellkit.json`) look at write targets only.
+- **On Windows a folder rename can fail** while something holds a handle on it (an editor, a watcher). Move its contents entry by entry instead.
+- The Bash guard is a heuristic; `lint` (hash chain + bedrock hashes) is the backstop. A hook "fails open" if its script crashes, and hooks can't see inside the scripts a command runs, so `cell audit` stays the check.
 - A cell's Claude session also loads parent-folder CLAUDE.md files. Keep the root's CLAUDE.md a pointer.
 
 ## Roadmap
@@ -147,3 +176,15 @@ This is option **C — a template repo**: copy it and own it. Two packagings are
 - **B · npm package** (`npx cellkit init`). The kernel as a library and CLI, for projects that wire their own hooks or run without Claude Code. The plugin (A) would carry it.
 
 Until then, kit improvements are copied between projects by hand. Keep `kernel/` free of domain code so that stays easy.
+
+## Using it in a project, and sending fixes back
+
+How the projects that use it do it:
+
+- Rename this README to `KIT.md` (your project gets its own `README.md`). Add cellkit as a fetch-only remote: `git remote add cellkit <path-or-url>`, then `git fetch cellkit && git merge cellkit/main` to take kit updates.
+- Domain rules go in `cellkit.json`, your claim kinds in `kernel/schemas/claim.schema.json`, and your code outside `kernel/`. Then a kit merge only conflicts in the schema.
+- A kit fix found in a project goes back to cellkit as its own commit, never mixed with the project's log or domain code.
+- Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover. Set `origin` to a private backup and push after committing: the log is the record, so don't let it live on one disk.
+- Set `core.autocrlf=false` (see Traps).
+
+Not in the kit yet: a person-data seal (crypto-shredding, carnet `seal.ts`), a model map (carnet `models.ts`), requirement tracing (AI-MMO, DTG), cells that own paths outside their folder, and project claim kinds without editing the kernel's schema.
