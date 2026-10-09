@@ -164,11 +164,21 @@ function main(): number {
     case 'fold':
       return refold();
     case 'lint': {
-      const r = lint(cell);
-      for (const e of r.errors) console.error(`ERROR ${e}`);
-      for (const w of r.warnings) console.error(`warn  ${w}`);
-      console.log(`lint: ${r.entries} entries, ${r.errors.length} errors, ${r.warnings.length} warnings`);
-      return r.errors.length ? 1 : 0;
+      // --all: root and every cell, each cell's log where it is written (its worktree when it has one)
+      const cellsDir = join(cell, 'cells');
+      const dirs = rest.includes('--all') && !isCell(cell)
+        ? [cell, ...(existsSync(cellsDir) ? readdirSync(cellsDir).filter((n) => isCell(join(cellsDir, n))).map((n) => logHome(cell, n)) : [])]
+        : [cell];
+      let errors = 0;
+      for (const d of dirs) {
+        const r = lint(d);
+        const tag = dirs.length > 1 ? `${nameOf(d)}: ` : '';
+        for (const e of r.errors) console.error(`ERROR ${tag}${e}`);
+        for (const w of r.warnings) console.error(`warn  ${tag}${w}`);
+        console.log(`lint${dirs.length > 1 ? ` ${nameOf(d)}` : ''}: ${r.entries} entries, ${r.errors.length} errors, ${r.warnings.length} warnings`);
+        errors += r.errors.length;
+      }
+      return errors ? 1 : 0;
     }
     default:
       console.error('usage: cli.ts <init|append|assume|evidence|constraint|amend|approve|register|cell|fold|lint> [--cell dir]');

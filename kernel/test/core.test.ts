@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { append, AppendError, readLog, writer } from '../src/log.ts';
 import { fold } from '../src/fold.ts';
@@ -60,6 +61,12 @@ test('assumptions and constraints live in the log and fold with their history', 
   assert.equal(p.hypotheses.A1.history.length, 2);
   assert.equal(p.constraints[0].text, 'one city only');
   assert.deepEqual(lint(cell).errors, []);
+  const { renderAssumptions } = await import('../src/render.ts');
+  assert.match(renderAssumptions(p), /\| A1 \| x is true \| some \(was guess\) \|/);
+  evidence(cell, { id: 'A1', status: 'some', note: 'parked: the project moved to y' });    // shelved, status kept
+  const md = renderAssumptions(fold(readLog(cell)));
+  assert.match(md, /\| A1 \| x is true \| \*\*parked\*\* · some \(was guess\) \|/);
+  assert.match(md, /1 parked/);
 });
 
 test('bedrock: register → draft; amendments stay pending until approved; hand edits fail lint', async () => {
@@ -152,6 +159,16 @@ test('cell sync: root records a cell\'s head + published numbers once per move; 
   cellSync(root);
   assert.equal(readLog(root).length, n);
   assert.deepEqual(lint(root).errors, []);
+  // lint --all checks every cell's own chain too: an entry edited in place keeps its head, so root's lint alone passes
+  const cli = (...a: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), 'lint', '--cell', root, ...a], { encoding: 'utf8' });
+  const f = join(dir, 'state', 'log', '000004.observation.json');
+  const original = readFileSync(f, 'utf8');
+  writeFileSync(f, original.replace('"observed_at"', '"edited": true, "observed_at"'));
+  assert.equal(cli().status, 0);
+  const all = cli('--all');
+  assert.equal(all.status, 1, all.stdout);
+  assert.match(all.stderr, /ERROR c1: /);
+  writeFileSync(f, original);
   rmSync(join(dir, 'state', 'log', '000004.observation.json'));
   assert.ok(lint(root).errors.some((m) => m.includes('no longer in its log')));
 });

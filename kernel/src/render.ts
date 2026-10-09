@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Pictures } from './fold.ts';
 
 const cell = (s: string | undefined) => (s ?? '—').replaceAll('|', '\\|').replaceAll('\n', ' ');
+const parked = (h: Pictures['hypotheses'][string]) => h.history.length > 1 && /^parked:/i.test(h.history.at(-1)?.note ?? '');
 
 export function renderAssumptions(p: Pictures): string {
   const hs = Object.values(p.hypotheses);
@@ -18,16 +19,18 @@ export function renderAssumptions(p: Pictures): string {
     '',
     'Every claim this project rests on. Each one is a `hypothesis` claim in the log; status moves only when a new claim moves it.',
     '',
-    '**Status:** `guess` (no evidence) → `some` (indirect or n=1) → `evidence` (direct, repeatable) · or `refuted`.',
+    '**Status:** `guess` (no evidence) → `some` (indirect or n=1) → `evidence` (direct, repeatable) · or `refuted`. **parked**: shelved, its status kept (latest note starts `parked:`).',
     '',
-    `**Now:** ${hs.length} assumptions · ${count('guess')} guess · ${count('some')} some · ${count('evidence')} evidence · ${count('refuted')} refuted · log head \`${(p.summary.head ?? 'none').slice(0, 19)}…\``,
+    `**Now:** ${hs.length} assumptions · ${count('guess')} guess · ${count('some')} some · ${count('evidence')} evidence · ${count('refuted')} refuted · ${hs.filter(parked).length} parked · log head \`${(p.summary.head ?? 'none').slice(0, 19)}…\``,
     '',
     '| ID | Claim | Status | Source | Evidence so far | Cheapest test |',
     '|----|-------|--------|--------|-----------------|---------------|',
   ];
   for (const h of hs) {
     const moved = h.history.length > 1 && h.history[0].status !== h.status ? ` (was ${h.history[0].status})` : '';
-    lines.push(`| ${h.id} | ${cell(h.statement)} | ${h.status}${moved} | ${cell(h.source)} | ${cell(h.evidence)} | ${cell(h.test)} |`);
+    // shelved when the project changes direction, without faking a status: evidence --note "parked: why" (from carnet)
+    const shelf = parked(h) ? '**parked** · ' : '';
+    lines.push(`| ${h.id} | ${cell(h.statement)} | ${shelf}${h.status}${moved} | ${cell(h.source)} | ${cell(h.evidence)} | ${cell(h.test)} |`);
   }
   lines.push('', '## Known (not assumptions — recorded so they aren\'t re-litigated)', '');
   for (const c of p.constraints) lines.push(`- ${c.text} *(${c.observed_at.slice(0, 10)} · ${c.entry})*`);
