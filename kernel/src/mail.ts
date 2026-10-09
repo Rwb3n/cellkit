@@ -18,6 +18,7 @@
 //   node kernel/src/mail.ts send   --to root --kind blocked|question|done --body "…"   (from inside a cell)
 //   node kernel/src/mail.ts watch  [--as root] [--wait 600] [--for <id>]      → prints unread mail, marks it read
 //   node kernel/src/mail.ts status [--as <name>]
+//   node kernel/src/mail.ts release --as <cell> [--note "…"]   a session died mid-task: file a placeholder reply, free the cell
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -127,6 +128,12 @@ export function takeNext(cell: string): Message | null {
   return m;
 }
 
+// A cell's session died while working on a message (nothing will ever file its reply): file a placeholder reply so the
+// asker learns the task was not done, and the cell can take mail again. Only when no session for the cell is running.
+export function release(cell: string, note = '(released: the session ended without a reply; the task was not done)'): Message | null {
+  return fileReply(cell, note);
+}
+
 export const status = (dir: string) => ({ box: nameOf(dir), unread: unread(dir).length, working_on: current(dir) });
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────
@@ -150,10 +157,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       while (!got.length && Date.now() < until) { await sleep(3000); got = receive(box, opt('for')); }
       if (!got.length) console.log('(no unread mail)');
       for (const m of got) console.log(`── ${m.kind} from ${m.from} · ${m.id}${m.reply_to ? ` · re ${m.reply_to}` : ''} · ${m.at}\n${m.body}\n`);
+    } else if (cmd === 'release') {
+      if (!opt('as') || opt('as') === 'root') throw new MailError('release needs --as <cell>');
+      const m = release(boxOf(opt('as')), opt('note'));
+      console.log(m ? `released: filed ${m.id} as the reply to ${m.reply_to}` : `${opt('as')} is not working on a message`);
     } else if (cmd === 'status') {
       console.log(JSON.stringify(status(boxOf(opt('as')))));
     } else {
-      throw new MailError('usage: mail.ts send|watch|status …');
+      throw new MailError('usage: mail.ts send|watch|status|release …');
     }
   } catch (e) {
     if (e instanceof MailError) { console.error(`refused: ${e.message}`); process.exit(1); }

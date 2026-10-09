@@ -13,11 +13,14 @@
 // Refuses (exit 2) a cell with no worktree, (3) a cell already working on a message (another session is running it:
 // never run headless and interactive for the same cell at once), (4) a cell with nothing queued.
 // Otherwise exits with claude's code. The transcript (stream-json) goes to <mailbox>/runs/<UTC stamp>.jsonl.
+// A run that ends with a message still in flight (crash, kill, API error: no final stop filed the reply) files a reply
+// saying so, so root learns the task was not done and the cell is not left refusing every later run (exit 3).
+// CELLKIT_CLAUDE names the claude executable (default: claude on PATH).
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mailbox, status } from './mail.ts';
+import { fileReply, mailbox, status } from './mail.ts';
 import { cellWorktree, inMain } from './worktree.ts';
 
 export const PROMPT = 'waiting for mail';
@@ -31,7 +34,7 @@ function which(name: string): string {
 }
 
 export function command(model?: string): string[] {
-  return [which('claude'), '-p', PROMPT, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
+  return [process.env.CELLKIT_CLAUDE || which('claude'), '-p', PROMPT, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
 }
 
 function main(argv: string[]): number {
@@ -47,7 +50,11 @@ function main(argv: string[]): number {
   const cellDir = join(wt, 'cells', name);
   if (!existsSync(join(cellDir, 'binding.json'))) { console.error(`cellrun: ${cellDir} is not a cell folder`); return 2; }
   const st = status(cellDir);
-  if (st.working_on) { console.error(`cellrun: ${name} is already working on ${st.working_on} (another session?); not starting a second`); return 3; }
+  if (st.working_on) {
+    console.error(`cellrun: ${name} is already working on ${st.working_on} (another session?); not starting a second. ` +
+      `If no session is running (it died), file a placeholder reply and free the cell: node kernel/src/mail.ts release --as ${name}`);
+    return 3;
+  }
   if (!st.unread) { console.error(`cellrun: no mail queued for ${name}`); return 4; }
 
   const cmd = command(opt('model'));
@@ -69,7 +76,12 @@ function main(argv: string[]): number {
     : spawnSync(cmd[0], cmd.slice(1), { cwd: cellDir, env, stdio: ['ignore', out, out] });
   closeSync(out);
   if (r.error) { console.error(`cellrun: could not start ${cmd[0]}: ${r.error.message}`); return 1; }
-  const after = status(cellDir);
+  let after = status(cellDir);
+  if (after.working_on) {
+    const died = fileReply(cellDir, `(cellrun: the session exited ${r.status} without replying to ${after.working_on}. The task was not done; transcript ${log}. Resend it if it still matters.)`);
+    console.error(`cellrun: ${name} exited with ${after.working_on} still in flight; filed ${died?.id} to say so`);
+    after = status(cellDir);
+  }
   console.log(`cellrun: ${name} exited ${r.status}; its inbox ${after.unread} unread, working_on ${after.working_on}; root inbox ${status(root).unread} unread`);
   return r.status ?? 1;
 }

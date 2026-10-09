@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
@@ -203,4 +203,38 @@ test('cellrun: starts the cell headless in its own worktree, only with mail queu
   assert.equal(cellrun('--cell', 'other', '--dry-run').code, 2);            // no worktree: refused
   takeNext(cellWt);
   assert.equal(cellrun('--cell', 'demo', '--dry-run').code, 3);             // a session is already on a task
+  assert.match(cellrun('--cell', 'demo', '--dry-run').out, /mail\.ts release --as demo/);
+});
+
+test('cellrun: a run that dies mid-task files a reply saying so and frees the cell; release does it by hand', (t) => {
+  const { main, cellWt } = world(t);
+  const sent = send(main, 'demo', 'task one');
+  send(main, 'demo', 'task two');
+  // a "claude" that exits at once: node refuses claude's flags. Pretend the session took the task first, then died.
+  takeNext(cellWt);
+  const r = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: process.execPath });
+  assert.equal(r.status, 3, r.stderr);                                       // in flight: refused, and told how to free it
+  const rel = run('mail.ts', ['release', '--as', 'demo'], { CLAUDE_PROJECT_DIR: cellWt });
+  assert.equal(rel.status, 0, rel.stderr);
+  assert.equal(current(cellWt), null);
+  const [placeholder] = receive(main);
+  assert.equal(placeholder.reply_to, sent.id);
+  // now a run whose session takes task two, then dies before any stop files the reply
+  const fake = join(tmpdir(), `cellkit-fake-claude-${process.pid}`);
+  writeFileSync(`${fake}.mjs`, `import { takeNext } from ${JSON.stringify(pathToFileURL(join(src, 'mail.ts')).href)};
+takeNext(process.cwd());
+process.exit(1);
+`);
+  const exe = process.platform === 'win32' ? `${fake}.cmd` : fake;
+  writeFileSync(exe, process.platform === 'win32' ? `@"${process.execPath}" "${fake}.mjs"
+` : `#!/bin/sh
+exec "${process.execPath}" "${fake}.mjs"
+`, { mode: 0o755 });
+  t.after(() => { rmSync(`${fake}.mjs`, { force: true }); rmSync(exe, { force: true }); });
+  const died = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: exe });
+  assert.equal(died.status, 1, died.stdout + died.stderr);
+  assert.match(died.stderr, /still in flight; filed/);
+  assert.equal(status(cellWt).working_on, null);                             // the cell can run again
+  const [reply] = receive(main);
+  assert.match(reply.body, /without replying .* The task was not done/);
 });
