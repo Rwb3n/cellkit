@@ -13,6 +13,8 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { globRe } from './glob.ts';
+import { configPath, loadConfig } from './config.ts';
 
 export class WorktreeError extends Error {}
 
@@ -119,7 +121,7 @@ export function misplaced(cellDir: string): string | null {
 
 // ── audit: detection backs up prevention ─────────────────────────────────────────
 // Hooks are heuristics (a script a cell runs can write anywhere). Before root commits a cell's work, every changed
-// path must lie inside cells/<name>/ (or match an --except glob).
+// path must lie inside cells/<name>/, or a path the cell owns (bedrock guards.json), or match an --except glob.
 //   With a worktree: only the cell's branch (commits since it left main's HEAD) and its worktree (uncommitted) are
 //   read, so every change is the cell's. Root's log and docs/assumptions.md are not excused there: root-log writes
 //   always land in the main checkout, so a change to them on a cell branch is a fork.
@@ -129,7 +131,10 @@ export function misplaced(cellDir: string): string | null {
 export function cellAudit(root: string, name: string, except: string[] = []): string[] {
   const main = inMain(root);
   if (!isCellDir(join(main, 'cells', name))) throw new WorktreeError(`no cell cells/${name} with a binding.json`);
-  const own = [`cells/${name}/**`, ...except];
+  // a cell's own folder, plus the repo paths it owns (main's bedrock guards.json: ownership is root's, as approved)
+  const config = loadConfig(configPath(main));
+  if (config.error) throw new WorktreeError(config.error);
+  const own = [`cells/${name}/**`, ...(config.owns[name] ?? []), ...except];
   const wt = cellWorktree(main, name);
   const [changes, allowed] = wt
     ? [worktreeChanges(main, wt), own]
@@ -149,17 +154,4 @@ function worktreeChanges(main: string, wt: string): string[] {
   return [...committed, ...changedPaths(wt)];
 }
 
-// `**` any number of segments (`x/**` also matches x itself), `*` and `?` within one segment. Case-insensitive.
-export function globRe(glob: string): RegExp {
-  const g = glob.toLowerCase().replace(/^\/+|\/+$/g, '');
-  let out = '';
-  for (let i = 0; i < g.length;) {
-    if (g.startsWith('**/', i)) { out += '(?:.*/)?'; i += 3; }
-    else if (g.startsWith('/**', i) && i + 3 === g.length) { out += '(?:/.*)?'; i += 3; }
-    else if (g.startsWith('**', i)) { out += '.*'; i += 2; }
-    else if (g[i] === '*') { out += '[^/]*'; i++; }
-    else if (g[i] === '?') { out += '[^/]'; i++; }
-    else { out += g[i].replace(/[.+^${}()|[\]\\]/g, '\\$&'); i++; }
-  }
-  return new RegExp(`^${out}$`);
-}
+export { globRe };

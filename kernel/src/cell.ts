@@ -8,6 +8,7 @@ import { AppendError, readLog, writer, type Entry } from './log.ts';
 import { fold } from './fold.ts';
 import { foldReviews } from './review.ts';
 import { ensure as ensureMailbox } from './mail.ts';
+import { configPath, loadConfig } from './config.ts';
 
 // A binding is the cell's domain: its scope plus whatever your project needs (registries, thresholds, vocabularies…).
 export interface Binding { name: string; scope: Record<string, string>; [k: string]: unknown }
@@ -17,7 +18,7 @@ export function readBinding(cellDir: string): Binding | null {
   return existsSync(bindingPath(cellDir)) ? JSON.parse(readFileSync(bindingPath(cellDir), 'utf8')) : null;
 }
 
-const agentsMd = (b: Binding, toRoot: string) => `# cell: ${b.name}
+const agentsMd = (b: Binding, toRoot: string, owns: string[] = []) => `# cell: ${b.name}
 
 A cell: \`(state, input) → (state′, output)\`. Born by \`kernel/src/cli.ts cell new\`; regenerate this file with \`cell refresh\`.
 
@@ -31,7 +32,7 @@ ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md'
 ## Boundary
 
 - **You write anywhere inside this folder, and only here** (hook-enforced, the shell included): \`adapters/\` (entry), \`exit/\` (exit code and durable reports), \`test/\`, \`MODEL.md\`, \`state/out/metrics.json\`, and whatever else your work needs. Not \`state/log/\` or \`state/views/\`: your log is written only through the kernel.
-- **Durable output goes in \`exit/\`** (committed, merged by root). \`state/out/\` is git-ignored except \`metrics.json\`, so a report left there never reaches root.
+${owns.length ? `- **You also own, outside this folder:** ${owns.map((g) => `\`${toRoot}/${g}\``).join(' · ')} (root's bedrock \`guards.json\`; paths from the repository root). Write there too; nothing else outside this folder.\n` : ''}- **Durable output goes in \`exit/\`** (committed, merged by root). \`state/out/\` is git-ignored except \`metrics.json\`, so a report left there never reaches root.
 - **Read-only above you:** \`${toRoot}/kernel/\`, root bedrock and docs, other cells.
 - **Need a kernel or root change?** Don't work around it — say so (what, why, smallest change). Root decides.
 - **The rule says no, the evidence says probably yes?** Raise a review proposing ONE exact claim with its evidence: \`node ${toRoot}/kernel/src/cli.ts review raise --cell . --file r.json\` (\`{ question, proposes: { about, kind, says }, evidence }\`). Root is mailed; only the operator decides.
@@ -81,7 +82,8 @@ function scaffold(dir: string, b: Binding, toRoot: string) {
     if (!readdirSync(join(dir, d)).length) writeFileSync(join(dir, d, '.gitkeep'), '');
   }
   ensureMailbox(dir);
-  writeFileSync(join(dir, 'AGENTS.md'), agentsMd(b, toRoot));
+  const config = loadConfig(configPath(resolve(dir, toRoot)));        // the paths root's guards say this cell owns
+  writeFileSync(join(dir, 'AGENTS.md'), agentsMd(b, toRoot, config.error ? [] : config.owns[b.name] ?? []));
   writeFileSync(join(dir, 'CLAUDE.md'), '# CLAUDE.md\n\nRead [`AGENTS.md`](AGENTS.md) in this folder.\n');
   writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify(settings(toRoot), null, 2) + '\n');
 }

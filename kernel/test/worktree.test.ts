@@ -300,3 +300,42 @@ test('kinds: a project\'s claim kinds are bedrock; a kinds doc that would invali
   assert.match(cli('amend', '--doc', 'kinds', '--layer', 'kinds', '--reason', 'drop').out, /\(kind visit\) would no longer be valid/);
   assert.equal(cli('lint').code, 0);
 });
+
+test('owns: a cell writes the repo paths root\'s guards give it — hooks, brief, audit and land agree; lint refuses two owners', async (t) => {
+  const { main, wt, cellWt } = world(t, { kernel: true });
+  const cli = (...args: string[]) => { const r = spawnSync(process.execPath, [join(main, 'kernel', 'src', 'cli.ts'), ...args], { encoding: 'utf8' }); return { code: r.status, out: r.stdout + r.stderr }; };
+  mkdirSync(join(main, 'state', 'bedrock', 'proposed'), { recursive: true });
+  writeFileSync(join(main, 'state', 'bedrock', 'proposed', 'guards.json'), JSON.stringify({ cells: { demo: { owns: ['game/**'] } } }));
+  assert.equal(cli('amend', '--doc', 'guards', '--layer', 'rules', '--reason', 'demo owns game/', '--cell', main).code, 0);
+  assert.equal(cli('approve', '--doc', 'guards', '--cell', main).code, 0);  // (the operator)
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'guards');
+  git(wt, 'merge', '-q', 'main');                                           // how bedrock reaches a cell's branch
+  assert.equal(cli('cell', 'refresh', '--name', 'demo', '--cell', main).code, 0);
+  assert.match(readFileSync(join(main, 'cells', 'demo', 'AGENTS.md'), 'utf8'), /You also own, outside this folder:\*\* `\.\.\/\.\.\/game\/\*\*`/);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'refresh'); git(wt, 'merge', '-q', 'main');
+  // the cell's hooks are its worktree's kernel copy, reading its branch's guards
+  const hook = (script: string, tool_input: Record<string, string>) => spawnSync(process.execPath, [join(wt, 'kernel', 'src', script)],
+    { input: JSON.stringify({ cwd: cellWt, tool_input }), env: { ...process.env, CLAUDE_PROJECT_DIR: cellWt }, encoding: 'utf8' }).status;
+  assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'game', 'map.ts') }), 0);
+  assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'sim', 'x.ts') }), 2);
+  assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'kernel', 'src', 'x.ts') }), 2);
+  assert.equal(hook('hook-bash.ts', { command: 'echo x > ../../game/b.ts' }), 0);
+  assert.equal(hook('hook-bash.ts', { command: 'echo x > ../../sim/b.ts' }), 2);
+  mkdirSync(join(wt, 'game'), { recursive: true });
+  writeFileSync(join(wt, 'game', 'map.ts'), 'export {}\n');
+  assert.deepEqual(cellAudit(main, 'demo'), []);
+  mkdirSync(join(wt, 'sim'));
+  writeFileSync(join(wt, 'sim', 'x.ts'), '\n');
+  assert.deepEqual(cellAudit(main, 'demo'), ['sim/x.ts']);
+  rmSync(join(wt, 'sim'), { recursive: true });
+  const landed = cli('cell', 'land', '--name', 'demo', '--message', 'map', '--cell', main);
+  assert.equal(landed.code, 0, landed.out);
+  assert.equal(readFileSync(join(main, 'game', 'map.ts'), 'utf8'), 'export {}\n');
+  // two owners of one tracked file: lint says so (root's ownership is a decision, not a race)
+  const { lintOwnership } = await import('../src/lint.ts');
+  assert.deepEqual(lintOwnership(main).errors, []);
+  writeFileSync(join(main, 'state', 'bedrock', 'guards.json'), JSON.stringify({ cells: { demo: { owns: ['game/**'] }, other: { owns: ['game/map.ts'] } } }));
+  assert.match(lintOwnership(main).errors.join('\n'), /differs from its approved version/);   // a hand edit is caught first
+  rmSync(join(main, 'state', 'views', 'bedrock.json'));                     // (no views: the file is trusted, as in a worktree)
+  assert.match(lintOwnership(main).errors.join('\n'), /game\/map\.ts is owned by demo and other/);
+});

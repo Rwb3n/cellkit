@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from './canon.ts';
-import { globRe } from './worktree.ts';
+import { globRe } from './glob.ts';
 
 export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }

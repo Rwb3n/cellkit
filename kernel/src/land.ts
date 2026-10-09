@@ -8,7 +8,7 @@
 // state/log/, state/views/, docs/assumptions.md: mail and sync write those) · `cell audit` finds a change outside
 // cells/<name>/.
 // Then, stopping at the first failure and undoing what it did on the cell's branch:
-//   1. commit the cell's uncommitted work on its branch (pathspec cells/<name>)
+//   1. commit the cell's uncommitted work on its branch (pathspec cells/<name> and the paths it owns)
 //   2. merge <into> into the cell's branch (a conflict: abort, and leave it to root in the worktree)
 //   3. audit again, and run --check in the worktree (e.g. "cd kernel && npm test"): the merged result is what is tested
 //   4. merge the cell's branch into <into> with --no-ff (one revertable commit: git revert -m 1 <it>)
@@ -16,6 +16,8 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { status } from './mail.ts';
+import { configPath, loadConfig } from './config.ts';
+import { globRe } from './glob.ts';
 import { cellAudit, cellBranch, cellWorktree, currentBranch, inMain, WorktreeError } from './worktree.ts';
 
 const ROOT_WRITTEN = [/^state\/log\//, /^state\/views\//, /^docs\/assumptions\.md$/];
@@ -56,8 +58,11 @@ export function cellLand(root: string, o: LandOptions): string[] {
   const steps: string[] = [];
   const start = head(wt);
   if (pending.length) {
-    git(wt, ['add', '-A', '--', `cells/${name}`]);
-    git(wt, ['commit', '-q', '-m', message, '--', `cells/${name}`]);
+    // the cell's folder, and each path it owns that has changes (git refuses a pathspec matching nothing)
+    const owned = (loadConfig(configPath(main)).owns[name] ?? []).filter((g) => pending.some((p) => globRe(g).test(p.toLowerCase())));
+    const spec = [`cells/${name}`, ...owned.map((g) => `:(glob)${g}`)];
+    git(wt, ['add', '-A', '--', ...spec]);
+    git(wt, ['commit', '-q', '-m', message, '--', ...spec]);
     steps.push(`committed on ${branch}: ${head(wt).slice(0, 9)}`);
   }
   const committed = head(wt);

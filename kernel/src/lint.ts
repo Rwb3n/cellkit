@@ -6,8 +6,31 @@ import { viewsDir } from './fold.ts';
 import { check } from './schemas.ts';
 import { lintBedrock } from './bedrock.ts';
 import { lintCells } from './cell.ts';
+import { configPath, loadConfig } from './config.ts';
+import { globRe } from './glob.ts';
+import { spawnSync } from 'node:child_process';
 
 export interface LintResult { errors: string[]; warnings: string[]; entries: number }
+
+// Ownership (bedrock guards.json cells.<name>.owns): no tracked file is owned by two cells, and every owner is a cell.
+// Read from the committed tree, so an overlap shows once both cells' files are in it. Root is no owner: it has no
+// boundary and may write anywhere.
+export function lintOwnership(root: string): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [], warnings: string[] = [];
+  const config = loadConfig(configPath(root));
+  if (config.error) return { errors: [config.error], warnings };
+  const owners = Object.entries(config.owns).filter(([, g]) => g.length);
+  for (const [n] of owners) if (!existsSync(join(root, 'cells', n, 'binding.json'))) warnings.push(`guards.json: cells.${n} owns paths, but there is no cell ${n}`);
+  if (owners.length < 2) return { errors, warnings };
+  const r = spawnSync('git', ['-C', root, '-c', 'core.quotepath=off', 'ls-files'], { encoding: 'utf8' });
+  if (r.status !== 0) return { errors, warnings };
+  const res = owners.map(([n, g]) => [n, g.map(globRe)] as const);
+  for (const f of r.stdout.split(/\r?\n/).filter(Boolean)) {
+    const by = res.filter(([, rs]) => rs.some((x) => x.test(f.toLowerCase()))).map(([n]) => n);
+    if (by.length > 1) errors.push(`${f} is owned by ${by.join(' and ')} (guards.json): one owner per path`);
+  }
+  return { errors, warnings };
+}
 
 export function lint(cellDir: string): LintResult {
   const errors: string[] = [];
@@ -48,6 +71,9 @@ export function lint(cellDir: string): LintResult {
     errors.push(...b.errors);
     warnings.push(...b.warnings);
     errors.push(...lintCells(cellDir, readLog(cellDir))); // every cell head the parent recorded still exists
+    const o = lintOwnership(cellDir);
+    errors.push(...o.errors);
+    warnings.push(...o.warnings);
   }
 
   const summaryPath = join(viewsDir(cellDir), 'summary.json');

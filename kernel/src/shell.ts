@@ -65,8 +65,9 @@ const isAbs = (p: string) => /^[a-zA-Z]:\//.test(p) || p.startsWith('/');
 
 // The first write target of `command`, run in `cwd`, that lies outside `dir` (null = none). The temp folder (outside the
 // cell's repository) and the null device are fine; a target built from a variable ($x, %x%, ~) can't be judged and is
-// let through.
-export function outside(command: string, cwd: string, dir: string): string | null {
+// let through. `owned`: the repo paths the cell also owns (config.ts ownedRes), matched against the path relative to
+// the repository (the folder two above the cell).
+export function outside(command: string, cwd: string, dir: string, owned: RegExp[] = []): string | null {
   const home = norm(dir), tmp = norm(tmpdir()), repo = norm(`${home}/../..`);
   const under = (p: string, d: string) => p === d || p.startsWith(d + '/');
   let here = norm(cwd);
@@ -76,6 +77,7 @@ export function outside(command: string, cwd: string, dir: string): string | nul
     const t = target!;
     if (/[$%~`]/.test(t) || t.startsWith('&') || /^(\/dev\/(null|stdout|stderr)|nul|\$null)$/i.test(t)) continue;
     const abs = resolveIn(t);
+    if (under(abs, repo) && abs !== repo && owned.some((r) => r.test(abs.slice(repo.length + 1)))) continue;
     if (under(abs, home) || ((under(abs, tmp) || under(abs, '/tmp')) && !under(abs, repo))) continue;   // /tmp: Git Bash's temp too
     return t;
   }

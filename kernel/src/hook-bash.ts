@@ -14,7 +14,8 @@
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
 import { existsSync } from 'node:fs';
 import { misplaced } from './worktree.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, ownedRes } from './config.ts';
+import { basename } from 'node:path';
 import { outside, writeTargets } from './shell.ts';
 
 let raw = '';
@@ -59,8 +60,8 @@ if (project && existsSync(`${project}/binding.json`)
   if (wrong) block(wrong);
 }
 if (project && existsSync(`${project}/binding.json`)) {
-  const out = outside(command, cwd || project, project);
-  if (out) block(`${out} is outside this cell (${project}). A cell writes only inside its own folder; if the kernel or root docs need a change, say so in your reply.`);
+  const out = outside(command, cwd || project, project, ownedRes(config, basename(project)));
+  if (out) block(`${out} is outside this cell (${project}) and not among the paths it owns. A cell writes only inside its own folder and its owned paths (bedrock guards.json); if the kernel or root docs need a change, say so in your reply.`);
 }
 
 // The project's guards look at what a command writes (shell.ts targets, or a path a script-write call names), not at
