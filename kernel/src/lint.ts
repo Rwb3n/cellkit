@@ -12,6 +12,17 @@ import { spawnSync } from 'node:child_process';
 
 export interface LintResult { errors: string[]; warnings: string[]; entries: number }
 
+// The root handover (docs/ROOT.md, from templates/ROOT.md) goes stale quietly while the project moves on. DTG reports
+// the commits since its handover changed at every status; lint warns once there are HANDOVER_STALE of them.
+export const HANDOVER_STALE = 20;
+export function handoverAge(root: string): number | null {
+  if (!existsSync(join(root, 'docs', 'ROOT.md'))) return null;
+  const last = spawnSync('git', ['-C', root, 'log', '-1', '--format=%H', '--', 'docs/ROOT.md'], { encoding: 'utf8' });
+  if (last.status !== 0 || !last.stdout.trim()) return null;
+  const n = spawnSync('git', ['-C', root, 'rev-list', '--count', `${last.stdout.trim()}..HEAD`], { encoding: 'utf8' });
+  return n.status === 0 ? Number(n.stdout.trim()) : null;
+}
+
 // Ownership (bedrock guards.json cells.<name>.owns): no tracked file is owned by two cells, and every owner is a cell.
 // Read from the committed tree, so an overlap shows once both cells' files are in it. Root is no owner: it has no
 // boundary and may write anywhere.
@@ -75,6 +86,8 @@ export function lint(cellDir: string): LintResult {
     const o = lintOwnership(cellDir);
     errors.push(...o.errors);
     warnings.push(...o.warnings);
+    const stale = handoverAge(cellDir);
+    if (stale !== null && stale >= HANDOVER_STALE) warnings.push(`docs/ROOT.md last changed ${stale} commits ago: are its routines and lessons still true?`);
   }
 
   const summaryPath = join(viewsDir(cellDir), 'summary.json');

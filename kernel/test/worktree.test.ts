@@ -280,6 +280,18 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.match(land().stdout, /nothing to land/);
 });
 
+test('lint: a root handover untouched for 20 commits gets a warning', async (t) => {
+  const { main } = world(t);
+  const { handoverAge, HANDOVER_STALE } = await import('../src/lint.ts');
+  assert.equal(handoverAge(main), null);                                    // no docs/ROOT.md: nothing to say
+  mkdirSync(join(main, 'docs'), { recursive: true });
+  writeFileSync(join(main, 'docs', 'ROOT.md'), '# ROOT\n');
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'handover');
+  assert.equal(handoverAge(main), 0);
+  for (let i = 0; i < HANDOVER_STALE; i++) git(main, 'commit', '-q', '--allow-empty', '-m', `work ${i}`);
+  assert.match(run('cli.ts', ['lint', '--cell', main]).stderr, /docs\/ROOT\.md last changed 20 commits ago/);
+});
+
 test('cell land: weaker tests stop the land; the operator lands them with a reason that goes into the merge', (t) => {
   const { main, wt, cellWt } = world(t);
   const suite = join(main, 'cells', 'demo', 'test', 'a.test.ts');
