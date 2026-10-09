@@ -5,7 +5,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Entry } from './log.ts';
 
-export interface SubjectPicture { claims: number; voices: string[]; voice_count: number; kinds: Record<string, number> }
+// voices: everyone who said something about the subject. independent: the voices whose agreement counts. A check is a
+// claim about a claim, never a voice; the kit's own and a model's voices are machinery, not witnesses (from carnet).
+export interface SubjectPicture { claims: number; voices: string[]; voice_count: number; independent: number; kinds: Record<string, number> }
+export const SYSTEM_VOICE = /^voice:(kernel|model\/|registry\/)/;
 
 export interface HypothesisPicture {
   id: string; statement: string; test?: string; evidence?: string; source?: string; voice: string; status: string;
@@ -16,7 +19,7 @@ export interface HypothesisPicture {
 export interface ConstraintPicture { subject: string; text: string; entry: string; observed_at: string; voice: string }
 
 export interface Pictures {
-  summary: { head: string | null; entries: number; observations: number; claims: number; subjects: number };
+  summary: { head: string | null; entries: number; observations: number; claims: number; subjects: number; agreed: number };   // agreed: subjects with 2+ independent voices
   subjects: Record<string, SubjectPicture>;
   hypotheses: Record<string, HypothesisPicture>;
   constraints: ConstraintPicture[];
@@ -26,6 +29,7 @@ export interface Pictures {
 export function fold(log: Entry[]): Pictures {
   const subjects: Record<string, SubjectPicture> = {};
   const voices: Record<string, Set<string>> = {};
+  const independent: Record<string, Set<string>> = {};
   const hypotheses: Record<string, HypothesisPicture> = {};
   const constraints: ConstraintPicture[] = [];
   const checks: Record<string, number> = {};
@@ -37,10 +41,11 @@ export function fold(log: Entry[]): Pictures {
     claims++;
     const b = e.body as { about: string[]; kind: string; says: unknown; voice: string; from: string; status?: string };
     for (const s of b.about) {
-      const p = (subjects[s] ??= { claims: 0, voices: [], voice_count: 0, kinds: {} });
+      const p = (subjects[s] ??= { claims: 0, voices: [], voice_count: 0, independent: 0, kinds: {} });
       p.claims++;
       p.kinds[b.kind] = (p.kinds[b.kind] ?? 0) + 1;
       (voices[s] ??= new Set()).add(b.voice);
+      if (b.kind !== 'check' && !SYSTEM_VOICE.test(b.voice)) (independent[s] ??= new Set()).add(b.voice);
       if (b.kind === 'rule' && s.startsWith('thing:constraint/'))
         constraints.push({ subject: s, text: (b.says as { text: string }).text, entry: e.id, observed_at: observedAt[b.from], voice: b.voice });
     }
@@ -58,9 +63,10 @@ export function fold(log: Entry[]): Pictures {
   }
 
   const sorted: Record<string, SubjectPicture> = {};
-  for (const s of Object.keys(subjects).sort()) { const v = [...voices[s]].sort(); sorted[s] = { ...subjects[s], voices: v, voice_count: v.length }; }
+  for (const s of Object.keys(subjects).sort()) { const v = [...voices[s]].sort(); sorted[s] = { ...subjects[s], voices: v, voice_count: v.length, independent: independent[s]?.size ?? 0 }; }
   return {
-    summary: { head: log.at(-1)?.hash ?? null, entries: log.length, observations, claims, subjects: Object.keys(sorted).length },
+    summary: { head: log.at(-1)?.hash ?? null, entries: log.length, observations, claims, subjects: Object.keys(sorted).length,
+      agreed: Object.values(sorted).filter((x) => x.independent >= 2).length },
     subjects: sorted,
     hypotheses: Object.fromEntries(Object.keys(hypotheses).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).map((k) => [k, hypotheses[k]])),
     constraints,

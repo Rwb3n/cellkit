@@ -50,6 +50,24 @@ test('a claim must come from an earlier observation; a check must be about an ea
   assert.deepEqual(lint(cell).errors, []);
 });
 
+test('fold counts independent voices: the kit\'s and models\' voices and checks are machinery, not witnesses', () => {
+  const cell = freshCell();
+  const o = append(cell, { kind: 'observation', body: obs() });
+  const say = (voice: string, about = ['thing:cafe']) => append(cell, { kind: 'claim', body: { about, kind: 'fact', says: 'open', from: o.id, voice } });
+  const first = say('voice:alice');
+  say('voice:kernel');
+  say('voice:model/x');
+  append(cell, { kind: 'claim', body: { about: [`claim:${first.id}`], kind: 'check', says: { p: 0.9 }, from: o.id, voice: 'voice:model/x' } });
+  let p = fold(readLog(cell));
+  assert.equal(p.subjects['thing:cafe'].voice_count, 3);
+  assert.equal(p.subjects['thing:cafe'].independent, 1);
+  assert.equal(p.summary.agreed, 0);
+  say('voice:bob');
+  p = fold(readLog(cell));
+  assert.equal(p.subjects['thing:cafe'].independent, 2);
+  assert.equal(p.summary.agreed, 1);
+});
+
 test('assumptions and constraints live in the log and fold with their history', async () => {
   const { assume, evidence, constraint } = await import('../src/generators.ts');
   const cell = freshCell();
