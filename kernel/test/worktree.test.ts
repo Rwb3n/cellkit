@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
 import { current, mailbox, receive, send, status, takeNext } from '../src/mail.ts';
-import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, misplaced, samePath } from '../src/worktree.ts';
+import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, inMain, misplaced, samePath } from '../src/worktree.ts';
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { encoding: 'utf8' });
@@ -34,7 +34,9 @@ function world(t: TestContext, o: { kernel?: boolean } = {}) {
     const k = resolve(src, '..');
     for (const d of ['src', 'schemas', 'package.json']) cpSync(join(k, d), join(main, 'kernel', d), { recursive: true });
     const devOnly = /node_modules[\\/](typescript|@types|undici-types)([\\/]|$)/;
-    cpSync(join(k, 'node_modules'), join(main, 'kernel', 'node_modules'), { recursive: true, filter: (f) => !devOnly.test(f) });
+    // run from a cell's worktree, this kernel has no node_modules of its own either: take the main checkout's (as schemas.ts does)
+    const modules = existsSync(join(k, 'node_modules')) ? join(k, 'node_modules') : join(inMain(k), 'node_modules');
+    cpSync(modules, join(main, 'kernel', 'node_modules'), { recursive: true, filter: (f) => !devOnly.test(f) });
   }
   writeFileSync(join(main, '.gitignore'), 'node_modules/\n**/state/views/\n');
   git(main, 'init', '-q', '-b', 'main');
