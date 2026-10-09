@@ -125,7 +125,7 @@ function main(): number {
       if (rest[0] === 'land') {
         const name = opt('name');
         let steps: string[];
-        try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run') }); }
+        try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run'), acceptWeaker: opt('accept-weaker') }); }
         catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
         for (const s of steps) console.log(s);
         if (rest.includes('--dry-run')) return 0;

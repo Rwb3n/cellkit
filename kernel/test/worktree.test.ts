@@ -280,6 +280,24 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.match(land().stdout, /nothing to land/);
 });
 
+test('cell land: weaker tests stop the land; the operator lands them with a reason that goes into the merge', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const suite = join(main, 'cells', 'demo', 'test', 'a.test.ts');
+  writeFileSync(suite, `test('one', () => { assert.ok(1); });\ntest('two', () => { assert.ok(2); });\n`);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'tests'); git(wt, 'merge', '-q', 'main');
+  writeFileSync(join(cellWt, 'test', 'a.test.ts'), `test('one', () => { assert.ok(1); });\n`);    // the cell drops a case
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  assert.match(land('--dry-run').stdout, /would stop: the cell's tests got weaker/);
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  const refused = land('--message', 'trim');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /a\.test\.ts: 1 fewer test case[\s\S]*--accept-weaker[\s\S]*back where it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);
+  const ok = land('--message', 'trim', '--accept-weaker', 'case two moved to the integration suite');   // (the operator)
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(git(main, 'log', '-1', '--format=%B', 'HEAD~1'), /Weaker tests, accepted by the operator: case two moved[\s\S]*1 fewer test case/);
+});
+
 test('kinds: a project\'s claim kinds are bedrock; a kinds doc that would invalidate a logged claim is refused', (t) => {
   const { main } = world(t, { kernel: true });
   // the project's own kernel copy reads the project's bedrock, as in a real project
