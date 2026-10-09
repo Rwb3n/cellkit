@@ -112,6 +112,17 @@ test('worktree: root-log writes made from a worktree land in the main checkout\'
   assert.equal(run('cli.ts', ['lint', '--cell', wt]).status, 0);             // reads stay local
 });
 
+test('worktree: a write to a cell log from the main checkout lands in the cell worktree, so its chain never forks', (t) => {
+  const { cellWt, cellMain } = world(t);
+  const before = { main: readLog(cellMain).length, wt: readLog(cellWt).length };
+  const r = run('cli.ts', ['assume', '--cell', cellMain, '--id', 'A1', '--voice', 'claude', '--statement', 's', '--test', 't']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /has its own worktree; writing its log there/);
+  assert.equal(readLog(cellMain).length, before.main);                       // the main checkout's copy is untouched
+  assert.equal(readLog(cellWt).length, before.wt + 2);
+  assert.equal(run('cli.ts', ['lint', '--cell', cellMain]).status, 0);       // reads stay local
+});
+
 test('worktree: a session opened in the main checkout is refused — no writes, no new mail — and told where to reopen', (t) => {
   const { main, cellWt, cellMain } = world(t);
   const g = hook('hook-guard.ts', cellMain, { file_path: join(cellMain, 'MODEL.md') });

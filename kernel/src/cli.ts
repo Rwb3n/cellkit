@@ -18,7 +18,8 @@
 // Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
 // Every write refolds: state/views/* and docs/assumptions.md (generated; hook-blocked).
 // Run from a cell's worktree, every command that writes root's log writes the main checkout's (worktree.ts), so root's
-// hash chain never forks; fold and lint stay local. A cell's own log (--cell <cell>) is untouched.
+// hash chain never forks; fold and lint stay local. A write to a cell's log (--cell <cell>) lands in that cell's worktree
+// when it has one, wherever it is run from.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,8 +31,8 @@ import { assume, constraint, evidence } from './generators.ts';
 import { amend, approve, bedrockDir, foldBedrock, register } from './bedrock.ts';
 import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
-import { isCell, send as sendMail } from './mail.ts';
-import { cellAudit, cellBranch, cellCheckout, inMain, WorktreeError } from './worktree.ts';
+import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
+import { cellAudit, cellBranch, cellCheckout, inMain, samePath, WorktreeError } from './worktree.ts';
 import type { Kind } from './schemas.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -40,7 +41,13 @@ const [cmd, ...rest] = process.argv.slice(2);
 const opt = (name: string) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined; };
 const WRITES = ['init', 'append', 'assume', 'evidence', 'constraint', 'amend', 'approve', 'register', 'cell', 'review'];
 const local = resolve(opt('cell') ?? repoRoot);
-const cell = WRITES.includes(cmd) && !isCell(local) ? inMain(local) : local;
+let cell = WRITES.includes(cmd) && !isCell(local) ? inMain(local) : local;
+// A cell with its own worktree keeps its log there (it travels on its branch): a write aimed at another copy of it (the
+// main checkout's, e.g. `review decide --cell cells/<x>` from root) goes to the worktree's, as mail does, so its chain never forks.
+if (WRITES.includes(cmd) && isCell(local) && !samePath(logHome(rootOf(local), nameOf(local)), local)) {
+  cell = logHome(rootOf(local), nameOf(local));
+  console.error(`note: cells/${nameOf(local)} has its own worktree; writing its log there (${cell})`);
+}
 const isRoot = cell === repoRoot || cell === inMain(repoRoot);
 
 function refold(): number {
