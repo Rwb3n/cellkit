@@ -2,7 +2,7 @@
 // assumptions live in the log, bedrock changes only by approved amendment, cells are born by script.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { append, AppendError, readLog, writer } from '../src/log.ts';
@@ -91,6 +91,10 @@ test('cell new: born by script with brief, hooks, mailboxes, first entries, and 
   const dir = join(root, 'cells', 'lisbon');
   for (const f of ['AGENTS.md', 'CLAUDE.md', 'binding.json', '.claude/settings.json']) assert.ok(readFileSync(join(dir, f), 'utf8').length);
   assert.ok(readFileSync(join(dir, '.claude/settings.json'), 'utf8').includes('mail-hook.ts'));
+  for (const d of ['adapters', 'exit', 'test']) assert.ok(existsSync(join(dir, d, '.gitkeep')), d);   // every folder the brief names
+  const brief = readFileSync(join(dir, 'AGENTS.md'), 'utf8');
+  assert.match(brief, /Durable output goes in `exit\/`/);
+  assert.match(brief, /Work synchronously/);
   assert.equal(readLog(dir).length, 3);
   assert.equal(readLog(root).length, 2);
   assert.deepEqual(lint(dir).errors, []);

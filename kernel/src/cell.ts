@@ -30,7 +30,8 @@ ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md'
 
 ## Boundary
 
-- **You write only inside this folder** (hook-enforced): \`adapters/\` (entry), \`exit/\` (exit code), \`test/\`, \`MODEL.md\`, \`state/out/\`. Your log is written only through the kernel.
+- **You write anywhere inside this folder, and only here** (hook-enforced, the shell included): \`adapters/\` (entry), \`exit/\` (exit code and durable reports), \`test/\`, \`MODEL.md\`, \`state/out/metrics.json\`, and whatever else your work needs. Not \`state/log/\` or \`state/views/\`: your log is written only through the kernel.
+- **Durable output goes in \`exit/\`** (committed, merged by root). \`state/out/\` is git-ignored except \`metrics.json\`, so a report left there never reaches root.
 - **Read-only above you:** \`${toRoot}/kernel/\`, root bedrock and docs, other cells.
 - **Need a kernel or root change?** Don't work around it — say so (what, why, smallest change). Root decides.
 - **The rule says no, the evidence says probably yes?** Raise a review proposing ONE exact claim with its evidence: \`node ${toRoot}/kernel/src/cli.ts review raise --cell . --file r.json\` (\`{ question, proposes: { about, kind, says }, evidence }\`). Root is mailed; only the operator decides.
@@ -39,7 +40,8 @@ ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md'
 
 ## How it runs
 
-- **Entry:** \`adapters/\` — the only code that brings the world in. **Exit:** \`state/out/\`.
+- **Entry:** \`adapters/\` — the only code that brings the world in. **Exit:** \`exit/\` (what leaves, committed) and \`state/out/metrics.json\` (the numbers root syncs).
+- **Work synchronously.** Never end your turn while work you started is still running: don't use \`run_in_background\`, and wait for every sub-agent to report before you answer. Your turn's end is the reply; a headless run then exits and kills whatever is left.
 - **Memory:** \`state/log/\` (append-only, kernel-written) → \`state/views/\` (folded, not committed).
 - **Mail:** tasks from root arrive in your mailbox (under the repository's \`.git/cellkit-mail/\`, shared with root; not in this folder). A Stop hook runs the loop: when you end a turn it sends your final answer to root as the reply, waits for the next task (up to 30 min, or as \`CELLKIT_MAIL_WAIT\` says) and gives it to you as your next instruction. Never write mail files yourself. Make each final message a complete reply: what you did, files changed, test results, anything root must decide. Blocked, or need root to decide? \`node ${toRoot}/kernel/src/mail.ts send --to root --kind blocked|question --body "…"\`, then end your turn. You can only write to root. To start the loop, end a turn (e.g. say "waiting for mail").
 - **Usually headless:** root runs you with \`kernel/src/cellrun.ts\` (\`claude -p "waiting for mail"\`, no permission prompts; your hooks are the guard rail). You then exit once your queue is empty. Nothing changes for you: do each task and end your turn with the reply.
@@ -74,6 +76,10 @@ const settings = (toRoot: string) => {
 // The generated parts of a cell (brief, hooks, mailboxes). Re-run by `cell refresh` when the kit's template changes.
 function scaffold(dir: string, b: Binding, toRoot: string) {
   mkdirSync(join(dir, '.claude'), { recursive: true });
+  for (const d of ['adapters', 'exit', 'test']) {               // the folders the brief names (refresh adds missing ones)
+    mkdirSync(join(dir, d), { recursive: true });
+    if (!readdirSync(join(dir, d)).length) writeFileSync(join(dir, d, '.gitkeep'), '');
+  }
   ensureMailbox(dir);
   writeFileSync(join(dir, 'AGENTS.md'), agentsMd(b, toRoot));
   writeFileSync(join(dir, 'CLAUDE.md'), '# CLAUDE.md\n\nRead [`AGENTS.md`](AGENTS.md) in this folder.\n');
@@ -97,10 +103,9 @@ export function cellNew(parent: string, o: { name?: string; binding?: string }):
   const toRoot = relative(dir, parent).replaceAll('\\', '/');
   const parentName = basename(resolve(parent));
 
-  for (const d of ['adapters', 'state/log', 'state/out']) mkdirSync(join(dir, d), { recursive: true });
+  for (const d of ['state/log', 'state/out']) mkdirSync(join(dir, d), { recursive: true });
   writeFileSync(join(dir, 'state/log/.gitkeep'), '');
   writeFileSync(join(dir, 'state/out/.gitkeep'), '');
-  writeFileSync(join(dir, 'adapters/.gitkeep'), '');
   writeFileSync(bindingPath(dir), JSON.stringify(b, null, 2) + '\n');
   scaffold(dir, b, toRoot);
 
