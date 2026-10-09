@@ -10,6 +10,8 @@ Thumbs.db
 **/state/views/
 **/state/out/*
 !**/state/out/.gitkeep
+# ...except the numbers a cell publishes: cell sync reads the merged copy, so they must travel on the cell's branch
+!**/state/out/metrics.json
 
 # Cell mail is transient; the log is the record. In a git repo it lives under .git/cellkit-mail/; these are the
 # fallback outside git
