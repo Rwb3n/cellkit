@@ -4,9 +4,10 @@
 //   assume     --id A1 --voice claude|operator|probe --statement "…" [--test "…"] [--evidence "…"] [--source "…"]
 //   evidence   --id A1 --status guess|some|evidence|refuted --note "…" [--voice …] [--source "…"]
 //   constraint --slug scope --text "…" [--voice …] [--source "…"]
+//   stage      --doc ontology            copy the live doc to state/bedrock/proposed/ to edit (amend refuses it if the live doc moves)
 //   amend      --doc ontology --layer shape|kinds|rules|binding|meta --reason "…" [--evidence A1,000140]
 //                (stage the new text first at state/bedrock/proposed/<doc>.md)
-//   approve    --doc ontology            OPERATOR ONLY — run from your own prompt with "!"
+//   approve    --doc ontology [--proposal <entry>]   OPERATOR ONLY — run from your own prompt with "!"; names one if several are pending
 //   register   --doc <doc> --layer meta  (a doc that predates the guard)
 //   cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script
 //   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
@@ -30,7 +31,7 @@ import { fold, writeViews } from './fold.ts';
 import { lint } from './lint.ts';
 import { writeDocs } from './render.ts';
 import { assume, constraint, evidence } from './generators.ts';
-import { amend, approve, bedrockDir, foldBedrock, register } from './bedrock.ts';
+import { amend, approve, bedrockDir, foldBedrock, register, stage } from './bedrock.ts';
 import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
@@ -42,7 +43,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 try { process.loadEnvFile(join(repoRoot, '.env')); } catch { /* no .env */ }
 const [cmd, ...rest] = process.argv.slice(2);
 const opt = (name: string) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined; };
-const WRITES = ['init', 'append', 'assume', 'evidence', 'constraint', 'amend', 'approve', 'register', 'cell', 'review'];
+const WRITES = ['init', 'append', 'assume', 'evidence', 'constraint', 'stage', 'amend', 'approve', 'register', 'cell', 'review'];
 const local = resolve(opt('cell') ?? repoRoot);
 let cell = WRITES.includes(cmd) && !isCell(local) ? inMain(local) : local;
 // A cell with its own worktree keeps its log there (it travels on its branch): a write aimed at another copy of it (the
@@ -95,10 +96,12 @@ function main(): number {
         source: opt('source'), status: opt('status'), note: opt('note'), slug: opt('slug'), text: opt('text') };
       return write(() => (cmd === 'assume' ? assume(cell, o) : cmd === 'evidence' ? evidence(cell, o) : constraint(cell, o)));
     }
+    case 'stage':
+      try { console.log(stage(cell, { doc: opt('doc') }).join('\n')); return 0; } catch (e) { if (e instanceof AppendError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
     case 'amend':
     case 'approve':
     case 'register': {
-      const o = { doc: opt('doc'), layer: opt('layer'), reason: opt('reason'), evidence: opt('evidence'), voice: opt('voice') };
+      const o = { doc: opt('doc'), layer: opt('layer'), reason: opt('reason'), evidence: opt('evidence'), voice: opt('voice'), proposal: opt('proposal') };
       return write(() => (cmd === 'amend' ? amend(cell, o) : cmd === 'approve' ? approve(cell, o) : register(cell, o)));
     }
     case 'cell':

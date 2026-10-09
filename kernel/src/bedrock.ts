@@ -16,6 +16,20 @@ export const LAYERS = ['shape', 'kinds', 'rules', 'binding', 'meta'] as const;
 export const bedrockDir = (cell: string) => join(cell, 'state', 'bedrock');
 export const proposedPath = (cell: string, doc: string) => join(bedrockDir(cell), 'proposed', `${doc}.md`);
 export const livePath = (cell: string, doc: string) => join(bedrockDir(cell), `${doc}.md`);
+const basePath = (cell: string, doc: string) => join(bedrockDir(cell), 'proposed', `${doc}.base`);
+
+// Copy the live doc to proposed/ to edit it, remembering which live version it came from: `amend` refuses a copy staged
+// from a version that has since changed (it would silently undo the newer text). AI-MMO and DTG both hit this.
+export function stage(cell: string, o: { doc?: string }): string[] {
+  if (!o.doc || !/^[a-z0-9-]+$/.test(o.doc)) throw new AppendError('stage needs --doc like ontology');
+  if (!existsSync(livePath(cell, o.doc))) throw new AppendError(`no live ${o.doc}.md to stage (a new doc: write proposed/${o.doc}.md directly)`);
+  if (existsSync(proposedPath(cell, o.doc))) throw new AppendError(`${proposedPath(cell, o.doc)} is already staged; amend it or delete it first`);
+  const text = readText(livePath(cell, o.doc));
+  mkdirSync(join(bedrockDir(cell), 'proposed'), { recursive: true });
+  writeFileSync(proposedPath(cell, o.doc), text, 'utf8');
+  writeFileSync(basePath(cell, o.doc), sha256(text) + '\n', 'utf8');
+  return [`staged ${proposedPath(cell, o.doc)}: edit it, then amend`];
+}
 
 interface Says { action: 'propose' | 'approve'; doc: string; content_hash: string; layer?: string; reason?: string; evidence?: string[]; base_hash?: string | null; proposal?: string }
 
@@ -67,6 +81,9 @@ export function amend(cell: string, o: { doc?: string; layer?: string; reason?: 
   const content = readText(path);
   const content_hash = sha256(content);
   const current = foldBedrock(readLog(cell))[o.doc];
+  const base = existsSync(basePath(cell, o.doc)) ? readFileSync(basePath(cell, o.doc), 'utf8').trim() : null;
+  if (base && current && base !== current.live_hash)
+    throw new AppendError(`proposed/${o.doc}.md was staged from an older version of ${o.doc}.md, which has changed since; amending it would undo the newer text. Delete proposed/${o.doc}.md and .base, stage again, and redo the edit.`);
   if (current && current.live_hash === content_hash) throw new AppendError('proposed text is identical to the live version');
   if (current && current.pending.some((x) => x.content_hash === content_hash)) throw new AppendError('this exact text is already proposed');
   const voice = o.voice ?? 'claude';
@@ -85,15 +102,21 @@ export function amend(cell: string, o: { doc?: string; layer?: string; reason?: 
     writeFileSync(livePath(cell, o.doc), content, 'utf8');
     unlinkSync(path);
   }
+  if (existsSync(basePath(cell, o.doc))) unlinkSync(basePath(cell, o.doc));
   return [from, c.id];
 }
 
-export function approve(cell: string, o: { doc?: string }): string[] {
+// With several proposals pending, the operator names one (--proposal <entry>): approving a newer one drops the older
+// ones; approving an older one keeps the newer pending. 01-HAIOS-PERS lost an ordering to "approve takes the latest".
+export function approve(cell: string, o: { doc?: string; proposal?: string }): string[] {
   if (!o.doc) throw new AppendError('approve needs --doc');
   const log = readLog(cell);
   const pic = foldBedrock(log)[o.doc];
-  const latest = pic?.pending.at(-1);
-  if (!latest) throw new AppendError(`no pending proposal for ${o.doc}`);
+  if (!pic?.pending.length) throw new AppendError(`no pending proposal for ${o.doc}`);
+  if (pic.pending.length > 1 && !o.proposal)
+    throw new AppendError(`${pic.pending.length} proposals pending for ${o.doc}; name one with --proposal:\n` + pic.pending.map((x) => `  ${x.entry}  ${x.layer}  ${x.reason}`).join('\n'));
+  const latest = o.proposal ? pic.pending.find((x) => x.entry === o.proposal) : pic.pending[0];
+  if (!latest) throw new AppendError(`${o.proposal} is not a pending proposal for ${o.doc} (pending: ${pic.pending.map((x) => x.entry).join(', ')})`);
   const content = proposalContent(log, latest.entry);
   if (sha256(content) !== latest.content_hash) throw new AppendError('logged proposal content does not match its hash');
   const from = append(cell, {

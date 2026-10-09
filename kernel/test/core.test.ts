@@ -82,6 +82,37 @@ test('bedrock: register → draft; amendments stay pending until approved; hand 
   assert.deepEqual(lint(cell).errors, []);
 });
 
+test('bedrock: a copy staged from an older live version is refused; with several pending, approve names one', async () => {
+  const { register, amend, approve, stage, foldBedrock } = await import('../src/bedrock.ts');
+  const cell = freshCell();
+  mkdirSync(join(cell, 'state', 'bedrock', 'proposed'), { recursive: true });
+  const live = join(cell, 'state', 'bedrock', 'doc.md'), staged = join(cell, 'state', 'bedrock', 'proposed', 'doc.md');
+  writeFileSync(live, 'v1\n');
+  register(cell, { doc: 'doc', layer: 'meta' });
+  approve(cell, { doc: 'doc' });
+  stage(cell, { doc: 'doc' });                                     // an agent starts editing from v1…
+  assert.equal(readFileSync(staged, 'utf8'), 'v1\n');
+  assert.throws(() => stage(cell, { doc: 'doc' }), /already staged/);
+  const early = readFileSync(staged, 'utf8');
+  writeFileSync(staged, 'v2\n');                                   // …meanwhile v2 is proposed and approved
+  amend(cell, { doc: 'doc', layer: 'rules', reason: 'v2' });
+  approve(cell, { doc: 'doc' });
+  stage(cell, { doc: 'doc' });
+  writeFileSync(join(cell, 'state', 'bedrock', 'proposed', 'doc.base'), '0'.repeat(64) + '\n');   // the old copy's base
+  writeFileSync(staged, early + 'from v1\n');
+  assert.throws(() => amend(cell, { doc: 'doc', layer: 'rules', reason: 'stale' }), /staged from an older version/);
+  writeFileSync(join(cell, 'state', 'bedrock', 'proposed', 'doc.base'), '');                    // no base recorded: no check
+  amend(cell, { doc: 'doc', layer: 'rules', reason: 'a' });
+  writeFileSync(staged, 'v2\nb\n');
+  amend(cell, { doc: 'doc', layer: 'rules', reason: 'b' });
+  const [a, b] = foldBedrock(readLog(cell)).doc.pending;
+  assert.throws(() => approve(cell, { doc: 'doc' }), /2 proposals pending .*--proposal/s);
+  assert.throws(() => approve(cell, { doc: 'doc', proposal: '999999' }), /not a pending proposal/);
+  approve(cell, { doc: 'doc', proposal: a.entry });                // the older one: the newer stays pending
+  assert.deepEqual(foldBedrock(readLog(cell)).doc.pending.map((x) => x.entry), [b.entry]);
+  assert.equal(readFileSync(live, 'utf8'), 'v1\nfrom v1\n');
+});
+
 test('cell new: born by script with brief, hooks, mailboxes, first entries, and a record in the parent', async () => {
   const { cellNew } = await import('../src/cell.ts');
   const root = freshCell();
