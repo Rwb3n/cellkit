@@ -2,11 +2,13 @@
 // Kernel-owned paths can't be edited by hand (ontology §3 rules 1, 8; §5):
 //   state/log/, state/views/, docs/assumptions.md  → written by the kernel CLI only
 //   state/bedrock/ (except proposed/)              → changed by amendment only; approval is the operator's
+//   cellkit.json · the paths it protects            → the operator's, by hand · only the script it names (config.ts)
 // stdin is read asynchronously: readFileSync(0) returns empty on Windows pipes.
 
 import { existsSync } from 'node:fs';
 import { posix } from 'node:path';
 import { misplaced } from './worktree.ts';
+import { CONFIG, loadConfig } from './config.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -20,6 +22,8 @@ try {
 }
 
 const path = (input.tool_input?.file_path ?? input.tool_input?.notebook_path ?? '').replaceAll('\\', '/');
+const config = loadConfig();
+if (config.error) { console.error(`Blocked: ${config.error}`); process.exit(2); }
 
 // Cell boundary: a session running in a cell (its project dir has a binding.json) writes only inside that cell.
 // Everything above it — kernel, root bedrock, root docs, other cells — is read-only from here; ask root by reply.
@@ -41,7 +45,16 @@ if (/(^|\/)state\/bedrock\//.test(path) && !/(^|\/)state\/bedrock\/proposed\//.t
   process.exit(2);
 }
 // state/out/ is the cell's exit (metrics.json for cell sync): the cell writes it, inside its own boundary.
-if (/(^|\/)state\/(log|views)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.test(path) || /(^|\/)docs\/models\/(README|6-code)\.md$/.test(path)) {
-  console.error(`Blocked: ${path} is written only by the kernel. Use "node kernel/src/cli.ts append|assume|evidence|constraint" (they refold), or "node kernel/scripts/models.ts" for docs/models.`);
+if (/(^|\/)state\/(log|views)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.test(path)) {
+  console.error(`Blocked: ${path} is written only by the kernel. Use "node kernel/src/cli.ts append|assume|evidence|constraint" (they refold).`);
+  process.exit(2);
+}
+if (new RegExp(`(^|/)${CONFIG.replace('.', '\\.')}$`, 'i').test(path)) {
+  console.error(`Blocked: ${CONFIG} holds the project's guards; only the operator edits it, by hand. Say what should change and why.`);
+  process.exit(2);
+}
+const guarded = config.protected.find((g) => g.re.test(path));
+if (guarded) {
+  console.error(`Blocked: ${path} is written only ${guarded.by ? `by "node ${guarded.by}"` : 'by the operator'} (${CONFIG}: protected ${guarded.path}).`);
   process.exit(2);
 }

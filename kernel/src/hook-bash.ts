@@ -7,22 +7,33 @@
 // 3. A cell session opened in the wrong checkout (worktree.ts `misplaced`) may not write: no shell writes, no git, no
 //    kernel CLI command that appends (only fold, lint, review list). Mail to root stays open (`mail.ts send`): it is
 //    logged by box name, never in the wrong checkout's copy of a log.
+// 4. A session running in a cell may not write outside its folder from the shell either (shell.ts `outside`: redirects
+//    and file verbs whose target leaves the cell; the temp folder is fine). `cell audit` is the backstop.
+// 5. The project's own guards (cellkit.json, config.ts): its operator-only commands, and paths only a named script
+//    writes. cellkit.json itself is the operator's.
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
 import { existsSync } from 'node:fs';
 import { misplaced } from './worktree.ts';
+import { CONFIG, loadConfig } from './config.ts';
+import { outside, writeTargets } from './shell.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
 
-let command = '';
+let command = '', cwd = '';
 try {
-  command = (JSON.parse(raw || '{}') as { tool_input?: { command?: string } }).tool_input?.command ?? '';
+  const input = JSON.parse(raw || '{}') as { cwd?: string; tool_input?: { command?: string } };
+  command = input.tool_input?.command ?? '';
+  cwd = input.cwd ?? '';
 } catch {
   console.error('hook-bash: could not parse hook input; not blocking');
   process.exit(0);
 }
 
 const block = (why: string) => { console.error(`Blocked: ${why}`); process.exit(2); };
+const config = loadConfig();
+if (config.error) block(config.error);
+for (const o of config.operatorOnly) if (o.re.test(command)) block(o.message);
 
 if (/cli\.ts["']?\s+approve\b/.test(command)) {
   block('bedrock approval is the operator\'s. Ask them to run it from their prompt: ! node kernel/src/cli.ts approve --doc <doc>');
@@ -47,6 +58,21 @@ if (project && existsSync(`${project}/binding.json`)
   const wrong = misplaced(project);
   if (wrong) block(wrong);
 }
+if (project && existsSync(`${project}/binding.json`)) {
+  const out = outside(command, cwd || project, project);
+  if (out) block(`${out} is outside this cell (${project}). A cell writes only inside its own folder; if the kernel or root docs need a change, say so in your reply.`);
+}
+
+// The project's guards look at what a command writes (shell.ts targets, or a path a script-write call names), not at
+// every mention: a commit message or mail body that names cellkit.json or a protected path is not a write.
+const targets = writeTargets(command).flatMap((t) => (t.target ? [t.target] : []));
+const scriptWrite = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|\[(System\.)?IO\.File\]::/i;
+const hits = (re: RegExp) => targets.some((t) => re.test(t)) || (scriptWrite.test(command) && re.test(command));
+if (hits(new RegExp(`(^|[\\\\/\\s"'=])${CONFIG.replace('.', '\\.')}(?![\\w.-])`, 'i')))
+  block(`${CONFIG} holds the project's guards; only the operator edits it, by hand. Say what should change and why.`);
+const guarded = config.protected.find((g) => hits(g.re));
+if (guarded && !config.writers.some((w) => w.test(command)))
+  block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (${CONFIG}).`);
 
 if (protectedPath.test(command) && writes.test(command) && !viaKernel.test(command)) {
   const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)

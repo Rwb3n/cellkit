@@ -53,3 +53,58 @@ test('shell guard: kernel-owned paths are refused from bash and from PowerShell'
   assert.equal(tryShell('echo x > "state/log/000009.claim.json"'), 2);                      // a redirect to a quoted path still is
   assert.equal(tryShell('node -e "require(\'fs\').writeFileSync(\'state/log/x.json\', \'x\')"'), 2); // a script write inside quotes still is
 });
+
+const shellIn = (project: string, command: string, env: Record<string, string> = {}, cwd = project) =>
+  spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd, tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: project, ...env }, encoding: 'utf8' }).status;
+
+test('shell guard: a cell session writes inside its folder only, from the shell too', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-shell-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  assert.equal(shellIn(cell, 'echo x > exit/report.md'), 0);
+  assert.equal(shellIn(cell, 'cp ../../kernel/src/log.ts exit/log-copy.ts'), 0);             // reading from above is fine
+  assert.equal(shellIn(cell, 'cp exit/a.ts ../../kernel/src/a.ts'), 2);                      // writing above is not
+  assert.equal(shellIn(cell, 'rm -rf ../c2'), 2);                                            // nor into another cell
+  assert.equal(shellIn(cell, 'cd .. && echo x > y.txt'), 2);                                 // cd is followed
+  assert.equal(shellIn(cell, 'npm test 2>&1 | tee test/out.txt'), 0);
+  assert.equal(shellIn(cell, `Set-Content -Path ${root}/docs/x.md -Value 1`), 2);
+  assert.equal(shellIn(cell, `echo x > ${tmpdir().replaceAll('\\', '/')}/scratch.txt`), 0);    // the temp folder is fine
+  assert.equal(shellIn(cell, 'echo x > /dev/null'), 0);
+  assert.equal(shellIn(cell, 'echo x > exit/a.md', {}, root), 2);                            // the shell's cwd counts
+  assert.equal(shellIn(root, `cp a.ts ${root}/kernel/src/a.ts`), 0);                         // root session: no cell boundary
+});
+
+test('cellkit.json: a project adds operator-only commands and protected paths without editing the kernel', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-config-')).replaceAll('\\', '/');
+  const cfg = `${root}/cellkit.json`;
+  writeFileSync(cfg, JSON.stringify({
+    operator_only: [{ command: 'portfolio/src/pm.ts decide', message: 'decisions are the operator\'s' }, { pattern: '\\bsf\\s+data\\s+delete\\b' }],
+    protected: [{ path: 'docs/portfolio/', by: 'portfolio/src/pm.ts' }, { path: 'docs/models/trace.md' }],
+  }));
+  const env = { CELLKIT_CONFIG: cfg };
+  const sh = (c: string) => shellIn('', c, env);
+  const wr = (file_path: string) => spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input: { file_path } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', ...env }, encoding: 'utf8' }).status;
+  assert.equal(sh('node portfolio/src/pm.ts decide --file d.json'), 2);
+  assert.equal(sh('node "portfolio\\src\\pm.ts" decide --file d.json'), 2);
+  assert.equal(sh('node portfolio/src/pm.ts fold'), 0);                       // only the named subcommand
+  assert.equal(sh('sf data delete record -s Account'), 2);
+  assert.equal(sh('echo x > docs/portfolio/holdings.md'), 2);
+  assert.equal(sh('node portfolio/src/pm.ts fold > docs/portfolio/holdings.md'), 0);        // its writer may
+  assert.equal(sh('cat docs/portfolio/holdings.md'), 0);
+  assert.equal(sh('rm docs/models/trace.md'), 2);
+  assert.equal(sh('rm docs/models/trace.md.bak'), 0);
+  assert.equal(sh('echo {} > cellkit.json'), 2);                              // the guards guard themselves
+  assert.equal(sh('cat cellkit.json'), 0);
+  assert.equal(sh('git commit -F msg.txt; echo "see cellkit.json" > notes.md'), 0);     // a mention is not a write
+  assert.equal(sh('node -e "require(\'fs\').writeFileSync(\'cellkit.json\', \'{}\')"'), 2);
+  assert.equal(sh('Remove-Item docs\\portfolio\\holdings.md'), 2);
+  assert.equal(wr(`${root}/docs/portfolio/holdings.md`), 2);
+  assert.equal(wr('docs/models/trace.md'), 2);
+  assert.equal(wr(`${root}/cellkit.json`), 2);
+  assert.equal(wr(`${root}/docs/notes.md`), 0);
+  writeFileSync(cfg, '{ not json');
+  assert.equal(sh('ls'), 2);                                                   // invalid: refuse until the operator fixes it
+  assert.equal(wr(`${root}/docs/notes.md`), 2);
+  assert.equal(shellIn('', 'ls', { CELLKIT_CONFIG: `${root}/missing.json` }), 0);   // none: no project guards
+});
