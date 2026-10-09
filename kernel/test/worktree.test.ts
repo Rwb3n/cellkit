@@ -41,6 +41,8 @@ function world(t: TestContext, o: { kernel?: boolean } = {}) {
   writeFileSync(join(main, '.gitignore'), 'node_modules/\n**/state/views/\n');
   git(main, 'init', '-q', '-b', 'main');
   git(main, 'config', 'core.autocrlf', 'false');
+  git(main, 'config', 'user.email', 't@t');                                 // cell land commits: no global identity needed
+  git(main, 'config', 'user.name', 't');
   for (const name of ['demo', 'other']) cellNew(main, { name });
   git(main, 'add', '-A');
   git(main, 'commit', '-qm', 'init');
