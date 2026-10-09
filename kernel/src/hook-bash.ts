@@ -9,12 +9,12 @@
 //    logged by box name, never in the wrong checkout's copy of a log.
 // 4. A session running in a cell may not write outside its folder from the shell either (shell.ts `outside`: redirects
 //    and file verbs whose target leaves the cell; the temp folder is fine). `cell audit` is the backstop.
-// 5. The project's own guards (cellkit.json, config.ts): its operator-only commands, and paths only a named script
-//    writes. cellkit.json itself is the operator's.
+// 5. The project's own guards (bedrock guards.json, config.ts): its operator-only commands, and paths only a named
+//    script writes. guards.json itself is bedrock (rule 2).
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
 import { existsSync } from 'node:fs';
 import { misplaced } from './worktree.ts';
-import { CONFIG, loadConfig } from './config.ts';
+import { loadConfig } from './config.ts';
 import { outside, writeTargets } from './shell.ts';
 
 let raw = '';
@@ -64,18 +64,16 @@ if (project && existsSync(`${project}/binding.json`)) {
 }
 
 // The project's guards look at what a command writes (shell.ts targets, or a path a script-write call names), not at
-// every mention: a commit message or mail body that names cellkit.json or a protected path is not a write.
+// every mention: a commit message or mail body that names a protected path is not a write.
 const targets = writeTargets(command).flatMap((t) => (t.target ? [t.target] : []));
 const scriptWrite = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|\[(System\.)?IO\.File\]::/i;
 const hits = (re: RegExp) => targets.some((t) => re.test(t)) || (scriptWrite.test(command) && re.test(command));
-if (hits(new RegExp(`(^|[\\\\/\\s"'=])${CONFIG.replace('.', '\\.')}(?![\\w.-])`, 'i')))
-  block(`${CONFIG} holds the project's guards; only the operator edits it, by hand. Say what should change and why.`);
 const guarded = config.protected.find((g) => hits(g.re));
 if (guarded && !config.writers.some((w) => w.test(command)))
-  block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (${CONFIG}).`);
+  block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (bedrock guards.json).`);
 
 if (protectedPath.test(command) && writes.test(command) && !viaKernel.test(command)) {
   const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)
-    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.md/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.md/g, ''));
+    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
   if (!proposedOnly) block('that command writes a kernel-owned path (state/log, state/views, state/bedrock, docs/assumptions.md). Use the kernel CLI.');
 }

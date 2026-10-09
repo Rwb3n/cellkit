@@ -2,13 +2,13 @@
 // Kernel-owned paths can't be edited by hand (ontology §3 rules 1, 8; §5):
 //   state/log/, state/views/, docs/assumptions.md  → written by the kernel CLI only
 //   state/bedrock/ (except proposed/)              → changed by amendment only; approval is the operator's
-//   cellkit.json · the paths it protects            → the operator's, by hand · only the script it names (config.ts)
+//   paths bedrock guards.json protects             → only the script it names (config.ts)
 // stdin is read asynchronously: readFileSync(0) returns empty on Windows pipes.
 
 import { existsSync } from 'node:fs';
 import { posix } from 'node:path';
 import { misplaced } from './worktree.ts';
-import { CONFIG, loadConfig } from './config.ts';
+import { loadConfig } from './config.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -41,7 +41,7 @@ if (project && existsSync(`${project}/binding.json`)) {
 }
 
 if (/(^|\/)state\/bedrock\//.test(path) && !/(^|\/)state\/bedrock\/proposed\//.test(path)) {
-  console.error(`Blocked: ${path} is bedrock. Stage the new version at state/bedrock/proposed/<doc>.md, then run "node kernel/src/cli.ts amend --doc <doc> --layer <layer> --reason …". Approval is the operator's.`);
+  console.error(`Blocked: ${path} is bedrock. Stage the new version at state/bedrock/proposed/<doc>.md|.json ("node kernel/src/cli.ts stage --doc <doc>" copies the live one), then run "node kernel/src/cli.ts amend --doc <doc> --layer <layer> --reason …". Approval is the operator's.`);
   process.exit(2);
 }
 // state/out/ is the cell's exit (metrics.json for cell sync): the cell writes it, inside its own boundary.
@@ -49,12 +49,8 @@ if (/(^|\/)state\/(log|views)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.te
   console.error(`Blocked: ${path} is written only by the kernel. Use "node kernel/src/cli.ts append|assume|evidence|constraint" (they refold).`);
   process.exit(2);
 }
-if (new RegExp(`(^|/)${CONFIG.replace('.', '\\.')}$`, 'i').test(path)) {
-  console.error(`Blocked: ${CONFIG} holds the project's guards; only the operator edits it, by hand. Say what should change and why.`);
-  process.exit(2);
-}
 const guarded = config.protected.find((g) => g.re.test(path));
 if (guarded) {
-  console.error(`Blocked: ${path} is written only ${guarded.by ? `by "node ${guarded.by}"` : 'by the operator'} (${CONFIG}: protected ${guarded.path}).`);
+  console.error(`Blocked: ${path} is written only ${guarded.by ? `by "node ${guarded.by}"` : 'by the operator'} (bedrock guards.json: protected ${guarded.path}).`);
   process.exit(2);
 }

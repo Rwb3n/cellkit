@@ -76,9 +76,10 @@ test('shell guard: a cell session writes inside its folder only, from the shell 
   assert.equal(shellIn(root, `cp a.ts ${root}/kernel/src/a.ts`), 0);                         // root session: no cell boundary
 });
 
-test('cellkit.json: a project adds operator-only commands and protected paths without editing the kernel', () => {
+test('guards.json: a project adds operator-only commands and protected paths without editing the kernel', () => {
   const root = mkdtempSync(join(tmpdir(), 'cellkit-config-')).replaceAll('\\', '/');
-  const cfg = `${root}/cellkit.json`;
+  mkdirSync(`${root}/state/bedrock`, { recursive: true });
+  const cfg = `${root}/state/bedrock/guards.json`;
   writeFileSync(cfg, JSON.stringify({
     operator_only: [{ command: 'portfolio/src/pm.ts decide', message: 'decisions are the operator\'s' }, { pattern: '\\bsf\\s+data\\s+delete\\b' }],
     protected: [{ path: 'docs/portfolio/', by: 'portfolio/src/pm.ts' }, { path: 'docs/models/trace.md' }],
@@ -95,17 +96,21 @@ test('cellkit.json: a project adds operator-only commands and protected paths wi
   assert.equal(sh('cat docs/portfolio/holdings.md'), 0);
   assert.equal(sh('rm docs/models/trace.md'), 2);
   assert.equal(sh('rm docs/models/trace.md.bak'), 0);
-  assert.equal(sh('echo {} > cellkit.json'), 2);                              // the guards guard themselves
-  assert.equal(sh('cat cellkit.json'), 0);
-  assert.equal(sh('git commit -F msg.txt; echo "see cellkit.json" > notes.md'), 0);     // a mention is not a write
-  assert.equal(sh('node -e "require(\'fs\').writeFileSync(\'cellkit.json\', \'{}\')"'), 2);
+  assert.equal(sh('echo {} > state/bedrock/guards.json'), 2);                 // the guards are bedrock
+  assert.equal(sh('cp draft.json state/bedrock/proposed/guards.json'), 0);    // …proposed like any bedrock doc
+  assert.equal(sh('cat state/bedrock/guards.json'), 0);
+  assert.equal(sh('git commit -F msg.txt; echo "see docs/portfolio/x.md" > notes.md'), 0);   // a mention is not a write
+  assert.equal(sh('node -e "require(\'fs\').writeFileSync(\'docs/portfolio/x.md\', \'{}\')"'), 2);
   assert.equal(sh('Remove-Item docs\\portfolio\\holdings.md'), 2);
   assert.equal(wr(`${root}/docs/portfolio/holdings.md`), 2);
   assert.equal(wr('docs/models/trace.md'), 2);
-  assert.equal(wr(`${root}/cellkit.json`), 2);
+  assert.equal(wr(cfg), 2);
+  assert.equal(wr(`${root}/state/bedrock/proposed/guards.json`), 0);
   assert.equal(wr(`${root}/docs/notes.md`), 0);
   writeFileSync(cfg, '{ not json');
   assert.equal(sh('ls'), 2);                                                   // invalid: refuse until the operator fixes it
   assert.equal(wr(`${root}/docs/notes.md`), 2);
+  writeFileSync(cfg, JSON.stringify({ cells: { c1: { owns: ['kernel/src/**'] } } }));
+  assert.equal(sh('ls'), 2);                                                   // a cell can't own the kernel
   assert.equal(shellIn('', 'ls', { CELLKIT_CONFIG: `${root}/missing.json` }), 0);   // none: no project guards
 });

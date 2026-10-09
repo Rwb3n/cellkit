@@ -2,7 +2,7 @@
 // assumptions live in the log, bedrock changes only by approved amendment, cells are born by script.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -87,6 +87,43 @@ test('bedrock: register → draft; amendments stay pending until approved; hand 
   assert.equal(readFileSync(live, 'utf8').replace(/\r/g, ''), 'v0.2\n');
   assert.equal(foldBedrock(readLog(cell)).doc.pending.length, 0);
   assert.deepEqual(lint(cell).errors, []);
+});
+
+test('bedrock: a .json doc is checked at amend and approve, and goes live only when approved', async () => {
+  const { amend, approve, stage, foldBedrock } = await import('../src/bedrock.ts');
+  const { loadConfig } = await import('../src/config.ts');
+  const { writeViews } = await import('../src/fold.ts');
+  const cell = freshCell();
+  const dir = join(cell, 'state', 'bedrock');
+  mkdirSync(join(dir, 'proposed'), { recursive: true });
+  const live = join(dir, 'guards.json'), staged = join(dir, 'proposed', 'guards.json');
+  writeFileSync(staged, JSON.stringify({ operator_only: [{ command: 'tools/x.ts go' }, { command: 'a', pattern: 'b' }] }));
+  assert.throws(() => amend(cell, { doc: 'guards', layer: 'rules', reason: 'r' }), /doesn't check:[\s\S]*exactly one of "command" or "pattern"/);
+  writeFileSync(staged, JSON.stringify({ cells: { c1: { owns: ['state/**'] } } }));
+  assert.throws(() => amend(cell, { doc: 'guards', layer: 'rules', reason: 'r' }), /belong to no cell/);
+  writeFileSync(staged, '{ "operator_only": [ { "command": "tools/x.ts go" } ] }\n');
+  amend(cell, { doc: 'guards', layer: 'rules', reason: 'first guards' });
+  assert.equal(existsSync(live), false);                           // a draft .json is not live
+  assert.deepEqual(lint(cell).errors, []);
+  assert.ok(lint(cell).warnings.some((w) => w.includes('guards.json is a draft')));
+  writeFileSync(live, '{}');                                       // written around the approval
+  assert.ok(lint(cell).errors.some((m) => m.includes('written before its first approval')));
+  rmSync(live);
+  approve(cell, { doc: 'guards' });
+  assert.equal(foldBedrock(readLog(cell)).guards.status, 'approved');
+  assert.deepEqual(lint(cell).errors, []);
+  writeViews(cell, fold(readLog(cell)));
+  writeFileSync(join(cell, 'state', 'views', 'bedrock.json'), JSON.stringify(foldBedrock(readLog(cell))));
+  assert.equal(loadConfig(live).error, undefined);
+  assert.equal(loadConfig(live).operatorOnly.length, 1);
+  writeFileSync(live, '{ "operator_only": [] }\n');                 // a hand edit: lint says so, the hooks refuse
+  assert.ok(lint(cell).errors.some((m) => m.includes('guards.json: edited outside an amendment')));
+  assert.match(loadConfig(live).error ?? '', /differs from its approved version/);
+  writeFileSync(live, '{ "operator_only": [ { "command": "tools/x.ts go" } ] }\n');
+  stage(cell, { doc: 'guards' });
+  assert.equal(readFileSync(staged, 'utf8'), readFileSync(live, 'utf8'));
+  writeFileSync(join(dir, 'proposed', 'guards.md'), 'x');
+  assert.throws(() => amend(cell, { doc: 'guards', layer: 'rules', reason: 'r' }), /both guards\.md and guards\.json/);
 });
 
 test('bedrock: a copy staged from an older live version is refused; with several pending, approve names one', async () => {
