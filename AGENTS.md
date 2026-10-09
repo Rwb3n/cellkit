@@ -27,7 +27,7 @@ Read in order:
   - Interactive fallback: the operator opens `claude` in `<repo>-cells/<name>/cells/<name>` and says "waiting for mail". Never both at once for one cell. A session opened anywhere else (the main checkout's copy, another cell's worktree) is refused: no writes, no mail.
   - Land a reply with `node kernel/src/cli.ts cell land --name <name> --message "…" --check "<tests>"`. It commits the cell's work on its branch, merges main in, audits it (every change inside `cells/<name>/`), runs the check on the merged result, merges it into main and commits root's log. It refuses, or undoes itself, if any step fails.
   - A session that died mid-task: `node kernel/src/mail.ts release --as <name>`, then resend the task.
-  - Project-specific guards (operator-only commands, script-written paths) go in `cellkit.json`, never in `kernel/src/hook-*.ts`. Only the operator edits it.
+  - Project configuration is bedrock, never `kernel/`: claim kinds in `state/bedrock/kinds.json`, guards and cell ownership (`cells.<x>.owns`) in `state/bedrock/guards.json`. Propose them like the ontology (stage/amend); only the operator approves. A cell's `binding.json` changes only by `cell rebind`.
   - Worktrees on Windows can hold CRLF copies of LF files (`git ls-files --eol`); re-check them out if a hash or fixture differs in one worktree only.
 - Secrets live in `.env` (git-ignored). Never print them.
 

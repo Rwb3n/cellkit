@@ -55,7 +55,7 @@ What leaves through the exit comes back through the entry (a reply, a click, an 
 
 - **Observation:** one thing that came in (source, when, reliability, licence, payload).
 - **Claim:** one statement from one observation, by one voice. Base kinds: fact · opinion · same-as · part-of · relation · rule · hypothesis · check.
-- **<your kinds>:** add them here, then to `kernel/schemas/claim.schema.json`.
+- **<your kinds>:** add them here, then to `state/bedrock/kinds.json` (a JSON Schema each; README "Configuring it for your project").
 
 ---
 

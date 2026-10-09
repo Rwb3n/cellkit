@@ -11,7 +11,7 @@ Root is the cell that contains the others. Its session is the operator's working
 - **Holds the whole:** the ontology (bedrock), the kernel, the root log, cross-cell contracts.
 - **Delegates cell work** by mail, one task per mail. It doesn't do a cell's work itself when the cell has a session.
 - **Verifies before it lands:** reads the reply, then `cell land` with a `--check` that runs the tests on the merged result.
-- **Decides root things** and asks the operator for theirs. It never takes an operator-only action (`approve`, `review decide`, anything in `cellkit.json`'s `operator_only`, or anything outward).
+- **Decides root things** and asks the operator for theirs. It never takes an operator-only action (`approve`, `review decide`, anything in bedrock `guards.json`'s `operator_only`, or anything outward).
 - **Keeps the record whole:** every guess is an assumption, every operator decision a constraint.
 
 ## Where the live state is — read it, don't remember it

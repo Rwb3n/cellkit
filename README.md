@@ -32,7 +32,8 @@ Extracted from **carnet**, where it runs a London food map. Nothing here is food
 | **Worktrees** | each cell works in its own git worktree on branch `cell/<name>`, so its changes touch nothing else until root merges them; a session opened in the wrong checkout writes nothing and gets no mail | `cell checkout`, the three hooks, `cell audit` |
 | **Headless cells** | root queues a task, then runs the cell's session without a terminal; it does the queued mail and exits; a run that dies mid-task says so instead of locking the cell | `cellrun.ts`, `mail.ts release` |
 | **Landing** | root's loop in one command: commit the cell's work, merge main in, audit, run your check on the merged result, merge `--no-ff`, sync, commit root's log, or undo and refuse | `cell land` |
-| **Project guards** | your own operator-only commands and script-written paths, in `cellkit.json`: no need to edit the kernel's hooks | both hooks (`config.ts`); the file guards itself |
+| **Configuration** | your claim kinds, guards (operator-only commands, script-written paths) and the repo paths each cell owns, as bedrock JSON docs; nothing in `kernel/` to edit | amend → operator approves; checked against the log; read by the hooks, audit, land, lint |
+| **Bindings** | a cell's domain is root's to set, and every change is on the cell's log | `cell rebind`, hooks, `lint` |
 | **Session start** | every Claude Code session folds, then lints | SessionStart hook |
 
 ## Quick start
@@ -104,20 +105,43 @@ node kernel/src/cli.ts cell checkout --name lisbon                       # <repo
 
 **Reporting up.** `node kernel/src/cli.ts cell sync` records each cell's head and the numbers it publishes in `state/out/metrics.json`. Root's lint then checks that every head it ever recorded still exists in that cell's log, so a rewritten cell history is caught. Run it at session start. Both read the main checkout's copy of each cell, i.e. what has been merged; a cell's worktree is ahead of it until root merges.
 
-## Your ontology
+## Configuring it for your project
 
-The kit ships the envelope and base claim kinds (`fact · opinion · same-as · part-of · relation · rule · hypothesis · check`). Your domain adds its own:
+A project changes the kit's behaviour through its **configuration surface**, never by editing `kernel/`. That keeps every kit update a clean merge.
+
+| What | Where | Changed by | Read by |
+|---|---|---|---|
+| What the system is made of | `state/bedrock/ontology.md` | amend → **operator approves** | people, agents |
+| Your claim kinds | `state/bedrock/kinds.json` | amend → **operator approves** | `append`, `lint` (schemas.ts) |
+| Your guards, and which repo paths each cell owns | `state/bedrock/guards.json` | amend → **operator approves** | both hooks, `cell audit`, `cell land`, the cell brief, `lint` |
+| One cell's domain (scope, thresholds, vocabularies) | `cells/<x>/binding.json` | root: `cell rebind` (logged) | that cell's code and brief |
+
+Bedrock docs are `.md` (read by people) or `.json` (read by the kernel). The rules:
+
+- A `.json` doc goes live **only when approved**. An agent's amend never changes what the hooks enforce or what a claim may say.
+- `amend` and `approve` both refuse a `.json` doc that doesn't check:
+  - `guards.json`: entries must be well formed and patterns must compile;
+  - `kinds.json`: schemas must compile, no kit kind may be redefined, and **every claim already in root's and the cells' logs must still validate**. The log is never edited, so a kind can't be dropped or narrowed while claims of it exist.
+- Lint errors on a hand edit, like any bedrock doc. In the main checkout the hooks also refuse everything while `guards.json` differs from its approved version.
+
+The steps:
 
 1. **Sketch first**, in cheap text: what flows in, what you claim about it, what leaves.
-2. Write it into the ontology (amend → approve).
-3. Add the kinds to `kernel/schemas/claim.schema.json` (enum + an `allOf` rule each).
+2. Write it into the ontology (`stage --doc ontology`, edit, `amend`; the operator approves).
+3. Your kinds: write `state/bedrock/proposed/kinds.json` and amend it. Each kind is a JSON Schema the claim must meet when it has that kind:
+   ```json
+   { "kinds": { "visit": { "description": "someone went somewhere", "schema": { "properties": { "says": { "type": "object", "required": ["at"] } } } } } }
+   ```
 4. Write tests first (fixtures as journeys), then a fold for your pictures; merge it into `fold()`.
-5. Put domain values (thresholds, registries, vocabularies) in each cell's `binding.json`, not in code.
-6. Put your own guards in **`cellkit.json`** at the root (see `templates/cellkit.example.json`), not in the kernel's hooks:
-   - `operator_only` holds commands only the operator runs, as `{ "command": "tools/x.ts publish" }` (script and subcommand, quoted or not, any folder) or `{ "pattern": "<regex>" }`, each with a `message`;
-   - `protected` holds paths only a named script writes: `{ "path": "docs/report/", "by": "tools/report.ts" }`.
+5. Put domain values in each cell's `binding.json` (`cell new --binding`, later `cell rebind`), not in code.
+6. Your guards: `state/bedrock/proposed/guards.json` (see `templates/guards.example.json`), then amend.
+   - `operator_only`: commands only the operator runs. Write `{ "command": "tools/x.ts publish" }` (a script and its subcommand, quoted or not, in any folder) or `{ "pattern": "<regex>" }`, each with a `message`.
+   - `protected`: paths only a named script writes, e.g. `{ "path": "docs/report/", "by": "tools/report.ts" }`.
+   - `cells`: repo paths a cell owns beyond its folder, e.g. `{ "game": { "owns": ["game/**"] } }`. A cell may write there and `cell land` commits them. A glob must start with a folder and can't reach `kernel/`, `state/`, `cells/`, `.claude/` or `.git/`. Lint errors if a tracked file has two owners. Root owns nothing and may write anywhere.
 
-   Agents can't edit the file; you edit it by hand. If it is invalid, everything is refused until you fix it.
+   If the live file is invalid or hand-edited, everything is refused until the operator fixes it.
+
+A bedrock change reaches a cell through its branch: land the cell or merge main into it, then `cell refresh` so its brief shows what it owns.
 
 ## Working method
 
@@ -135,7 +159,7 @@ node kernel/src/cli.ts assume --id A1 --statement "…" [--test "…"] · eviden
 node kernel/src/cli.ts stage --doc ontology                                                          (copy the live doc to proposed/, with its base)
 node kernel/src/cli.ts amend --doc ontology --layer shape|kinds|rules|binding|meta --reason "…"   (after staging state/bedrock/proposed/)
 ! node kernel/src/cli.ts approve --doc ontology [--proposal <entry>]                               (operator only)
-node kernel/src/cli.ts cell new --name <name> [--binding <file>] · cell refresh --name <name>
+node kernel/src/cli.ts cell new --name <name> [--binding <file>] · cell refresh --name <name> · cell rebind --name <name> [--binding <file>]
 node kernel/src/cli.ts cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]…
 node kernel/src/cli.ts cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
 node kernel/src/cli.ts lint --all                                                                     (root and every cell's log)
@@ -150,7 +174,8 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - Log files are one JSON file per entry: fine to tens of thousands, then it needs a packed format.
 - Mail is on the log: every message is an observation on both sides; the files are transport.
 - Cells don't run git: root commits a cell's work on its branch and merges it (`cell land`). The Bash hook doesn't enforce that (it only blocks `git` for a session in the wrong checkout); `cell audit` is the check.
-- A cell owns its folder, not paths elsewhere in the repo. Projects with real code outside `cells/` (AI-MMO, DTG) gave cells `owns: [globs]`; that is an open design question, not in the kit yet.
+- Ownership is checked for overlap only in committed files (lint reads `git ls-files`), and root is never an owner: it has no boundary.
+- The hooks' check that `guards.json` matches its approved version runs only where root's folded views exist (the main checkout). In a cell's worktree the file is trusted; there, bedrock's hook protection, `cell audit` and lint are the guarantees.
 
 ## Traps
 
@@ -163,7 +188,8 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - **Durable output goes in `exit/`.** `state/out/` is git-ignored except `metrics.json`, so a report left there never reaches root.
 - **Brief changes reach existing cells only via `cell refresh --name <cell>`** (commit, then land or merge main into the cell's branch).
 - **Bedrock with several proposals pending:** `approve` refuses until you name one with `--proposal`. Approving a newer one drops the older ones. Bedrock doc names are `[a-z0-9-]+` (no folders).
-- **Mentions trip the guard.** The kernel's own rules refuse a command that merely mentions `approve`, `review decide` or a kernel-owned path next to a write, a `sed` replacement string included. This is deliberate. Use the Edit/Write tools, or a file for the message (`git commit -F`, `mail.ts send --file`). It is the same for `cellkit.json`'s `operator_only` commands: a mention is refused. Its `protected` paths look at write targets only.
+- **Mentions trip the guard.** The kernel's own rules refuse a command that merely mentions `approve`, `review decide` or a kernel-owned path next to a write, a `sed` replacement string included. This is deliberate. Use the Edit/Write tools, or a file for the message (`git commit -F`, `mail.ts send --file`). It is the same for `guards.json`'s `operator_only` commands: a mention is refused. Its `protected` paths look at write targets only.
+- **Upgrading a project whose kinds are in `claim.schema.json`:** get `kinds.json` approved first, *while* your old `claim.schema.json` is still in place, then take the kit's copy. The other order leaves lint red. The two enums merge, so both states work.
 - **On Windows a folder rename can fail** while something holds a handle on it (an editor, a watcher). Move its contents entry by entry instead.
 - The Bash guard is a heuristic; `lint` (hash chain + bedrock hashes) is the backstop. A hook "fails open" if its script crashes, and hooks can't see inside the scripts a command runs, so `cell audit` stays the check.
 - A cell's Claude session also loads parent-folder CLAUDE.md files. Keep the root's CLAUDE.md a pointer.
@@ -182,9 +208,9 @@ Until then, kit improvements are copied between projects by hand. Keep `kernel/`
 How the projects that use it do it:
 
 - Rename this README to `KIT.md` (your project gets its own `README.md`). Add cellkit as a fetch-only remote: `git remote add cellkit <path-or-url>`, then `git fetch cellkit && git merge cellkit/main` to take kit updates.
-- Domain rules go in `cellkit.json`, your claim kinds in `kernel/schemas/claim.schema.json`, and your code outside `kernel/`. Then a kit merge only conflicts in the schema.
+- Your guards, kinds and ownership live in bedrock (`guards.json`, `kinds.json`) and your code lives outside `kernel/`. Then a kit merge never conflicts with your project.
 - A kit fix found in a project goes back to cellkit as its own commit, never mixed with the project's log or domain code.
 - Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover. Set `origin` to a private backup and push after committing: the log is the record, so don't let it live on one disk.
 - Set `core.autocrlf=false` (see Traps).
 
-Not in the kit yet: a person-data seal (crypto-shredding, carnet `seal.ts`), a model map (carnet `models.ts`), requirement tracing (AI-MMO, DTG), cells that own paths outside their folder, and project claim kinds without editing the kernel's schema.
+Not in the kit yet: a person-data seal (crypto-shredding, carnet `seal.ts`), a model map (carnet `models.ts`), and requirement tracing (AI-MMO, DTG).

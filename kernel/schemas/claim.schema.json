@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "cellkit/claim/0.1",
   "title": "Claim",
-  "description": "One statement, from one observation, about one or more subjects. The base kinds below are what the kit itself uses; add your project's kinds to the enum and give each an allOf rule (see README: 'Your ontology').",
+  "description": "One statement, from one observation, about one or more subjects. The base kinds below are what the kit itself uses; your project's kinds go in state/bedrock/kinds.json, merged in by schemas.ts (see README: 'Configuring it for your project').",
   "type": "object",
   "required": ["about", "kind", "says", "from", "voice"],
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     },
     "kind": {
       "enum": ["fact", "opinion", "same-as", "part-of", "relation", "rule", "hypothesis", "check"],
-      "description": "Base kinds. Extend for your domain."
+      "description": "Base kinds. Yours are added from state/bedrock/kinds.json."
     },
     "says": { "description": "The statement. String or structured." },
     "from": { "type": "string", "pattern": "^[0-9]{6}$", "description": "The observation this claim was read from." },
