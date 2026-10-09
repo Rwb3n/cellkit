@@ -40,7 +40,8 @@ if (/(^|\/)state\/bedrock\//.test(path) && !/(^|\/)state\/bedrock\/proposed\//.t
   console.error(`Blocked: ${path} is bedrock. Stage the new version at state/bedrock/proposed/<doc>.md, then run "node kernel/src/cli.ts amend --doc <doc> --layer <layer> --reason …". Approval is the operator's.`);
   process.exit(2);
 }
-if (/(^|\/)state\/(log|views|out)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.test(path) || /(^|\/)docs\/models\/(README|6-code)\.md$/.test(path)) {
+// state/out/ is the cell's exit (metrics.json for cell sync): the cell writes it, inside its own boundary.
+if (/(^|\/)state\/(log|views)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.test(path) || /(^|\/)docs\/models\/(README|6-code)\.md$/.test(path)) {
   console.error(`Blocked: ${path} is written only by the kernel. Use "node kernel/src/cli.ts append|assume|evidence|constraint" (they refold), or "node kernel/scripts/models.ts" for docs/models.`);
   process.exit(2);
 }

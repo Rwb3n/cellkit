@@ -23,6 +23,9 @@ test('boundary: a cell session writes inside its folder only', () => {
   assert.equal(tryWrite(cell, '../../docs/MODELS.md'), 2);
   assert.equal(tryWrite(cell, `${root}/cells/c2/x.ts`), 2);            // other cells
   assert.equal(tryWrite(cell, `${cell}/state/log/000001.observation.json`), 2); // inside, but kernel-owned
+  assert.equal(tryWrite(cell, `${cell}/state/views/summary.json`), 2);  // inside, but kernel-owned
+  assert.equal(tryWrite(cell, `${cell}/state/out/metrics.json`), 0);    // the cell's exit: it publishes here (cell sync reads it)
+  assert.equal(tryWrite(cell, 'state/out/metrics.json'), 0);
   assert.equal(tryWrite(root, `${root}/kernel/src/x.ts`), 0);          // root session: no cell boundary
 });
 
@@ -38,6 +41,8 @@ test('shell guard: kernel-owned paths are refused from bash and from PowerShell'
   assert.equal(tryShell('move-item a.md state/bedrock/ontology.md'), 2);
   assert.equal(tryShell('[IO.File]::WriteAllText("state/log/x.json", "x")'), 2);
   assert.equal(tryShell('Copy-Item draft.md state/bedrock/proposed/ontology.md'), 0); // staging a proposal is allowed
+  assert.equal(tryShell('echo {} > state/out/metrics.json'), 0);                      // a cell publishes its numbers
+  assert.equal(tryShell('Set-Content state\\out\\metrics.json "{}"'), 0);
   assert.equal(tryShell('Get-Content state\\log\\000001.observation.json'), 0);      // reading is fine
   assert.equal(tryShell('node kernel/src/cli.ts fold'), 0);
   assert.equal(tryShell('node -e "const v=require(\'./state/views/x.json\'); v.n>=1"'), 0);      // a comparison is not a redirect

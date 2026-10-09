@@ -32,7 +32,8 @@ if (/cli\.ts["']?\s+review\s+decide\b/.test(command)) {
   block('review decisions are the operator\'s. Ask them to run it from their prompt: ! node kernel/src/cli.ts review decide --cell <cell> --id R-NNNN --yes|--no');
 }
 
-const protectedPath = /(state[\\/](log|views|bedrock|out)[\\/]|docs[\\/]assumptions\.md)/;
+// state/out/ is not here: it is the cell's exit (metrics.json for cell sync), written by the cell itself.
+const protectedPath = /(state[\\/](log|views|bedrock)[\\/]|docs[\\/]assumptions\.md)/;
 // PowerShell (same hook, matcher Bash|PowerShell): its cmdlets, aliases and .NET file writes, case-insensitive like the shell.
 // A redirect is never inside quotes: `>` in "a <b@c.com>" or node -e "a > b" is text, so look for it with quoted parts blanked.
 const redirect = /(^|[^=\-0-9])>>?(?![&=])/;
