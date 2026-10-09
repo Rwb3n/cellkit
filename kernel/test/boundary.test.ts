@@ -71,6 +71,7 @@ test('shell guard: a cell session writes inside its folder only, from the shell 
   assert.equal(shellIn(cell, `Set-Content -Path ${root}/docs/x.md -Value 1`), 2);
   assert.equal(shellIn(cell, `echo x > ${tmpdir().replaceAll('\\', '/')}/scratch.txt`), 0);    // the temp folder is fine
   assert.equal(shellIn(cell, 'echo x > /dev/null'), 0);
+  assert.equal(shellIn(cell, 'npm test > /tmp/out.txt 2>&1'), 0);
   assert.equal(shellIn(cell, 'echo x > exit/a.md', {}, root), 2);                            // the shell's cwd counts
   assert.equal(shellIn(root, `cp a.ts ${root}/kernel/src/a.ts`), 0);                         // root session: no cell boundary
 });

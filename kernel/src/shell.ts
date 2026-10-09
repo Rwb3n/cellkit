@@ -76,7 +76,7 @@ export function outside(command: string, cwd: string, dir: string): string | nul
     const t = target!;
     if (/[$%~`]/.test(t) || t.startsWith('&') || /^(\/dev\/(null|stdout|stderr)|nul|\$null)$/i.test(t)) continue;
     const abs = resolveIn(t);
-    if (under(abs, home) || (under(abs, tmp) && !under(abs, repo))) continue;
+    if (under(abs, home) || ((under(abs, tmp) || under(abs, '/tmp')) && !under(abs, repo))) continue;   // /tmp: Git Bash's temp too
     return t;
   }
   return null;
