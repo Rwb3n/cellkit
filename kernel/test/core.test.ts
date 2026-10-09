@@ -124,6 +124,10 @@ test('bedrock: a .json doc is checked at amend and approve, and goes live only w
   assert.equal(readFileSync(staged, 'utf8'), readFileSync(live, 'utf8'));
   writeFileSync(join(dir, 'proposed', 'guards.md'), 'x');
   assert.throws(() => amend(cell, { doc: 'guards', layer: 'rules', reason: 'r' }), /both guards\.md and guards\.json/);
+  const { register } = await import('../src/bedrock.ts');
+  writeFileSync(join(dir, 'kinds.json'), '{ "kinds": {} }');      // a hand-written live .json: no draft to register
+  assert.throws(() => register(cell, { doc: 'kinds', layer: 'kinds' }), /no draft to register: move it to proposed\/kinds\.json/);
+  assert.ok(existsSync(join(dir, 'kinds.json')));                  // and the operator's file is left alone
 });
 
 test('bedrock: a copy staged from an older live version is refused; with several pending, approve names one', async () => {

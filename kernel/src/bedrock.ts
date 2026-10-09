@@ -173,8 +173,8 @@ export function register(cell: string, o: { doc?: string; layer?: string; reason
   if (foldBedrock(readLog(cell))[o.doc]) throw new AppendError(`${o.doc} is already registered`);
   mkdirSync(join(bedrockDir(cell), 'proposed'), { recursive: true });
   const f = formatOf(cell, o.doc);
+  if (f === 'json') throw new AppendError(`${o.doc}.json has no draft to register: move it to proposed/${o.doc}.json and amend it; it goes live when the operator approves`);
   writeFileSync(proposedPath(cell, o.doc, f), readText(livePath(cell, o.doc, f)), 'utf8');
-  if (f === 'json') unlinkSync(livePath(cell, o.doc, f));         // a .json doc is live only once approved
   return amend(cell, { ...o, reason: o.reason ?? 'register existing draft under the bedrock guard' });
 }
 

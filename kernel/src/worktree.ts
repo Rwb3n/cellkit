@@ -73,7 +73,8 @@ export function cellWorktree(root: string, name: string): string | null {
   let path: string | null = null;
   for (const line of git(root, ['worktree', 'list', '--porcelain'], false).split(/\r?\n/)) {
     if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim();
-    else if (line.trim() === `branch refs/heads/${cellBranch(name)}` && path) return resolve(path);
+    // a worktree folder deleted without `git worktree remove` is still listed (prunable): it is no worktree
+    else if (line.trim() === `branch refs/heads/${cellBranch(name)}` && path) return existsSync(path) ? resolve(path) : null;
   }
   return null;
 }

@@ -174,7 +174,7 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - Log files are one JSON file per entry: fine to tens of thousands, then it needs a packed format.
 - Mail is on the log: every message is an observation on both sides; the files are transport.
 - Cells don't run git: root commits a cell's work on its branch and merges it (`cell land`). The Bash hook doesn't enforce that (it only blocks `git` for a session in the wrong checkout); `cell audit` is the check.
-- Ownership is checked for overlap only in committed files (lint reads `git ls-files`), and root is never an owner: it has no boundary.
+- Ownership is checked for overlap only in committed files (lint reads `git ls-files`), and only once the log's chain lints clean. Root is never an owner: it has no boundary.
 - The hooks' check that `guards.json` matches its approved version runs only where root's folded views exist (the main checkout). In a cell's worktree the file is trusted; there, bedrock's hook protection, `cell audit` and lint are the guarantees.
 
 ## Traps
