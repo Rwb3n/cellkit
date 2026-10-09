@@ -41,6 +41,10 @@ if (project && existsSync(`${project}/binding.json`)) {
     console.error(`Blocked: ${path} is outside this cell (${project}) and not among the paths it owns. A cell writes only inside its own folder and its owned paths (bedrock guards.json); if anything else needs a change, say so in your reply.`);
     process.exit(2);
   }
+  if (abs === `${project.toLowerCase()}/binding.json`) {
+    console.error(`Blocked: binding.json is this cell's domain, set by root (node kernel/src/cli.ts cell rebind, logged). If it should change, say what and why in your reply.`);
+    process.exit(2);
+  }
 }
 
 if (/(^|\/)state\/bedrock\//.test(path) && !/(^|\/)state\/bedrock\/proposed\//.test(path)) {

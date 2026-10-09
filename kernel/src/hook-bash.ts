@@ -69,6 +69,8 @@ if (project && existsSync(`${project}/binding.json`)) {
 const targets = writeTargets(command).flatMap((t) => (t.target ? [t.target] : []));
 const scriptWrite = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|\[(System\.)?IO\.File\]::/i;
 const hits = (re: RegExp) => targets.some((t) => re.test(t)) || (scriptWrite.test(command) && re.test(command));
+if (project && existsSync(`${project}/binding.json`) && hits(/(^|[\\/\s"'=])binding\.json(?![\w.-])/i))
+  block('binding.json is this cell\'s domain, set by root (node kernel/src/cli.ts cell rebind, logged). If it should change, say what and why in your reply.');
 const guarded = config.protected.find((g) => hits(g.re));
 if (guarded && !config.writers.some((w) => w.test(command)))
   block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (bedrock guards.json).`);

@@ -301,6 +301,29 @@ test('kinds: a project\'s claim kinds are bedrock; a kinds doc that would invali
   assert.equal(cli('lint').code, 0);
 });
 
+test('binding: a cell can\'t edit its own; root rebinds it on the cell\'s log; lint catches a hand edit', (t) => {
+  const { main, cellWt } = world(t);
+  assert.equal(hook('hook-guard.ts', cellWt, { file_path: join(cellWt, 'binding.json') }).status, 2);
+  assert.equal(hook('hook-bash.ts', cellWt, { command: 'echo {} > binding.json' }).status, 2);
+  assert.equal(hook('hook-bash.ts', cellWt, { command: 'cat binding.json' }).status, 0);
+  const lintCell = () => run('cli.ts', ['lint', '--cell', cellWt]);
+  assert.equal(lintCell().status, 0);
+  writeFileSync(join(cellWt, 'binding.json'), JSON.stringify({ name: 'demo', scope: { city: 'Porto' } }));   // by hand
+  assert.match(lintCell().stderr, /binding\.json differs from the binding on the log .*cell rebind --name demo/);
+  const before = readLog(cellWt).length;
+  const r = run('cli.ts', ['cell', 'rebind', '--name', 'demo', '--cell', main]);   // record it as it is
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readLog(cellWt).length, before + 2);                          // on the cell's log, in its worktree
+  assert.equal(lintCell().status, 0);
+  assert.match(run('cli.ts', ['cell', 'rebind', '--name', 'demo', '--cell', main]).stderr, /already the logged one/);
+  const f = join(main, 'lisbon.json');
+  writeFileSync(f, JSON.stringify({ scope: { city: 'Lisbon' } }));
+  assert.equal(run('cli.ts', ['cell', 'rebind', '--name', 'demo', '--binding', f, '--cell', main]).status, 0);
+  assert.equal(JSON.parse(readFileSync(join(cellWt, 'binding.json'), 'utf8')).scope.city, 'Lisbon');
+  assert.match(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8'), /scope city Lisbon/);   // the brief follows
+  assert.equal(lintCell().status, 0);
+});
+
 test('owns: a cell writes the repo paths root\'s guards give it — hooks, brief, audit and land agree; lint refuses two owners', async (t) => {
   const { main, wt, cellWt } = world(t, { kernel: true });
   const cli = (...args: string[]) => { const r = spawnSync(process.execPath, [join(main, 'kernel', 'src', 'cli.ts'), ...args], { encoding: 'utf8' }); return { code: r.status, out: r.stdout + r.stderr }; };
@@ -311,8 +334,9 @@ test('owns: a cell writes the repo paths root\'s guards give it — hooks, brief
   git(main, 'add', '-A'); git(main, 'commit', '-qm', 'guards');
   git(wt, 'merge', '-q', 'main');                                           // how bedrock reaches a cell's branch
   assert.equal(cli('cell', 'refresh', '--name', 'demo', '--cell', main).code, 0);
-  assert.match(readFileSync(join(main, 'cells', 'demo', 'AGENTS.md'), 'utf8'), /You also own, outside this folder:\*\* `\.\.\/\.\.\/game\/\*\*`/);
-  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'refresh'); git(wt, 'merge', '-q', 'main');
+  // refresh writes the copy the cell works in (its worktree); land brings it to main
+  assert.match(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8'), /You also own, outside this folder:\*\* `\.\.\/\.\.\/game\/\*\*`/);
+  assert.doesNotMatch(readFileSync(join(main, 'cells', 'demo', 'AGENTS.md'), 'utf8'), /You also own/);
   // the cell's hooks are its worktree's kernel copy, reading its branch's guards
   const hook = (script: string, tool_input: Record<string, string>) => spawnSync(process.execPath, [join(wt, 'kernel', 'src', script)],
     { input: JSON.stringify({ cwd: cellWt, tool_input }), env: { ...process.env, CLAUDE_PROJECT_DIR: cellWt }, encoding: 'utf8' }).status;
@@ -331,6 +355,7 @@ test('owns: a cell writes the repo paths root\'s guards give it — hooks, brief
   const landed = cli('cell', 'land', '--name', 'demo', '--message', 'map', '--cell', main);
   assert.equal(landed.code, 0, landed.out);
   assert.equal(readFileSync(join(main, 'game', 'map.ts'), 'utf8'), 'export {}\n');
+  assert.match(readFileSync(join(main, 'cells', 'demo', 'AGENTS.md'), 'utf8'), /You also own/);
   // two owners of one tracked file: lint says so (root's ownership is a decision, not a race)
   const { lintOwnership } = await import('../src/lint.ts');
   assert.deepEqual(lintOwnership(main).errors, []);

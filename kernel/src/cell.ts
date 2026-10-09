@@ -7,7 +7,8 @@ import { basename, join, relative, resolve } from 'node:path';
 import { AppendError, readLog, writer, type Entry } from './log.ts';
 import { fold } from './fold.ts';
 import { foldReviews } from './review.ts';
-import { ensure as ensureMailbox } from './mail.ts';
+import { ensure as ensureMailbox, logHome } from './mail.ts';
+import { canonical } from './canon.ts';
 import { configPath, loadConfig } from './config.ts';
 
 // A binding is the cell's domain: its scope plus whatever your project needs (registries, thresholds, vocabularies…).
@@ -27,7 +28,7 @@ A cell: \`(state, input) → (state′, output)\`. Born by \`kernel/src/cli.ts c
 1. [\`MODEL.md\`](MODEL.md) — **this cell's model** (write it if it's missing): what it holds, what comes in, what leaves, its tests, where it stands.
 2. **The project's model** (read-only, flows down from root):
 ${(Array.isArray(b.reads) ? (b.reads as string[]) : ['state/bedrock/ontology.md']).map((r) => `   - [\`${r}\`](${toRoot}/${r})`).join('\n')}
-3. [\`binding.json\`](binding.json) — scope ${Object.entries(b.scope).map(([k, v]) => `${k} ${v}`).join(' · ')}.
+3. [\`binding.json\`](binding.json) — scope ${Object.entries(b.scope).map(([k, v]) => `${k} ${v}`).join(' · ')}. Read-only for you: root sets it (\`cell rebind\`, logged).
 
 ## Boundary
 
@@ -88,12 +89,49 @@ function scaffold(dir: string, b: Binding, toRoot: string) {
   writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify(settings(toRoot), null, 2) + '\n');
 }
 
+// The copy of a cell that is worked on: its worktree when it has one (the brief and binding travel on its branch, and
+// `cell land` brings them to main), else the main checkout's.
+const workedCopy = (parent: string, name: string) => logHome(parent, name);
+
 export function cellRefresh(parent: string, o: { name?: string }): string[] {
-  const dir = join(parent, 'cells', o.name ?? '');
-  const b = readBinding(dir);
-  if (!o.name || !b) throw new AppendError(`no cell cells/${o.name ?? ''} with a binding.json`);
-  scaffold(dir, b, relative(dir, parent).replaceAll('\\', '/'));
-  return [`cells/${o.name}: AGENTS.md, CLAUDE.md, .claude/settings.json regenerated; mailbox ready`];
+  if (!o.name || !readBinding(join(parent, 'cells', o.name))) throw new AppendError(`no cell cells/${o.name ?? ''} with a binding.json`);
+  const dir = workedCopy(parent, o.name);
+  scaffold(dir, readBinding(dir)!, '../..');
+  return [`${dir}: AGENTS.md, CLAUDE.md, .claude/settings.json regenerated; mailbox ready`];
+}
+
+// ── the binding: the cell's domain, changed by root only, and always on the cell's log ───────────────────────────
+// A cell can't edit its own binding.json (hooks). Root changes it with `cell rebind`, which writes the file, appends
+// the new binding to the cell's log as a rule claim (as at birth) and regenerates the brief. Without --binding it
+// records the file as it is (for a binding edited by hand before this rule). lint: the file must equal the last logged.
+const loggedBinding = (log: Entry[], name: string) => {
+  const c = log.filter((e) => e.kind === 'claim' && (e.body as { kind: string; about: string[] }).kind === 'rule'
+    && (e.body as { about: string[] }).about.includes(`thing:binding/${name}`)).at(-1);
+  return c ? (c.body as { says: { binding: Binding } }).says.binding : null;
+};
+
+export function cellRebind(parent: string, o: { name?: string; binding?: string }): string[] {
+  if (!o.name || !readBinding(join(parent, 'cells', o.name))) throw new AppendError(`no cell cells/${o.name ?? ''} with a binding.json`);
+  const dir = workedCopy(parent, o.name);
+  const b: Binding = o.binding ? { scope: {}, ...JSON.parse(readFileSync(o.binding, 'utf8')), name: o.name } : readBinding(dir)!;
+  if (b.name !== o.name) throw new AppendError(`binding.json names ${b.name}, not ${o.name}`);
+  const log = readLog(dir);
+  if (canonical(loggedBinding(log, o.name)) === canonical(b)) throw new AppendError(`cells/${o.name}: this binding is already the logged one`);
+  writeFileSync(bindingPath(dir), JSON.stringify(b, null, 2) + '\n');
+  const now = new Date().toISOString();
+  const W = writer(dir);
+  const ob = W.append({ kind: 'observation', cell: o.name, body: { source: { adapter: 'kernel', capability: 'cell-rebind' }, observed_at: now, reliability: [], licence: { store: 'full' }, payload: { name: o.name, binding: b } } });
+  const c = W.append({ kind: 'claim', cell: o.name, body: { about: [`thing:binding/${o.name}`, `thing:cell/${o.name}`], kind: 'rule', says: { binding: b }, from: ob.id, voice: 'voice:kernel' } });
+  scaffold(dir, b, '../..');
+  return [`cells/${o.name} binding (${dir})`, ob.id, c.id];
+}
+
+export function lintBinding(cellDir: string, log: Entry[]): string[] {
+  const b = readBinding(cellDir);
+  if (!b) return [];
+  const logged = loggedBinding(log, b.name);
+  if (!logged) return [];                                           // a log from before bindings were logged
+  return canonical(logged) === canonical(b) ? [] : [`binding.json differs from the binding on the log (changed by hand?): node kernel/src/cli.ts cell rebind --name ${b.name} records it`];
 }
 
 export function cellNew(parent: string, o: { name?: string; binding?: string }): string[] {

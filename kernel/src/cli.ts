@@ -11,6 +11,7 @@
 //   register   --doc <doc> --layer meta  (a doc that predates the guard)
 //   cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script
 //   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
+//   cell rebind --name <name> [--binding <file.json>]   → change its binding (root only), logged on the cell's log
 //   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
 //   cell checkout --name <name> [--path <dir>]          → its git worktree on branch cell/<name> (<repo>-cells/<name>)
 //   cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/
@@ -32,7 +33,7 @@ import { lint } from './lint.ts';
 import { writeDocs } from './render.ts';
 import { assume, constraint, evidence } from './generators.ts';
 import { amend, approve, bedrockDir, foldBedrock, register, stage } from './bedrock.ts';
-import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
+import { cellNew, cellRebind, cellRefresh, cellSync, foldCells } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
 import { cellAudit, cellBranch, cellCheckout, inMain, samePath, WorktreeError } from './worktree.ts';
@@ -133,8 +134,9 @@ function main(): number {
         if (logged) console.log(`committed root's log: ${logged}`);
         return code;
       }
+      if (rest[0] === 'rebind') return write(() => cellRebind(cell, { name: opt('name'), binding: opt('binding') }));
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }
-      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]… · cell land --name <name> [--message …] [--check <cmd>] [--into <branch>] [--dry-run]'); return 2; }
+      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell rebind --name <name> [--binding <file.json>] · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]… · cell land --name <name> [--message …] [--check <cmd>] [--into <branch>] [--dry-run]'); return 2; }
       return write(() => cellNew(cell, { name: opt('name'), binding: opt('binding') }));
     case 'review': {
       const name = (d: string) => (!isCell(d) ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);

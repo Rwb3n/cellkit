@@ -5,7 +5,7 @@ import { claimRefError, entryHash, logDir, readLog, type Entry } from './log.ts'
 import { viewsDir } from './fold.ts';
 import { check } from './schemas.ts';
 import { lintBedrock } from './bedrock.ts';
-import { lintCells } from './cell.ts';
+import { lintBinding, lintCells } from './cell.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
 import { spawnSync } from 'node:child_process';
@@ -71,6 +71,7 @@ export function lint(cellDir: string): LintResult {
     errors.push(...b.errors);
     warnings.push(...b.warnings);
     errors.push(...lintCells(cellDir, readLog(cellDir))); // every cell head the parent recorded still exists
+    errors.push(...lintBinding(cellDir, readLog(cellDir))); // a cell's binding.json is the one on its log
     const o = lintOwnership(cellDir);
     errors.push(...o.errors);
     warnings.push(...o.warnings);
