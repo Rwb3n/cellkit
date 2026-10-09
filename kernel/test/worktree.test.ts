@@ -238,3 +238,38 @@ exec "${process.execPath}" "${fake}.mjs"
   const [reply] = receive(main);
   assert.match(reply.body, /without replying .* The task was not done/);
 });
+
+test('cell land: commits the cell\'s work, merges main in, checks, lands it --no-ff, and commits root\'s log', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const clean = (dir: string) => git(dir, 'status', '--porcelain').trim();
+  send(main, 'demo', 'write a report');                                     // mail: root-log entries, uncommitted
+  takeNext(cellWt);
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'done\n');
+  assert.match(land().stderr, /working on .*mail\.ts release/);           // mid-task: refused
+  stop(cellWt, 'report written');
+  receive(main);
+  writeFileSync(join(main, 'notes.md'), 'mine\n');
+  assert.match(land().stderr, /root has uncommitted work of its own: notes\.md/);
+  rmSync(join(main, 'notes.md'));
+  writeFileSync(join(wt, 'stray.md'), 'x\n');
+  assert.match(land().stderr, /outside cells\/demo\/: stray\.md/);
+  rmSync(join(wt, 'stray.md'));
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  const failed = land('--check', 'node -e "process.exit(3)"');
+  assert.match(failed.stderr, /check failed .*exit 3[\s\S]*back where it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);                // undone: the branch is where it was…
+  assert.equal(readFileSync(join(cellWt, 'exit', 'report.md'), 'utf8'), 'done\n');   // …and the work is still there
+  assert.ok(land('--dry-run').stdout.includes('would commit'));
+  const r = land('--message', 'the report', '--check', 'node -e "process.exit(0)"');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(readFileSync(join(main, 'cells', 'demo', 'exit', 'report.md'), 'utf8'), 'done\n');
+  assert.equal(git(main, 'log', '-2', '--format=%s').trim().split('\n')[1], 'Land cell/demo: the report');
+  assert.equal(git(main, 'rev-list', '--parents', '-1', 'HEAD~1').trim().split(' ').length, 3);   // a merge commit: revertable
+  assert.match(git(main, 'log', '-1', '--format=%s'), /Root log: cell demo landed/);
+  assert.equal(clean(main), '');                                             // nothing left uncommitted in root
+  assert.equal(clean(wt), '');
+  assert.equal(run('cli.ts', ['lint', '--cell', main]).status, 0);
+  assert.match(land().stdout, /nothing to land/);
+});

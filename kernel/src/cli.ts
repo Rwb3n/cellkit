@@ -13,6 +13,8 @@
 //   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
 //   cell checkout --name <name> [--path <dir>]          → its git worktree on branch cell/<name> (<repo>-cells/<name>)
 //   cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/
+//   cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
+//                                                       → root's loop in one: commit, merge main in, audit, check, merge, sync (land.ts)
 //   review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (OPERATOR ONLY)
 //   fold · lint
 // Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
@@ -33,6 +35,7 @@ import { cellNew, cellRefresh, cellSync, foldCells } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
 import { cellAudit, cellBranch, cellCheckout, inMain, samePath, WorktreeError } from './worktree.ts';
+import { cellLand, commitRootLog } from './land.ts';
 import type { Kind } from './schemas.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -115,8 +118,20 @@ function main(): number {
         console.log(`cell audit ${opt('name')}: ${bad.length} path(s) outside cells/${opt('name')}/${bad.length ? '' : ' (clean)'}`);
         return bad.length ? 1 : 0;
       }
+      if (rest[0] === 'land') {
+        const name = opt('name');
+        let steps: string[];
+        try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run') }); }
+        catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
+        for (const s of steps) console.log(s);
+        if (rest.includes('--dry-run')) return 0;
+        const code = write(() => cellSync(cell, { name }));
+        const logged = commitRootLog(cell, `Root log: cell ${name} landed (mail, sync)`);
+        if (logged) console.log(`committed root's log: ${logged}`);
+        return code;
+      }
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }
-      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]…'); return 2; }
+      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]… · cell land --name <name> [--message …] [--check <cmd>] [--into <branch>] [--dry-run]'); return 2; }
       return write(() => cellNew(cell, { name: opt('name'), binding: opt('binding') }));
     case 'review': {
       const name = (d: string) => (!isCell(d) ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);
