@@ -9,7 +9,9 @@
 // it anyway, with a reason (`--accept-weaker "<why>"`, hook-blocked for agents) that goes into the merge commit.
 import { spawnSync } from 'node:child_process';
 
-export const TEST_FILE = /(^|\/)(test|tests|__tests__|spec|specs)\/|[._-](test|spec)s?\.[a-z0-9]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/i;
+// Prose is never a test, whatever its name: a post called catching-weakened-tests.md that quotes `a || b` is not a
+// loosened test (project-archivist hit this).
+export const TEST_FILE = /^(?!.*\.(md|mdx|markdown|txt|rst|adoc)$)(?:.*(^|\/)(test|tests|__tests__|spec|specs)\/|.*[._-](test|spec)s?\.[a-z0-9]+$|(.*\/)?test_[^/]*\.py$|.*_test\.(py|go)$)/i;
 const CASE = /^\s*(test|it|describe)(\.only)?\s*\(|^\s*(async\s+)?def\s+test_|^\s*func\s+Test|^\s*\[(Fact|Test|TestMethod|Theory)\]/;
 const SKIP = /\.(skip|todo)\s*\(|\b(xit|xdescribe|xtest)\s*\(|\{\s*skip\s*:|@(pytest\.mark\.)?skip|\bt\.Skip(Now|f)?\(|\[Ignore\]|@Disabled/;
 const ASSERT = /\b(assert|expect|should)\b/;

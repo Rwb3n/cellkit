@@ -12,7 +12,7 @@ const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, 
 
 test('weaker: which files are tests', () => {
   for (const f of ['test/a.ts', 'cells/x/test/b.test.ts', 'src/a.spec.js', 'pkg/a_test.go', 'tests/test_a.py', 'game/__tests__/x.tsx']) assert.ok(TEST_FILE.test(f), f);
-  for (const f of ['src/a.ts', 'docs/testing.md', 'contest/x.ts']) assert.ok(!TEST_FILE.test(f), f);
+  for (const f of ['src/a.ts', 'docs/testing.md', 'contest/x.ts', 'cells/x/exit/posts/catching-weakened-tests.md', 'test/README.md', 'notes/unit-test.txt']) assert.ok(!TEST_FILE.test(f), f);
 });
 
 test('weaker: fewer cases or assertions, skips, loosening and deleted test files are found; stronger tests are not', () => {
