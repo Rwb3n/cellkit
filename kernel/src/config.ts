@@ -96,7 +96,7 @@ export function loadConfig(path = configPath()): Config {
   if (!process.env.CELLKIT_CONFIG && existsSync(views)) {
     try {
       const approved = (JSON.parse(readFileSync(views, 'utf8')) as Record<string, { live_hash?: string | null }>)[GUARDS]?.live_hash;
-      if (approved && approved !== sha256(text)) return fail('differs from its approved version (edited by hand?); approve a proposal or restore it');
+      if (approved && approved !== sha256(text)) return fail('differs from its approved version (edited by hand? or changed on main without a fold: run node kernel/src/cli.ts fold in the main checkout); approve a proposal or restore it');
     } catch { /* unreadable views: lint will say */ }
   }
   let raw: Raw;
