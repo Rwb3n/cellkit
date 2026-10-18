@@ -1,7 +1,7 @@
 // cellkit kernel CLI.  node kernel/src/cli.ts <command> [--cell <dir>]
 //   init                                  first run: create state/, copy templates/ontology.md into bedrock, register it as a draft, fold
 //   append     --kind observation|claim --body <file.json|-> [--causes 000001,000002]
-//   assume     --id A1 --voice claude|operator|probe --statement "…" [--test "…"] [--evidence "…"] [--source "…"]
+//   assume     [--id A1] --voice claude|operator|probe --statement "…" [--test "…"] [--evidence "…"] [--source "…"]
 //   evidence   --id A1 --status guess|some|evidence|refuted --note "…" [--voice …] [--source "…"]
 //   constraint --slug scope --text "…" [--voice …] [--source "…"]
 //   stage      --doc ontology            copy the live doc to state/bedrock/proposed/ to edit (amend refuses it if the live doc moves)

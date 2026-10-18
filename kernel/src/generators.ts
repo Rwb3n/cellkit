@@ -1,6 +1,6 @@
 // Generators: the only sanctioned way to add assumptions, status changes and constraints.
 // Each writes an observation (where it came from) and a claim (what it says) through append.
-import { append, AppendError } from './log.ts';
+import { append, AppendError, readLog, withLock } from './log.ts';
 
 export interface GenOptions {
   id?: string; voice?: string; statement?: string; test?: string; evidence?: string; source?: string;
@@ -17,17 +17,30 @@ function origin(cell: string, o: GenOptions, voice: string, payload: unknown): s
   }).id;
 }
 
+// One past the highest assumption id in the cell's log (A1 for none). Called under the log's lock, so two writers
+// never take the same id, and nobody probes for a free one with a throwaway entry (AI-MMO: the log keeps it forever).
+export function nextAssumptionId(cell: string): string {
+  let max = 0;
+  for (const e of readLog(cell)) for (const a of ((e.body as { about?: string[] }).about ?? []))
+    { const m = /^thing:assumption\/A([0-9]+)$/.exec(a); if (m) max = Math.max(max, Number(m[1])); }
+  return `A${max + 1}`;
+}
+
+// Without --id, the next free one. The id is chosen and both entries appended under one hold of the log's lock.
 export function assume(cell: string, o: GenOptions): string[] {
-  if (!o.id || !/^A[0-9]+$/.test(o.id)) throw new AppendError('assume needs --id like A1');
+  if (o.id !== undefined && !/^A[0-9]+$/.test(o.id)) throw new AppendError('assume --id must be like A1 (or leave it out for the next free one)');
   if (!o.statement) throw new AppendError('assume needs --statement');
-  const voice = o.voice ?? 'claude';
-  const from = origin(cell, o, voice, { statement: o.statement, source: o.source });
-  const c = append(cell, {
-    kind: 'claim', at: o.at, causes: [from],
-    body: { about: [`thing:assumption/${o.id}`], kind: 'hypothesis', status: o.status ?? 'guess', from, voice,
-      says: { statement: o.statement, ...(o.test ? { test: o.test } : {}), ...(o.evidence ? { evidence: o.evidence } : {}), ...(o.source ? { source: o.source } : {}) } },
+  return withLock(cell, () => {
+    const id = o.id ?? nextAssumptionId(cell);
+    const voice = o.voice ?? 'claude';
+    const from = origin(cell, o, voice, { statement: o.statement, source: o.source });
+    const c = append(cell, {
+      kind: 'claim', at: o.at, causes: [from],
+      body: { about: [`thing:assumption/${id}`], kind: 'hypothesis', status: o.status ?? 'guess', from, voice,
+        says: { statement: o.statement, ...(o.test ? { test: o.test } : {}), ...(o.evidence ? { evidence: o.evidence } : {}), ...(o.source ? { source: o.source } : {}) } },
+    });
+    return [id, from, c.id];
   });
-  return [from, c.id];
 }
 
 export function evidence(cell: string, o: GenOptions): string[] {

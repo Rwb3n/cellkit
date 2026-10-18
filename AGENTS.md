@@ -18,7 +18,7 @@ Start each session with `/session-open`, and end it with `/session-close`.
 
 - **Sketch → check → schema → code**, always against real data. Cheap text first.
 - **Every guess goes on the assumptions list, labelled as a guess:**
-  `node kernel/src/cli.ts assume --id A1 --voice claude --statement "…" --test "…"`
+  `node kernel/src/cli.ts assume --voice claude --statement "…" --test "…"`  (takes the next free id; `--id A7` to choose)
   `node kernel/src/cli.ts evidence --id A1 --status some --note "…"`
   `node kernel/src/cli.ts constraint --slug x --text "…"`  (operator decisions)
 - **Agents write content; scripts write structure.** Never hand-edit `state/log/`, `state/views/`, `state/bedrock/` or `docs/assumptions.md` (hook-blocked).

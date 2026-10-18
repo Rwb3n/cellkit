@@ -1,6 +1,6 @@
 // The log: append is the only writer. Entries are never edited (ontology §3 rule 1).
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { canonical, sha256 } from './canon.ts';
 import { check, type Kind } from './schemas.ts';
 
@@ -77,12 +77,70 @@ export function append(cellDir: string, input: AppendInput): Entry {
   return writer(cellDir).append(input);
 }
 
+// Every append holds the log's lock (state/log.lock, outside state/log so lint never sees it). File names carry the
+// kind, so `wx` alone can't stop two writers with the same cached tail writing 000123.observation.json and
+// 000123.claim.json and forking the chain: on Windows two writers took the same id about 1 run in 20 (SF-DEV). Under
+// the lock a writer checks its next id is still free and re-reads the tail if it isn't. A lock whose process is gone,
+// or older than LOCK_STALE_MS, is taken over. Held again by the same process (withLock inside withLock), it nests, so
+// a generator can choose an id and append both its entries under one hold. Ported from SF-DEV (kernel/src/log.ts, S1).
+// A waiter gives up only when one holder has kept the lock LOCK_WAIT_MS, never while it keeps changing hands: under
+// load (eight writers, a busy machine) a fixed 10 s made waiters give up while every holder was making progress.
+export const lockPath = (cellDir: string) => join(cellDir, 'state', 'log.lock');
+const LOCK_STALE_MS = 30_000, LOCK_WAIT_MS = 10_000, LOCK_WAIT_MAX_MS = 300_000, LOCK_STEP_MS = 25;
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
+const held = new Map<string, number>();   // lock path → depth, this process
+
+export function withLock<T>(cellDir: string, fn: () => T): T {
+  const path = resolve(lockPath(cellDir));
+  if (held.has(path)) { held.set(path, held.get(path)! + 1); try { return fn(); } finally { held.set(path, held.get(path)! - 1); } }
+  mkdirSync(join(cellDir, 'state'), { recursive: true });
+  const start = Date.now();
+  let until = start + LOCK_WAIT_MS, seen = '';
+  for (;;) {
+    try { writeFileSync(path, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { flag: 'wx' }); break; }
+    catch (e) { if (!['EEXIST', 'EPERM', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e; } // Windows: EPERM while the old lock is being deleted
+    let raw = '', holder: { pid?: number; at?: string } = {};
+    try { raw = readFileSync(path, 'utf8'); holder = JSON.parse(raw); } catch { /* being written or just released */ }
+    let age = 0;
+    try { age = Date.now() - statSync(path).mtimeMs; } catch { continue; }   // released meanwhile: try again
+    if ((holder.pid && holder.pid !== process.pid && !alive(holder.pid)) || age > LOCK_STALE_MS) {
+      // take over only the lock judged stale: if another waiter took it over first, the file now holds its fresh lock
+      try { if (readFileSync(path, 'utf8') === raw) unlinkSync(path); } catch { /* gone or changed: try again */ }
+      continue;
+    }
+    if (raw && raw !== seen) { seen = raw; until = Date.now() + LOCK_WAIT_MS; }   // a new holder: the lock is moving
+    if (Date.now() > until || Date.now() - start > LOCK_WAIT_MAX_MS) throw new AppendError(`log is locked by pid ${holder.pid ?? '?'} since ${holder.at ?? '?'} (${path})`);
+    pause(LOCK_STEP_MS);
+  }
+  held.set(path, 1);
+  try { return fn(); } finally { held.delete(path); release(path); }
+}
+
+// Windows refuses to delete a file another process has open for a moment (EPERM, EBUSY): retry, so a lock is never
+// left behind by a process that is still alive (a left lock is what made two waiters take it over at once)
+function release(path: string): void {
+  for (let i = 0; i < 400; i++) {
+    try { unlinkSync(path); return; }
+    catch (e) { const code = (e as NodeJS.ErrnoException).code; if (code === 'ENOENT') return; if (code !== 'EPERM' && code !== 'EBUSY') throw e; }
+    pause(5);
+  }
+  throw new AppendError(`could not release the log lock ${path}`);
+}
+
 // A writer reads the log once and keeps its tail in memory — for adapters appending thousands of entries.
-// Same checks as append; only one writer per cell at a time (the `wx` flag still refuses an overwrite).
+// Same checks as append. Under the lock it re-reads the tail when another writer appended since, so it never goes stale.
+const KINDS: Kind[] = ['observation', 'claim'];
 export function writer(cellDir: string): { append: (input: AppendInput) => Entry } {
-  const byId = new Map(readLog(cellDir).map((e) => [e.id, e]));
-  let last: Entry | undefined = [...byId.values()].at(-1);
-  return { append: (input) => { const e = appendTo(cellDir, input, byId, last); byId.set(e.id, e); last = e; return e; } };
+  let byId: Map<string, Entry> | null = null;
+  let last: Entry | undefined;
+  const taken = (id: string) => KINDS.some((k) => existsSync(join(logDir(cellDir), fileName(id, k))));
+  return {
+    append: (input) => withLock(cellDir, () => {
+      if (!byId || taken(String(byId.size + 1).padStart(6, '0'))) { byId = new Map(readLog(cellDir).map((e) => [e.id, e])); last = [...byId.values()].at(-1); }
+      const e = appendTo(cellDir, input, byId, last); byId.set(e.id, e); last = e; return e;
+    }),
+  };
 }
 
 function appendTo(cellDir: string, input: AppendInput, byId: Map<string, Entry>, last: Entry | undefined): Entry {

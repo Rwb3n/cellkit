@@ -24,10 +24,10 @@ Each guarantee names the mechanism that enforces it and the test that proves it 
 
 | | What | Enforced by | Proven by |
 |---|---|---|---|
-| **Log** | every input is an observation; every statement is a claim from one observation, by one voice; entries are hash-chained with gapless ids and never edited | `append` (only writer, `wx`), `lint` (chain, schemas, references) | `core`: append chains · lint catches an edited entry · a claim must come from an earlier observation |
+| **Log** | every input is an observation; every statement is a claim from one observation, by one voice; entries are hash-chained with gapless ids and never edited; writers at once (root, a cell's hook, a long-running tool) queue on the log's lock and never fork the chain | `append` (only writer, `wx`, `state/log.lock`), `lint` (chain, schemas, references) | `core`: append chains · lint catches an edited entry · a claim must come from an earlier observation · `lock`: 8 processes at once · stale tails · a dead holder's lock |
 | **Pictures** | state = fold(log); views are disposable and never committed; agreement counts **independent** voices (not the kit's, not a model's, not checks) | `fold`, `.gitignore`, hooks | `core`: fold counts independent voices |
 | **Bedrock** | the docs the system rests on (`state/bedrock/`) change only by amendment; **only the operator approves** | Write/Edit hook, Bash hook, `lint` hashes | `core`: bedrock (3 tests) · `boundary`: shell guard |
-| **Assumptions** | every guess is a hypothesis claim with a status (guess → some → evidence · refuted, or parked); `docs/assumptions.md` is generated | `assume` / `evidence` / `constraint` CLI; hook blocks hand edits | `core`: assumptions and constraints |
+| **Assumptions** | every guess is a hypothesis claim with a status (guess → some → evidence · refuted, or parked); `docs/assumptions.md` is generated; `assume` without `--id` takes the next free id under the log's lock | `assume` / `evidence` / `constraint` CLI; hook blocks hand edits | `core`: assumptions and constraints · `lock`: 8 processes assuming at once |
 | **Checks** | a model's verification is a claim *about a claim*; it adjusts belief, never counts as a voice | claim schema + `append` | `core`: a check must be about an earlier, non-check claim |
 | **Cells** | `cell new` creates a cell with its own brief, hooks, binding, log and mailboxes; the parent logs the birth | `cell new` / `cell refresh` | `core`: cell new · cell sync |
 | **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply. A short "still running…" answer is held back and the session sent to finish (3 times at most). No agent writes message files | Stop hook + `mail.ts` | `mail` (7 tests) |
@@ -159,7 +159,7 @@ A bedrock change reaches a cell through its branch: land the cell or merge main 
 ```
 node kernel/src/cli.ts init | fold | lint [--cell <dir>]
 node kernel/src/cli.ts append --kind observation|claim --body <file|->
-node kernel/src/cli.ts assume --id A1 --statement "…" [--test "…"] · evidence --id A1 --status some --note "…" · constraint --slug x --text "…"
+node kernel/src/cli.ts assume [--id A1] --statement "…" [--test "…"] · evidence --id A1 --status some --note "…" · constraint --slug x --text "…"
 node kernel/src/cli.ts stage --doc ontology                                                          (copy the live doc to proposed/, with its base)
 node kernel/src/cli.ts amend --doc ontology --layer shape|kinds|rules|binding|meta --reason "…"   (after staging state/bedrock/proposed/)
 ! node kernel/src/cli.ts approve --doc ontology [--proposal <entry>]                               (operator only)
@@ -189,6 +189,7 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 - **Never run a cell headless and interactively at once.** Both read one mailbox; `cellrun` refuses while a message is in flight, but an idle interactive session would still take the next one.
 - **CRLF copies in worktrees on Windows.** With `core.autocrlf=true` a worktree can hold CRLF copies of LF files (`git ls-files --eol` shows `i/lf w/crlf`). Git status stays clean, but anything that hashes file bytes (fixtures, golden files) differs in that worktree only. Delete those files and `git checkout -- <files>` in the worktree, or set `core.autocrlf=false` for the repo.
 - **A session can die mid-task.** A headless run that dies files a reply saying the task was not done, and the cell is free again. An interactive session that died (machine sleep, closed terminal) leaves `working_on` set, and `cellrun` refuses (exit 3). If no session is running, `node kernel/src/mail.ts release --as <cell>` files a placeholder reply and frees the cell. Then send the task again. Don't edit mail files.
+- **Stress-test concurrency code.** One clean run of a race proves nothing: without the log's lock two writers took one id about 1 run in 20, under parallel load only (SF-DEV). Run such a test many times, under load, and check it fails with the fix taken out.
 - **A cell must work synchronously.** If it ends its turn while sub-agents or background commands still run, its "waiting for…" becomes the reply, and a headless run's exit kills the rest. The brief says so, and the Stop hook holds back a short answer that reads as a progress note ("still running", "waiting for", "I'll report once it finishes"), sending the session back to finish up to 3 times before filing it. A longer one gets through: check replies for it (PS5-STUDY lost two this way, SF-DEV four).
 - **Durable output goes in `exit/`.** `state/out/` is git-ignored except `metrics.json`, so a report left there never reaches root.
 - **Brief changes reach existing cells only via `cell refresh --name <cell>`** (commit, then land or merge main into the cell's branch).
