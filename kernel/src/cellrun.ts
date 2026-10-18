@@ -1,7 +1,7 @@
 // Run a cell's session headless, in its own worktree, for the mail queued to it. The default way to run a cell;
 // an interactive terminal in the same folder is the fallback.
 //
-//   node kernel/src/cellrun.ts --cell <name> [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]
+//   node kernel/src/cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]
 //
 // Root sends a task with mail.ts as usual, then runs this (usually in the background). It starts
 //   claude -p "waiting for mail" --permission-mode bypassPermissions --output-format stream-json --verbose --strict-mcp-config
@@ -25,16 +25,23 @@
 // never run headless and interactive for the same cell at once), (4) a cell with nothing queued, (5) a cell with a
 // live runner already, (6) no room within --hold.
 // Otherwise exits with claude's code. The transcript (stream-json) goes to <mailbox>/runs/<UTC stamp>.jsonl.
-// A run that ends with a message still in flight (crash, kill, API error: no final stop filed the reply) files a reply
-// saying so, so root learns the task was not done and the cell is not left refusing every later run (exit 3).
+// The run's lock records the session's pid too: a runner can die while its session works on (AI-MMO: a kill by process
+// name from another project took every runner), and that orphan keeps the lock, counts toward MAX_RUNNERS, and makes a
+// new run and `mail.ts release` refuse until it ends. Every run leaves <log>.exit (how it ended; none: killed hard).
+// A run that ends with a message still in flight (the Stop hook never filed it) first looks in its log: a session that
+// finished its answer has it filed from there, marked recovered. Otherwise (it died mid-task) the cell keeps the task,
+// with its partial work in the worktree, and root is told (a "blocked" mail): `--resume` recovers the answer from the
+// last run's log if it is there, else starts a fresh session that is told the task and its partial work, and whose
+// reply is filed to the original. `mail.ts release` (give up, resend) stays the last resort. project-archivist had a
+// cell stuck seven days on a run killed with its parent session.
 // CELLKIT_CLAUDE names the claude executable (default: claude on PATH).
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { freemem } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { alive, lockFile, pause } from './log.ts';
-import { dirOf, fileReply, mailbox, status } from './mail.ts';
+import { dirOf, fileReply, mailbox, message, runnerLock, runnerOf, send, status, type Runner } from './mail.ts';
 import { cellWorktree, inMain } from './worktree.ts';
 
 export const PROMPT = 'waiting for mail';
@@ -47,23 +54,22 @@ function which(name: string): string {
   return name;
 }
 
-export function command(model?: string): string[] {
-  return [process.env.CELLKIT_CLAUDE || which('claude'), '-p', PROMPT, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(model ? ['--model', model] : [])];
+export function command(model?: string, prompt = PROMPT): string[] {
+  return [process.env.CELLKIT_CLAUDE || which('claude'), '-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(model ? ['--model', model] : [])];
 }
+
+// --resume's prompt. One line, no double quotes: a .cmd shim passes it through cmd.exe. The task itself is in a file.
+export const resumePrompt = (id: string, task: string) =>
+  `Your previous session died while working on task ${id}; its partial work is uncommitted in this worktree. ` +
+  `Read the task in ${task}, review what was done (git status, git diff), finish the task as it asks, and end your turn with the full reply, as you would have.`;
 
 // ── room on the machine ─────────────────────────────────────────────────────────
 export const MAX_RUNNERS = Number(process.env.CELLKIT_MAX_RUNNERS ?? 3);    // sessions running at once, across cells
 export const MIN_FREE_MB = Number(process.env.CELLKIT_MIN_FREE_MB ?? 4096); // don't start one below this much free memory
 export const HOLD_S = 4 * 3600, POLL_S = 30;
 
-interface Runner { pid: number; at: string; state: 'waiting' | 'running' }
-const runnerLock = (cellDir: string) => join(mailbox(cellDir), 'runner.lock');
-// The cell's live runner, if any (a lock whose process is gone is none).
-export function runnerOf(cellDir: string): Runner | null {
-  try { const r = JSON.parse(readFileSync(runnerLock(cellDir), 'utf8')) as Runner; return alive(r.pid) ? r : null; } catch { return null; }
-}
-
-// Take the cell's runner lock (state waiting), or say whose it is. A lock whose run is gone is taken over.
+// Take the cell's runner lock (state waiting), or say whose it is. A lock whose run and session are both gone is taken
+// over; an orphaned session (its runner gone, the session still working) keeps it.
 export function claimRunner(cellDir: string): string | null {
   mkdirSync(mailbox(cellDir), { recursive: true });
   for (let i = 0; i < 5; i++) {
@@ -72,19 +78,27 @@ export function claimRunner(cellDir: string): string | null {
     let raw = '';
     try { raw = readFileSync(runnerLock(cellDir), 'utf8'); } catch { continue; }
     const r = runnerOf(cellDir);
+    if (r?.orphan) return `an orphaned session (pid ${r.session}; its runner, pid ${r.pid}, is gone) is still working in this cell. Let it finish, or end it (Windows: taskkill /PID ${r.session} /T /F; else kill ${r.session})`;
     if (r) return `a runner is already live for this cell (pid ${r.pid}, ${r.state} since ${r.at})`;
     // take over only the lock judged gone: if another run took it over first, the file now holds its own
     try { if (readFileSync(runnerLock(cellDir), 'utf8') === raw) rmSync(runnerLock(cellDir)); } catch { /* gone or changed: try again */ }
   }
   return 'could not take the runner lock';
 }
-const setRunner = (cellDir: string, state: Runner['state']) =>
-  writeFileSync(runnerLock(cellDir), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), state }));
+function setRunner(cellDir: string, state: Runner['state'], extra: Partial<Runner> = {}): void {
+  let was: Partial<Runner> = {};
+  try { was = JSON.parse(readFileSync(runnerLock(cellDir), 'utf8')); } catch { /* new */ }
+  writeFileSync(runnerLock(cellDir), JSON.stringify({ ...was, pid: process.pid, at: new Date().toISOString(), state, ...extra }));
+}
+// Drop the lock if it is this run's, unless its session still works (then the lock names an orphan to come).
 export function dropRunner(cellDir: string): void {
-  try { if ((JSON.parse(readFileSync(runnerLock(cellDir), 'utf8')) as Runner).pid === process.pid) rmSync(runnerLock(cellDir)); } catch { /* gone */ }
+  try {
+    const r = JSON.parse(readFileSync(runnerLock(cellDir), 'utf8')) as Runner;
+    if (r.pid === process.pid && !(r.session && alive(r.session))) rmSync(runnerLock(cellDir));
+  } catch { /* gone */ }
 }
 
-// Sessions running now, across the repo's cells (a run still waiting for room doesn't count).
+// Sessions running now, across the repo's cells, orphans included (a run still waiting for room doesn't count).
 export function liveRunners(root: string): number {
   const cells = join(root, 'cells');
   if (!existsSync(cells)) return 0;
@@ -114,10 +128,34 @@ export function admit(root: string, cellDir: string, name: string, holdS: number
   }
 }
 
-function main(argv: string[]): number {
+// ── a run's log ─────────────────────────────────────────────────────────────────
+// The session's final answer in a run log (stream-json: a "result" line, subtype success), written after the task was
+// handed over: after the last line naming the task's id, or anywhere in a --resume run (its prompt named it). Null when
+// the session never finished a turn after taking it (it died mid-task).
+export function recoverAnswer(log: string, id: string, resumed = false): string | null {
+  if (!existsSync(log)) return null;
+  const lines = readFileSync(log, 'utf8').split(/\r?\n/);
+  const from = resumed ? -1 : lines.findLastIndex((l) => l.includes(id));
+  if (!resumed && from < 0) return null;
+  for (let i = lines.length - 1; i > from; i--) {
+    try {
+      const e = JSON.parse(lines[i]) as { type?: string; subtype?: string; is_error?: boolean; result?: unknown };
+      if (e.type === 'result') return e.subtype === 'success' && !e.is_error && typeof e.result === 'string' && e.result.trim() ? e.result : null;
+    } catch { /* not JSON */ }
+  }
+  return null;
+}
+const runLogs = (cellDir: string) => {
+  const d = join(mailbox(cellDir), 'runs');
+  return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.jsonl')).sort().map((f) => join(d, f)) : [];
+};
+// How a run ended, beside its log (<log>.exit). A log with no exit note: its runner was killed hard.
+const exitNote = (log: string, note: Record<string, unknown>) => { try { writeFileSync(`${log}.exit`, JSON.stringify({ at: new Date().toISOString(), ...note }) + '\n'); } catch { /* best effort */ } };
+
+async function main(argv: string[]): Promise<number> {
   const opt = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : undefined; };
-  const name = opt('cell');
-  if (!name) { console.error('usage: cellrun.ts --cell <name> [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]'); return 2; }
+  const name = opt('cell'), resume = argv.includes('--resume');
+  if (!name) { console.error('usage: cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]'); return 2; }
   const wait = Number(opt('wait') ?? 0), hold = Number(opt('hold') ?? HOLD_S);
   if (!Number.isFinite(wait) || wait < 0) { console.error('cellrun: --wait takes seconds (>= 0)'); return 2; }
   if (!Number.isFinite(hold) || hold < 0) { console.error('cellrun: --hold takes seconds (>= 0)'); return 2; }
@@ -128,55 +166,97 @@ function main(argv: string[]): number {
   const cellDir = join(wt, 'cells', name);
   if (!existsSync(join(cellDir, 'binding.json'))) { console.error(`cellrun: ${cellDir} is not a cell folder`); return 2; }
   const st = status(cellDir);
-  if (st.working_on) {
-    console.error(`cellrun: ${name} is already working on ${st.working_on} (another session?); not starting a second. ` +
-      `If no session is running (it died), file a placeholder reply and free the cell: node kernel/src/mail.ts release --as ${name}`);
+  if (resume && !st.working_on) { console.error(`cellrun: ${name} is not working on a message: nothing to resume`); return 4; }
+  if (!resume && st.working_on) {
+    console.error(`cellrun: ${name} is already working on ${st.working_on} (run: ${st.run}); not starting a second. ` +
+      `If its session died: node kernel/src/cellrun.ts --cell ${name} --resume (recovers the reply from the run log, or a fresh session finishes the task)`);
     return 3;
   }
-  if (!st.unread) { console.error(`cellrun: no mail queued for ${name}`); return 4; }
+  if (!resume && !st.unread) { console.error(`cellrun: no mail queued for ${name}`); return 4; }
 
-  const cmd = command(opt('model'));
   const runs = join(mailbox(cellDir), 'runs');
-  const log = join(runs, `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}.jsonl`);
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const log = join(runs, `${stamp}.jsonl`), task = join(runs, `${stamp}.task.md`);
+  const cmd = command(opt('model'), resume ? resumePrompt(st.working_on!, task) : PROMPT);
   if (argv.includes('--dry-run')) {
     const why = room(freeMb(), liveRunners(root)), r = runnerOf(cellDir);
     console.log(`cwd ${cellDir}\nenv CELLKIT_MAIL_WAIT=${wait}\n${cmd.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\nlog ${log}\n` +
-      `room ${r ? `no: a runner is already live for this cell (pid ${r.pid})` : why ? `not yet: ${why} (would wait up to ${hold} s)` : 'yes'}`);
+      `room ${r ? `no: ${r.orphan ? `an orphaned session (pid ${r.session})` : `a runner (pid ${r.pid})`} is already live for this cell` : why ? `not yet: ${why} (would wait up to ${hold} s)` : 'yes'}`);
     return 0;
   }
   const taken = claimRunner(cellDir);
   if (taken) { console.error(`cellrun: ${name}: ${taken}; not starting a second`); return 5; }
-  try { return runSession(root, cellDir, name, wait, hold, cmd, log); } finally { dropRunner(cellDir); }
+  try {
+    if (resume) {
+      // the session may have finished its answer before it (or its runner) died: file that, no new session needed
+      const id = st.working_on!;
+      for (const l of runLogs(cellDir).reverse()) {
+        const answer = recoverAnswer(l, id) ?? recoverAnswer(l, id, existsSync(l.replace(/\.jsonl$/, '.task.md')));
+        if (!answer) continue;
+        const m = fileReply(cellDir, `${answer}\n\n(recovered by cellrun from ${l}: the session finished but its reply was never filed)`);
+        console.log(`cellrun: ${name}: recovered the reply to ${id} from ${l}; filed ${m?.id}`);
+        return 0;
+      }
+      const asked = message(cellDir, id);
+      mkdirSync(runs, { recursive: true });
+      writeFileSync(task, `# Task ${id} (from ${asked?.from ?? 'root'}, ${asked?.at ?? '?'})\n\n${asked?.body ?? '(not found: ask root)'}\n`);
+    }
+    return await runSession(root, cellDir, name, wait, hold, cmd, log, resume);
+  } finally { dropRunner(cellDir); }
 }
 
-function runSession(root: string, cellDir: string, name: string, wait: number, hold: number, cmd: string[], log: string): number {
+async function runSession(root: string, cellDir: string, name: string, wait: number, hold: number, cmd: string[], log: string, resume: boolean): Promise<number> {
   if (!admit(root, cellDir, name, hold)) {
     console.error(`cellrun: ${name}: no room within ${hold} s; its mail is still queued. Run it again later, or raise --hold.`);
     return 6;
   }
   const st = status(cellDir);                          // the wait may have been long: look again
-  if (st.working_on) { console.error(`cellrun: ${name} took ${st.working_on} in another session while this run waited; not starting a second`); return 3; }
-  if (!st.unread) { console.error(`cellrun: no mail queued for ${name} any more`); return 4; }
+  if (!resume && st.working_on) { console.error(`cellrun: ${name} took ${st.working_on} in another session while this run waited; not starting a second`); return 3; }
+  if (!resume && !st.unread) { console.error(`cellrun: no mail queued for ${name} any more`); return 4; }
   mkdirSync(dirname(log), { recursive: true });
   const env: NodeJS.ProcessEnv = { ...process.env, CELLKIT_MAIL_WAIT: String(wait) };
   delete env.CLAUDE_PROJECT_DIR;                       // the cell's folder is the project, not the caller's
-  console.log(`cellrun: ${name} in ${cellDir}, ${st.unread} message(s) queued; log ${log}`);
+  console.log(`cellrun: ${name} in ${cellDir}, ${resume ? `resuming ${st.working_on}` : `${st.unread} message(s) queued`}; log ${log}`);
   const out = openSync(log, 'w');
   // a .cmd/.bat shim can only be started through the shell (Node refuses it otherwise); quote every argument then
   const shim = /\.(cmd|bat)$/i.test(cmd[0]);
-  const r = shim
-    ? spawnSync(cmd.map((a) => `"${a}"`).join(' '), { cwd: cellDir, env, stdio: ['ignore', out, out], shell: true })
-    : spawnSync(cmd[0], cmd.slice(1), { cwd: cellDir, env, stdio: ['ignore', out, out] });
+  const child = shim
+    ? spawn(cmd.map((a) => `"${a}"`).join(' '), { cwd: cellDir, env, stdio: ['ignore', out, out], shell: true })
+    : spawn(cmd[0], cmd.slice(1), { cwd: cellDir, env, stdio: ['ignore', out, out] });
+  if (child.pid) setRunner(cellDir, 'running', { session: child.pid, log });
+  // the runner interrupted: say so beside the log; the lock stays while the session works (an orphan, not a free cell)
+  const interrupted = (signal: string) => {
+    exitNote(log, { runner: signal, session: child.pid, session_alive: !!child.pid && alive(child.pid) });
+    dropRunner(cellDir);
+    process.exit(130);
+  };
+  for (const s of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) process.on(s, interrupted);
+  const r = await new Promise<{ code: number | null; signal: string | null; error?: Error }>((done) => {
+    child.on('error', (error) => done({ code: null, signal: null, error }));
+    child.on('exit', (code, signal) => done({ code, signal }));
+  });
+  for (const s of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) process.off(s, interrupted);
   closeSync(out);
+  exitNote(log, { code: r.code, signal: r.signal, ...(r.error ? { error: r.error.message } : {}) });
   if (r.error) { console.error(`cellrun: could not start ${cmd[0]}: ${r.error.message}`); return 1; }
+
   let after = status(cellDir);
   if (after.working_on) {
-    const died = fileReply(cellDir, `(cellrun: the session exited ${r.status} without replying to ${after.working_on}. The task was not done; transcript ${log}. Resend it if it still matters.)`);
-    console.error(`cellrun: ${name} exited with ${after.working_on} still in flight; filed ${died?.id} to say so`);
+    const id = after.working_on, answer = recoverAnswer(log, id, resume);
+    if (answer) {
+      const m = fileReply(cellDir, `${answer}\n\n(recovered by cellrun from ${log}: the session finished but its reply was never filed)`);
+      console.error(`cellrun: ${name} exited with ${id} unfiled; recovered its answer from the run log and filed ${m?.id}`);
+    } else {
+      // died mid-task: the cell keeps the task (its partial work is in the worktree) and root is told how to go on
+      const m = send(cellDir, 'root', `cellrun: ${name}'s session exited (${r.code ?? r.signal}) while working on ${id}, without a reply. ` +
+        `Its partial work is uncommitted in the worktree. Resume it: node kernel/src/cellrun.ts --cell ${name} --resume ` +
+        `(or give up on it: node kernel/src/mail.ts release --as ${name}, then resend). Transcript: ${log}`, 'blocked');
+      console.error(`cellrun: ${name} exited with ${id} still in flight; told root (${m.id}): resume with --resume`);
+    }
     after = status(cellDir);
   }
-  console.log(`cellrun: ${name} exited ${r.status}; its inbox ${after.unread} unread, working_on ${after.working_on}; root inbox ${status(root).unread} unread`);
-  return r.status ?? 1;
+  console.log(`cellrun: ${name} exited ${r.code ?? r.signal}; its inbox ${after.unread} unread, working_on ${after.working_on}; root inbox ${status(root).unread} unread`);
+  return r.code ?? 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

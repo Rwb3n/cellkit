@@ -10,8 +10,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
-import { current, mailbox, receive, send, status, takeNext } from '../src/mail.ts';
-import { liveRunners, room, runnerOf } from '../src/cellrun.ts';
+import { current, mailbox, receive, runnerOf, send, status, takeNext } from '../src/mail.ts';
+import { liveRunners, recoverAnswer, room } from '../src/cellrun.ts';
 import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, inMain, misplaced, samePath } from '../src/worktree.ts';
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -210,40 +210,82 @@ test('cellrun: starts the cell headless in its own worktree, only with mail queu
   assert.equal(cellrun('--cell', 'other', '--dry-run').code, 2);            // no worktree: refused
   takeNext(cellWt);
   assert.equal(cellrun('--cell', 'demo', '--dry-run').code, 3);             // a session is already on a task
-  assert.match(cellrun('--cell', 'demo', '--dry-run').out, /mail\.ts release --as demo/);
+  assert.match(cellrun('--cell', 'demo', '--dry-run').out, /cellrun\.ts --cell demo --resume/);
 });
 
-test('cellrun: a run that dies mid-task files a reply saying so and frees the cell; release does it by hand', (t) => {
+test('cellrun: a run that dies mid-task keeps the task and tells root; --resume recovers the answer or finishes it; an orphan holds the cell', (t) => {
   const { main, cellWt } = world(t);
-  const sent = send(main, 'demo', 'task one');
-  send(main, 'demo', 'task two');
-  // a "claude" that exits at once: node refuses claude's flags. Pretend the session took the task first, then died.
-  takeNext(cellWt);
-  const r = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: process.execPath, CELLKIT_MIN_FREE_MB: '0' });
-  assert.equal(r.status, 3, r.stderr);                                       // in flight: refused, and told how to free it
-  const rel = run('mail.ts', ['release', '--as', 'demo'], { CLAUDE_PROJECT_DIR: cellWt });
-  assert.equal(rel.status, 0, rel.stderr);
-  assert.equal(current(cellWt), null);
-  const [placeholder] = receive(main);
-  assert.equal(placeholder.reply_to, sent.id);
-  // now a run whose session takes task two, then dies before any stop files the reply
+  const t1 = send(main, 'demo', 'task one');
+  const t2 = send(main, 'demo', 'task two');
+  // a scriptable "claude" (CELLKIT_FAKE): takes the next task like the Stop hook would, prints stream-json, exits
   const fake = join(tmpdir(), `cellkit-fake-claude-${process.pid}`);
   writeFileSync(`${fake}.mjs`, `import { takeNext } from ${JSON.stringify(pathToFileURL(join(src, 'mail.ts')).href)};
-takeNext(process.cwd());
-process.exit(1);
+import { readFileSync } from 'node:fs';
+const say = (o) => console.log(JSON.stringify(o));
+const mode = process.env.CELLKIT_FAKE;
+if (mode === 'resume') {
+  const prompt = process.argv[process.argv.indexOf('-p') + 1];
+  const task = readFileSync(prompt.match(/Read the task in (.+?\\.task\\.md)/)[1], 'utf8');
+  say({ type: 'result', subtype: 'success', is_error: false, result: 'finished: ' + task.split('\\n').at(-2) });
+  process.exit(0);
+}
+const m = takeNext(process.cwd());
+say({ type: 'user', message: { content: [{ type: 'text', text: 'Stop hook feedback: Task ' + m.id }] } });
+if (mode === 'answer') say({ type: 'result', subtype: 'success', is_error: false, result: 'answered ' + m.body });
+process.exit(mode === 'answer' ? 0 : 1);
 `);
   const exe = process.platform === 'win32' ? `${fake}.cmd` : fake;
-  writeFileSync(exe, process.platform === 'win32' ? `@"${process.execPath}" "${fake}.mjs"
+  writeFileSync(exe, process.platform === 'win32' ? `@"${process.execPath}" "${fake}.mjs" %*
 ` : `#!/bin/sh
-exec "${process.execPath}" "${fake}.mjs"
+exec "${process.execPath}" "${fake}.mjs" "$@"
 `, { mode: 0o755 });
   t.after(() => { rmSync(`${fake}.mjs`, { force: true }); rmSync(exe, { force: true }); });
-  const died = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: exe, CELLKIT_MIN_FREE_MB: '0' });
+  const cellrun = (mode: string, ...args: string[]) => run('cellrun.ts', ['--root', main, '--cell', 'demo', ...args], { CELLKIT_CLAUDE: exe, CELLKIT_FAKE: mode, CELLKIT_MIN_FREE_MB: '0' });
+
+  takeNext(cellWt);                                                          // a session took t1, then died (no run log)
+  const refused = cellrun('answer');
+  assert.equal(refused.status, 3, refused.stderr);                           // in flight: refused, pointed at --resume
+  assert.match(refused.stderr, /--resume/);
+  const resumed = cellrun('resume', '--resume');                             // a fresh session, told the task, finishes it
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr);
+  const [r1] = receive(main);
+  assert.equal(r1.reply_to, t1.id);
+  assert.match(r1.body, /^finished: task one[\s\S]*recovered by cellrun/);
+  assert.equal(current(cellWt), null);
+
+  const died = cellrun('die');                                               // takes t2, dies mid-task
   assert.equal(died.status, 1, died.stdout + died.stderr);
-  assert.match(died.stderr, /still in flight; filed/);
-  assert.equal(status(cellWt).working_on, null);                             // the cell can run again
-  const [reply] = receive(main);
-  assert.match(reply.body, /without replying .* The task was not done/);
+  assert.match(died.stderr, /still in flight; told root/);
+  assert.equal(current(cellWt), t2.id);                                      // the cell keeps the task
+  const [blocked] = receive(main);
+  assert.equal(blocked.kind, 'blocked');
+  assert.match(blocked.body, new RegExp(`working on ${t2.id}[\\s\\S]*--resume`));
+  const [, log] = blocked.body.match(/Transcript: (.+\.jsonl)$/)!;
+  assert.equal(JSON.parse(readFileSync(`${log}.exit`, 'utf8')).code, 1);     // how the run ended, beside its log
+  // the session had in fact finished its answer before its runner died: --resume files it, no session started
+  writeFileSync(log, readFileSync(log, 'utf8') + JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'two is done' }) + '\n');
+  const recovered = run('cellrun.ts', ['--root', main, '--cell', 'demo', '--resume'], { CELLKIT_CLAUDE: join(tmpdir(), 'no-such-claude'), CELLKIT_MIN_FREE_MB: '0' });
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.match(receive(main, t2.id)[0].body, /^two is done[\s\S]*recovered by cellrun/);
+  assert.equal(current(cellWt), null);
+
+  const t3 = send(main, 'demo', 'task three');                               // the session answered; its stop never filed it
+  const unfiled = cellrun('answer');
+  assert.equal(unfiled.status, 0, unfiled.stdout + unfiled.stderr);
+  assert.match(receive(main, t3.id)[0].body, /^answered task three[\s\S]*recovered by cellrun/);
+  assert.equal(recoverAnswer(log, t3.id), null);                             // another task's log holds no answer to it
+
+  // an orphan: the runner is gone, its session still works (this test's pid stands in for it)
+  send(main, 'demo', 'task four');
+  writeFileSync(join(mailbox(cellWt), 'runner.lock'), JSON.stringify({ pid: 2 ** 22 + 12345, at: 'then', state: 'running', session: process.pid }));
+  assert.equal(runnerOf(cellWt)?.orphan, true);
+  assert.equal(liveRunners(main), 1);                                        // it still uses the machine
+  const orphaned = cellrun('answer');
+  assert.equal(orphaned.status, 5);
+  assert.match(orphaned.stderr, new RegExp(`orphaned session \\(pid ${process.pid}`));
+  takeNext(cellWt);
+  assert.match(status(cellWt).run!, /^orphaned session/);
+  assert.match(run('mail.ts', ['release', '--as', 'demo'], { CLAUDE_PROJECT_DIR: cellWt }).stderr, /orphaned session .* let it finish/);
 });
 
 test('cellrun: no MCP servers; one runner per cell; waits for room (sessions, memory) and gives up with the mail queued', (t) => {
@@ -269,7 +311,7 @@ test('cellrun: no MCP servers; one runner per cell; waits for room (sessions, me
   writeFileSync(lock, JSON.stringify({ pid: process.pid, at: 'now', state: 'running' }));   // a live runner (this test)
   assert.equal(liveRunners(main), 1);
   assert.equal(cellrun({}).status, 5);
-  assert.match(cellrun({}, '--dry-run').stdout, /room no: a runner is already live for this cell/);
+  assert.match(cellrun({}, '--dry-run').stdout, /room no: a runner \(pid \d+\) is already live for this cell/);
   writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, at: 'then', state: 'running' }));   // its run is gone
   assert.equal(runnerOf(cellWt), null);
   assert.equal(liveRunners(main), 0);

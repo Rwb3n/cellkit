@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { append } from './log.ts';
+import { alive, append } from './log.ts';
 import { sha256 } from './canon.ts';
 import { configPath, loadConfig } from './config.ts';
 import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
@@ -159,13 +159,40 @@ export function takeNext(cell: string): Message | null {
   return m;
 }
 
+// The message with this id from a box's read inbox (its body: what cellrun --resume hands a fresh session).
+export function message(dir: string, id: string): Message | null {
+  const p = join(inbox(dir), 'read', `${id}.json`);
+  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
+}
+
+// A headless run's lock, <mailbox>/runner.lock (cellrun.ts writes it): the runner's pid, and once started its session's.
+// The runner can die while its session works on (a kill aimed at another project's processes took every runner on
+// AI-MMO's machine): the session is then an orphan, and the lock stays live until it ends.
+export interface Runner { pid: number; at: string; state: 'waiting' | 'running'; session?: number; log?: string }
+export const runnerLock = (cell: string) => join(mailbox(cell), 'runner.lock');
+export function runnerOf(cell: string): (Runner & { orphan: boolean }) | null {
+  let r: Runner;
+  try { r = JSON.parse(readFileSync(runnerLock(cell), 'utf8')); } catch { return null; }
+  if (alive(r.pid)) return { ...r, orphan: false };
+  if (r.session && alive(r.session)) return { ...r, orphan: true };
+  return null;
+}
+
 // A cell's session died while working on a message (nothing will ever file its reply): file a placeholder reply so the
-// asker learns the task was not done, and the cell can take mail again. Only when no session for the cell is running.
+// asker learns the task was not done, and the cell can take mail again. Refused while a headless run or its orphaned
+// session is live. cellrun --resume first: it recovers the reply from the run log, or a fresh session finishes the task.
 export function release(cell: string, note = '(released: the session ended without a reply; the task was not done)'): Message | null {
+  const r = runnerOf(cell);
+  if (r) throw new MailError(`${nameOf(cell)} has a live ${r.orphan ? `orphaned session (pid ${r.session}, its runner gone)` : `run (pid ${r.pid})`}; let it finish`);
   return fileReply(cell, note);
 }
 
-export const status = (dir: string) => ({ box: nameOf(dir), unread: unread(dir).length, working_on: current(dir) });
+// working_on with no live run: a session that died mid-task (or an interactive one: only the operator knows).
+export const status = (dir: string) => {
+  const working_on = current(dir), r = isCell(dir) ? runnerOf(dir) : null;
+  return { box: nameOf(dir), unread: unread(dir).length, working_on,
+    run: r ? (r.orphan ? `orphaned session ${r.session}` : `${r.state} (pid ${r.pid})`) : working_on ? 'none: died, or interactive (cellrun --resume)' : null };
+};
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
