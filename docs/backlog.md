@@ -4,9 +4,8 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Next
 
-1. **Cells run on main's bedrock and guards.** `cellrun` merges main into a clean, idle cell before starting (conflict: abort, check, exit with the mail queued; never over uncommitted work or ignored files main would overwrite), and kinds and secrets read bedrock from the main checkout as guards already do. *survey 6 (SF-DEV S-3c, 2c87840, 9f28d63; AI-MMO 849252f, ca8ec08)*
-2. **Shell guard correctness.** Fail closed on its own errors (exit 2, naming the check); kernel-owned paths only as paths from the repo or cell root, and the message names the one matched; Write/Edit get the shell's temp exemption; refuse killing processes by name (`taskkill /IM`, `pkill`). Then acts, not text (Later). *survey 3–5 · AI-MMO 897ee08*
-3. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
+1. **Shell guard correctness.** Fail closed on its own errors (exit 2, naming the check); kernel-owned paths only as paths from the repo or cell root, and the message names the one matched; Write/Edit get the shell's temp exemption; refuse killing processes by name (`taskkill /IM`, `pkill`). Then acts, not text (Later). *survey 3–5 · AI-MMO 897ee08*
+2. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
 
 ## Later
 
@@ -35,6 +34,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Already in the kit
 
+- Cells run on main as it is: bedrock JSON read from the main checkout; `cellrun` merges main into a clean worktree first: Unreleased. Not done: a landing lock for runs to wait on. *survey 6*
 - Dead runs and orphaned sessions: the lock holds the session's pid; recovery from the run log; `cellrun --resume`; exit notes; `run` in mail status: Unreleased. Not done: the session's creation time against pid reuse; `--stop`; the mail hook handing mail only to the lock holder's session. *survey 2 · Scally 1*
 - A task reaches the cell's log at hand-over; mail bodies logged whole or hashed (`guards.json` `mail.log`, operator's choice 2026-10-18: a project setting, default body): Unreleased. *survey 1, 7 · SF-DEV 13*
 - Light headless runs that queue for room: Unreleased (20cfefb). *Scally 1, 6 · survey: callsheet loaded 11 MCP servers*

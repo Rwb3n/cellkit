@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
 import { current, mailbox, receive, runnerOf, send, status, takeNext } from '../src/mail.ts';
-import { liveRunners, recoverAnswer, room } from '../src/cellrun.ts';
+import { level, liveRunners, recoverAnswer, room } from '../src/cellrun.ts';
 import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, inMain, misplaced, samePath } from '../src/worktree.ts';
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -323,6 +323,67 @@ test('cellrun: no MCP servers; one runner per cell; waits for room (sessions, me
   const ran = cellrun({ CELLKIT_CLAUDE: process.execPath });     // taken over; "claude" (node) refuses its flags and exits
   assert.match(ran.stdout, /cellrun: demo in .*1 message\(s\) queued/, ran.stdout + ran.stderr);   // it started
   assert.equal(existsSync(lock), false);
+});
+
+test('cellrun keeps a cell level with main: merges a clean worktree; leaves uncommitted work and ignored files alone; aborts a conflict', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const commit = (dir: string, path: string, text: string, force = false) => {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+    git(dir, 'add', ...(force ? ['-f'] : []), path);
+    git(dir, 'commit', '-qm', `${path}: ${text.trim()}`);
+  };
+  assert.match(level(main, wt).say, /^already level with main/);
+  commit(main, 'docs/a.md', 'a\n');
+  assert.match(level(main, wt, true).say, /^would merge main/);
+  assert.equal(existsSync(join(wt, 'docs', 'a.md')), false, 'a dry run merges nothing');
+  assert.match(level(main, wt).say, /^merged main [0-9a-f]{7} into the worktree/);
+  assert.equal(readFileSync(join(wt, 'docs', 'a.md'), 'utf8'), 'a\n');
+
+  writeFileSync(join(cellWt, 'draft.md'), 'the cell\'s work, not landed\n');   // uncommitted: never a merge over it
+  commit(main, 'docs/b.md', 'b\n');
+  assert.match(level(main, wt).say, /not levelled .* 1 uncommitted path/);
+  assert.equal(existsSync(join(wt, 'docs', 'b.md')), false);
+  rmSync(join(cellWt, 'draft.md'));
+  assert.match(level(main, wt).say, /^merged main/);
+
+  commit(main, '.gitignore', 'node_modules/\n**/state/views/\n*.local\n');
+  assert.match(level(main, wt).say, /^merged main/);
+  writeFileSync(join(wt, 'notes.local'), 'the cell\'s own, ignored\n');      // git status can't see it
+  commit(main, 'notes.local', 'main\'s\n', true);
+  assert.match(level(main, wt).say, /ignored files, which a merge would overwrite: notes\.local/);
+  assert.equal(readFileSync(join(wt, 'notes.local'), 'utf8'), 'the cell\'s own, ignored\n');
+  rmSync(join(wt, 'notes.local'));
+  assert.match(level(main, wt).say, /^merged main/);
+
+  commit(wt, 'docs/c.md', 'the cell\'s\n');                                  // both sides change one file
+  commit(main, 'docs/c.md', 'main\'s\n');
+  const head = git(wt, 'rev-parse', 'HEAD').trim();
+  const conflict = level(main, wt);
+  assert.equal(conflict.ok, false);
+  assert.match(conflict.say, /conflicts in docs\/c\.md; aborted, the worktree is as it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), head);
+  assert.equal(git(wt, 'status', '--porcelain').trim(), '');                   // no MERGE_HEAD, nothing half-merged
+  send(main, 'demo', 'a task');
+  const r = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: join(tmpdir(), 'no-such-claude'), CELLKIT_MIN_FREE_MB: '0' });
+  assert.equal(r.status, 7, r.stdout + r.stderr);
+  assert.match(r.stderr, /conflicts in docs\/c\.md[\s\S]*mail is still queued; the session was not started/);
+  assert.equal(status(cellWt).unread, 1);
+  assert.equal(existsSync(join(mailbox(cellWt), 'runner.lock')), false);
+});
+
+test('a cell\'s kernel copy reads bedrock (kinds, guards) from the main checkout: approved on main, in force in every cell', (t) => {
+  const { main, wt } = world(t, { kernel: true });
+  const env = { ...process.env };
+  delete env.CELLKIT_CONFIG;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const { kindsPath } = await import(${JSON.stringify(pathToFileURL(join(wt, 'kernel', 'src', 'schemas.ts')).href)});
+    const { configPath } = await import(${JSON.stringify(pathToFileURL(join(wt, 'kernel', 'src', 'config.ts')).href)});
+    console.log(JSON.stringify([kindsPath(), configPath()]));`], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stderr);
+  const [kinds, guards] = JSON.parse(r.stdout) as string[];
+  assert.ok(samePath(kinds, join(main, 'state', 'bedrock', 'kinds.json')), kinds);
+  assert.ok(samePath(guards, join(main, 'state', 'bedrock', 'guards.json')), guards);
 });
 
 test('cellrun admission: eight runs for eight cells at once, two slots: exactly two start', async (t) => {

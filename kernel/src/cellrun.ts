@@ -23,7 +23,7 @@
 //
 // Refuses (exit 2) a cell with no worktree, (3) a cell already working on a message (another session is running it:
 // never run headless and interactive for the same cell at once), (4) a cell with nothing queued, (5) a cell with a
-// live runner already, (6) no room within --hold.
+// live runner already, (6) no room within --hold, (7) merging main into the worktree failed (aborted; the mail is still queued).
 // Otherwise exits with claude's code. The transcript (stream-json) goes to <mailbox>/runs/<UTC stamp>.jsonl.
 // The run's lock records the session's pid too: a runner can die while its session works on (AI-MMO: a kill by process
 // name from another project took every runner), and that orphan keeps the lock, counts toward MAX_RUNNERS, and makes a
@@ -34,15 +34,23 @@
 // last run's log if it is there, else starts a fresh session that is told the task and its partial work, and whose
 // reply is filed to the original. `mail.ts release` (give up, resend) stays the last resort. project-archivist had a
 // cell stuck seven days on a run killed with its parent session.
+//
+// Cells are kept level (from AI-MMO, DEC-0013): once admitted, and before the session starts, the run merges the main
+// checkout's branch into the cell's worktree, so the task starts on main as it is (its kernel, hooks and briefs; SF-DEV's
+// cells ran on old copies until root merged by hand). Only a clean worktree (nothing uncommitted, untracked included)
+// that is not mid-merge is merged; a dirty one (work not landed yet, a resumed task) is left alone and said so, never a
+// merge over a cell's work. Nor when main changed a file the worktree holds as an ignored file: git status doesn't see
+// it and a merge would overwrite it silently. A conflict is aborted (and checked: MERGE_HEAD gone) and the run stops
+// (exit 7) with the mail still queued, as does a merge that fails without starting. It prints what it did.
 // CELLKIT_CLAUDE names the claude executable (default: claude on PATH).
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { freemem } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { alive, lockFile, pause } from './log.ts';
 import { dirOf, fileReply, mailbox, message, runnerLock, runnerOf, send, status, type Runner } from './mail.ts';
-import { cellWorktree, inMain } from './worktree.ts';
+import { cellWorktree, currentBranch, inMain } from './worktree.ts';
 
 export const PROMPT = 'waiting for mail';
 
@@ -128,6 +136,43 @@ export function admit(root: string, cellDir: string, name: string, holdS: number
   }
 }
 
+// ── keeping the cell level with main ───────────────────────────────────────────
+function git(dir: string, args: string[]): { ok: boolean; out: string } {
+  const r = spawnSync('git', ['-C', dir, '-c', 'core.quotepath=off', ...args], { encoding: 'utf8' });
+  return { ok: r.status === 0, out: (r.stdout + r.stderr).trim() };
+}
+const midMerge = (wt: string) => existsSync(resolve(wt, git(wt, ['rev-parse', '--git-path', 'MERGE_HEAD']).out));
+
+// Merge the main checkout's branch into the cell's worktree when that is safe; ok false (with why) only when a merge
+// was tried and failed. dryRun says what it would do.
+export function level(root: string, wt: string, dryRun = false): { ok: boolean; say: string } {
+  const branch = currentBranch(root);
+  const head = git(root, ['rev-parse', '--verify', '-q', `${branch}^{commit}`]);
+  if (!head.ok) return { ok: true, say: `not levelled: no branch ${branch} in the main checkout` };
+  const sha = head.out, short = sha.slice(0, 7);
+  if (midMerge(wt)) return { ok: true, say: `not levelled with ${branch} ${short}: the worktree is mid-merge (left alone)` };
+  const dirty = git(wt, ['status', '--porcelain=v1', '-uall']);
+  if (!dirty.ok) return { ok: true, say: `not levelled: git status failed: ${dirty.out}` };
+  if (dirty.out) {
+    const n = dirty.out.split(/\r?\n/).length;
+    return { ok: true, say: `not levelled with ${branch} ${short}: ${n} uncommitted path(s) in the worktree (land the cell's work first; never a merge over it)` };
+  }
+  const base = git(wt, ['merge-base', 'HEAD', sha]).out;
+  if (base === sha) return { ok: true, say: `already level with ${branch} ${short}` };
+  const changed = git(wt, ['diff', '--name-only', base, sha]).out.split(/\r?\n/).filter(Boolean);
+  const inTheWay = changed.filter((p) => existsSync(join(wt, p)) && git(wt, ['check-ignore', '-q', p]).ok);
+  if (inTheWay.length) return { ok: true, say: `not levelled with ${branch} ${short}: ${branch} changed file(s) the worktree holds as ignored files, which a merge would overwrite: ${inTheWay.join(', ')} (move them, then run again)` };
+  if (dryRun) return { ok: true, say: `would merge ${branch} ${short} into the worktree` };
+  const merged = git(wt, ['merge', '-q', '--no-edit', sha]);
+  if (merged.ok) return { ok: true, say: `merged ${branch} ${short} into the worktree` };
+  const tail = merged.out.split(/\r?\n/).slice(-8).map((l) => `    ${l}`).join('\n');
+  if (!midMerge(wt)) return { ok: false, say: `merging ${branch} ${short} failed before it started (not a conflict); the worktree is as it was. Fix what git says, then run again:\n${tail}` };
+  const unmerged = git(wt, ['diff', '--name-only', '--diff-filter=U']).out.split(/\r?\n/).filter(Boolean);
+  const abort = git(wt, ['merge', '--abort']);
+  if (!abort.ok || midMerge(wt)) return { ok: false, say: `merging ${branch} ${short} failed and merge --abort failed too: the worktree is MID-MERGE, look at it (git status):\n${tail}\n    ${abort.out}` };
+  return { ok: false, say: `merging ${branch} ${short} conflicts in ${unmerged.join(', ') || '(see below)'}; aborted, the worktree is as it was. Land the cell's work or merge by hand in ${wt}, then run again:\n${tail}` };
+}
+
 // ── a run's log ─────────────────────────────────────────────────────────────────
 // The session's final answer in a run log (stream-json: a "result" line, subtype success), written after the task was
 // handed over: after the last line naming the task's id, or anywhere in a --resume run (its prompt named it). Null when
@@ -184,7 +229,7 @@ async function main(argv: string[]): Promise<number> {
   const cmd = command(opt('model'), resume ? resumePrompt(st.working_on!, task) : PROMPT);
   if (argv.includes('--dry-run')) {
     const why = room(freeMb(), liveRunners(root)), r = runnerOf(cellDir);
-    console.log(`cwd ${cellDir}\nenv CELLKIT_MAIL_WAIT=${wait}\n${cmd.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\nlog ${log}\n` +
+    console.log(`cwd ${cellDir}\nenv CELLKIT_MAIL_WAIT=${wait}\n${cmd.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\nlog ${log}\nlevel ${level(root, wt, true).say}\n` +
       `room ${r ? `no: ${r.orphan ? `an orphaned session (pid ${r.session})` : `a runner (pid ${r.pid})`} is already live for this cell` : why ? `not yet: ${why} (would wait up to ${hold} s)` : 'yes'}`);
     return 0;
   }
@@ -205,11 +250,11 @@ async function main(argv: string[]): Promise<number> {
       mkdirSync(runs, { recursive: true });
       writeFileSync(task, `# Task ${id} (from ${asked?.from ?? 'root'}, ${asked?.at ?? '?'})\n\n${asked?.body ?? '(not found: ask root)'}\n`);
     }
-    return await runSession(root, cellDir, name, wait, hold, cmd, log, resume);
+    return await runSession(root, wt, cellDir, name, wait, hold, cmd, log, resume);
   } finally { dropRunner(cellDir); }
 }
 
-async function runSession(root: string, cellDir: string, name: string, wait: number, hold: number, cmd: string[], log: string, resume: boolean): Promise<number> {
+async function runSession(root: string, wt: string, cellDir: string, name: string, wait: number, hold: number, cmd: string[], log: string, resume: boolean): Promise<number> {
   if (!admit(root, cellDir, name, hold)) {
     console.error(`cellrun: ${name}: no room within ${hold} s; its mail is still queued. Run it again later, or raise --hold.`);
     return 6;
@@ -217,6 +262,9 @@ async function runSession(root: string, cellDir: string, name: string, wait: num
   const st = status(cellDir);                          // the wait may have been long: look again
   if (!resume && st.working_on) { console.error(`cellrun: ${name} took ${st.working_on} in another session while this run waited; not starting a second`); return 3; }
   if (!resume && !st.unread) { console.error(`cellrun: no mail queued for ${name} any more`); return 4; }
+  const levelled = level(root, wt);
+  if (!levelled.ok) { console.error(`cellrun: ${name}: ${levelled.say}\nIts mail is still queued; the session was not started.`); return 7; }
+  console.log(`cellrun: ${name}: ${levelled.say}`);
   mkdirSync(dirname(log), { recursive: true });
   const env: NodeJS.ProcessEnv = { ...process.env, CELLKIT_MAIL_WAIT: String(wait) };
   delete env.CLAUDE_PROJECT_DIR;                       // the cell's folder is the project, not the caller's

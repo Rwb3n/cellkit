@@ -30,7 +30,9 @@ addFormats(ajv);
 // enum with an if/then rule. (A project that still lists its kinds in claim.schema.json keeps working: the enums merge.)
 export const BASE_KINDS = ['fact', 'opinion', 'same-as', 'part-of', 'relation', 'rule', 'hypothesis', 'check'];
 export interface KindDef { description?: string; schema?: Record<string, unknown> }
-export const kindsPath = (root = join(kernelDir, '..')) => join(root, 'state', 'bedrock', 'kinds.json');
+// The main checkout's, also from a cell's worktree: kinds approved on main apply to a cell at once, not after root
+// merges main into it (SF-DEV: a cell refused valid claims of a kind approved that day). No git: this checkout's.
+export const kindsPath = (root = inMain(join(kernelDir, '..'))) => join(root, 'state', 'bedrock', 'kinds.json');
 
 export function compileClaim(kinds: Record<string, KindDef> = {}) {
   const s = load('claim.schema.json');

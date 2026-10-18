@@ -12,8 +12,8 @@
 // project whose rules keep personal data out of every log (callsheet's ontology rule 8): the log is append-only.
 // Change it like any bedrock doc: `stage --doc guards` (or write proposed/guards.json), `amend`, and the operator
 // approves. amend and approve refuse a doc that doesn't check (checkGuards); a .json doc goes live only on approval.
-// The hooks read the live file. Where root's folded views are present (the main checkout) they also check its hash
-// against the approved one and refuse everything on a mismatch; in a cell's worktree they trust the file. Either way the
+// The hooks read the live file, the main checkout's even from a cell's worktree. Where root's folded views are present
+// they also check its hash against the approved one and refuse everything on a mismatch. Either way the
 // real guards are elsewhere: bedrock is hook-protected, a cell can't write outside its folder, `cell audit` catches
 // script writes, and lint catches a hand edit at every session start.
 // Missing = no project guards. Invalid = every command and write is refused until the operator fixes it, and mail logs
@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from './canon.ts';
 import { globRe } from './glob.ts';
+import { inMain } from './worktree.ts';
 
 export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
@@ -81,7 +82,9 @@ export function checkGuards(value: unknown): string[] {
 }
 
 const repoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const configPath = (root = repoRoot()) => process.env.CELLKIT_CONFIG || join(root, 'state', 'bedrock', `${GUARDS}.json`);
+// The main checkout's, also from a cell's worktree (whose hooks run its own kernel copy): guards approved on main protect
+// every cell at once, not after root merges main into it (SF-DEV: a read guard added on main didn't cover the cells).
+export const configPath = (root = inMain(repoRoot())) => process.env.CELLKIT_CONFIG || join(root, 'state', 'bedrock', `${GUARDS}.json`);
 
 export function loadConfig(path = configPath()): Config {
   const none: Config = { operatorOnly: [], protected: [], writers: [], owns: {}, mailLog: 'body' };
