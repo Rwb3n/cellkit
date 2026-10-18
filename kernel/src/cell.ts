@@ -67,6 +67,7 @@ const settings = (toRoot: string) => {
       PreToolUse: [
         { matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: `node "${k}/hook-guard.ts"` }] },
         { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `node "${k}/hook-bash.ts"` }] },
+        { matcher: 'Read|Grep', hooks: [{ type: 'command', command: `node "${k}/hook-read.ts"` }] },
       ],
       SessionStart: [{ hooks: [{ type: 'command', command: `node "${k}/cli.ts" fold --cell "$CLAUDE_PROJECT_DIR" && node "${k}/cli.ts" lint --cell "$CLAUDE_PROJECT_DIR"` }] }],
       // the mail loop: file the last answer as the reply, wait for the next message, hand it over (kernel/src/mail-hook.ts)

@@ -12,6 +12,12 @@
         "hooks": [
           { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-bash.ts\"" }
         ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-read.ts\"" }
+        ]
       }
     ],
     "SessionStart": [

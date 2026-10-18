@@ -5,8 +5,11 @@
 //                        { "pattern": "\\bsf\\s+data\\s+delete\\b", "message": "…" } ],         or a raw regex (case-insensitive)
 //     "protected":     [ { "path": "docs/portfolio/", "by": "portfolio/src/pm.ts" } ],          written only by that script
 //     "cells":         { "game": { "owns": ["game/**", "sim/**"] } },                          paths a cell owns beyond its folder
-//     "mail":          { "log": "hash" }                                                       mail bodies kept out of the logs
+//     "mail":          { "log": "hash" },                                                      mail bodies kept out of the logs
+//     "unreadable":    [ { "path": "OTHER_PROJECT/vault/", "why": "…" } ]                      no session reads these
 //   }
+// unreadable: on top of the kit's defaults (keys, .env, credentials; secrets.ts), matched by folder name anywhere on the
+// disk; a trailing / is a folder, * matches within one name. Read by the Read/Grep hook and the shell guard.
 // mail.log: "body" (default) logs each message whole, so the log is the record of what was asked and answered; "hash"
 // logs its sha256 and length only, and the body lives in the mailbox alone (transient, under .git, deletable). For a
 // project whose rules keep personal data out of every log (callsheet's ontology rule 8): the log is append-only.
@@ -25,17 +28,19 @@ import { fileURLToPath } from 'node:url';
 import { sha256 } from './canon.ts';
 import { globRe } from './glob.ts';
 import { inMain } from './worktree.ts';
+import type { Unreadable } from './secrets.ts';
 
 export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
 export type MailLog = 'body' | 'hash';
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; error?: string }
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; error?: string }
 interface Raw {
   operator_only?: { command?: string; pattern?: string; message?: string }[];
   protected?: { path?: string; by?: string }[];
   cells?: Record<string, { owns?: string[] }>;
   mail?: { log?: string };
+  unreadable?: { path?: string; why?: string }[];
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -56,7 +61,13 @@ export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable)`);
+  if (raw.unreadable !== undefined && !Array.isArray(raw.unreadable)) out.push('unreadable must be a list of { "path": "…", "why": "…" }');
+  for (const [i, u] of (Array.isArray(raw.unreadable) ? raw.unreadable : []).entries()) {
+    if (!u || typeof u.path !== 'string' || !u.path.trim()) out.push(`unreadable[${i}] needs "path"`);
+    else if (/^[a-zA-Z]:|^\//.test(u.path)) out.push(`unreadable[${i}] "${u.path}": a path by folder name (e.g. "OTHER_PROJECT/vault/"), never by drive`);
+    else if (/^[*/]*$/.test(u.path.replace(/\*\*?\/?/g, '*'))) out.push(`unreadable[${i}] "${u.path}": too wide (it would match everything)`);
+  }
   if (raw.mail !== undefined) {
     if (!raw.mail || typeof raw.mail !== 'object' || Array.isArray(raw.mail)) out.push('mail must be an object ({ "log": "body" | "hash" })');
     else {
@@ -87,7 +98,7 @@ const repoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '.
 export const configPath = (root = inMain(repoRoot())) => process.env.CELLKIT_CONFIG || join(root, 'state', 'bedrock', `${GUARDS}.json`);
 
 export function loadConfig(path = configPath()): Config {
-  const none: Config = { operatorOnly: [], protected: [], writers: [], owns: {}, mailLog: 'body' };
+  const none: Config = { operatorOnly: [], protected: [], writers: [], owns: {}, mailLog: 'body', unreadable: [] };
   if (!existsSync(path)) return none;
   const fail = (why: string): Config => ({ ...none, mailLog: 'hash', error: `${path} ${why}; the operator must fix it` });
   const text = readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
@@ -111,6 +122,7 @@ export function loadConfig(path = configPath()): Config {
     writers: guarded.flatMap((g) => (g.by ? [new RegExp(pathRe(g.by), 'i')] : [])),
     owns: Object.fromEntries(Object.entries(raw.cells ?? {}).map(([n, c]) => [n, c.owns ?? []])),
     mailLog: raw.mail?.log === 'hash' ? 'hash' : 'body',
+    unreadable: (raw.unreadable ?? []).map((u) => ({ path: u.path!, why: u.why ?? `unreadable (bedrock guards.json: ${u.path})` })),
   };
 }
 

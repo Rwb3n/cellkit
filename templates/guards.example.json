@@ -7,5 +7,9 @@
     { "path": "docs/report/", "by": "tools/report.ts" },
     { "path": "docs/models/trace.md" }
   ],
-  "mail": { "log": "body" }
+  "mail": { "log": "body" },
+  "unreadable": [
+    { "path": "OTHER_PROJECT/vault/", "why": "another project's vault" },
+    { "path": "records/*bank*", "why": "bank records" }
+  ]
 }

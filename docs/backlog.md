@@ -4,13 +4,13 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Next
 
-1. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). A hook denylist is a floor, not a boundary: scripts read past it. The boundary is an OS sandbox (callsheet's OpenShell trial closed reads and script writes), so pair this with making cells sandbox-friendly (hooks without git, relative worktree paths, mail across the boundary; see Watching). *SF-DEV 18 (secrets.ts, hook-read.ts) · survey 10*
+(empty: pick from Later)
 
 ## Later
 
 - **The shell guard matches acts, not text.** A commit message, a heredoc's `=>` or a fixture path that names a protected path is blocked (root 2026-10-18; SF-DEV runs 164435Z, 173850Z; archivist task 4). Blank quoted strings and heredoc bodies before matching, unless they are a write's target or go to a shell. *SF-DEV 10 · survey 4*
 - **Lint notices abandonment**: a cell's worktree N commits behind main; root changing a cell's folder on main while it has a worktree; untracked log entries (and `/session-close` refuses them). *survey 8*
-- **Worktrees**: `cell checkout` links configured root paths (`node_modules`, tools) into the worktree; `git worktree add --relative-paths --lock`. *survey 9–11*
+- **Worktrees**: `cell checkout` links configured root paths (`node_modules`, tools) into the worktree; `git worktree add --lock`. Not `--relative-paths`: it sets `extensions.relativeWorktrees`, which git before 2.48 refuses for the whole repo, and WSL's Ubuntu 24.04 ships 2.43 (the git it was meant to help). *survey 9–11*
 - **One landing at a time**: a landing lock; main's hook refuses commit, merge and push meanwhile; runners wait. *survey 11 (AI-MMO 633cf6b)*
 - **`cell land` re-runs new or changed tests** N times (default 3), and runs the cell's own fold and lint on the merged result. *SF-DEV 11 (cellverify.ts)*
 - **The brief**: where mail lives (every headless run looks for `inbox/` in the cell); paths in a task are from the repository root. Approving guards refreshes the briefs it changes, or prints the command. *survey 14*
@@ -33,6 +33,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Already in the kit
 
+- Read guard: kit defaults plus `guards.json` `unreadable`, Read/Grep hook and the shell: Unreleased. *SF-DEV 18*
 - Shell guard correctness: fails closed; kernel-owned paths anchored, refusal names the path; Write/Edit temp exemption; no killing by name: Unreleased. Not done: a hook that can't load still fails open. *survey 3–5 · AI-MMO 897ee08*
 - Cells run on main as it is: bedrock JSON read from the main checkout; `cellrun` merges main into a clean worktree first: Unreleased. Not done: a landing lock for runs to wait on. *survey 6*
 - Dead runs and orphaned sessions: the lock holds the session's pid; recovery from the run log; `cellrun --resume`; exit notes; `run` in mail status: Unreleased. Not done: the session's creation time against pid reuse; `--stop`; the mail hook handing mail only to the lock holder's session. *survey 2 · Scally 1*

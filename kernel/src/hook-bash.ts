@@ -11,6 +11,7 @@
 //    and file verbs whose target leaves the cell; the temp folder is fine). `cell audit` is the backstop.
 // 5. The project's own guards (bedrock guards.json, config.ts): its operator-only commands, and paths only a named
 //    script writes. guards.json itself is bedrock (rule 2).
+// 7. Nobody reads a secret or an unreadable path (secrets.ts; Read and Grep: hook-read.ts), by act, not by text.
 // 6. Nobody kills processes by name (taskkill /IM, pkill, killall, Stop-Process -Name): on one machine that takes other
 //    projects' runners and builds too (AI-MMO: another project's `taskkill /F /IM python.exe` took every runner). By pid.
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
@@ -22,6 +23,7 @@ import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
 import { basename, resolve } from 'node:path';
 import { outside, writeTargets } from './shell.ts';
+import { shellRefusal } from './secrets.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -53,6 +55,10 @@ if (/cli\.ts["']?\s+review\s+decide\b/.test(command)) {
 if (/cli\.ts["']?\s+cell\s+land\b/.test(command) && /--accept-weaker\b/.test(command)) {
   block('landing weaker tests is the operator\'s call. Show them what got weaker, then ask them to run it from their prompt: ! node kernel/src/cli.ts cell land --name <cell> … --accept-weaker "<why>"');
 }
+
+// Reads (rule 7).
+const reads = shellRefusal(command, cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(), config.unreadable);
+if (reads) block(reads);
 
 // Killing by name (rule 6), outside quoted text: a commit message may name it.
 const unquoted = command.replace(/"[^"]*"|'[^']*'/g, '""');
