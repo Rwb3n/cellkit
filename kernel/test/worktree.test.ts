@@ -11,6 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
 import { current, mailbox, receive, send, status, takeNext } from '../src/mail.ts';
+import { liveRunners, room, runnerOf } from '../src/cellrun.ts';
 import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, inMain, misplaced, samePath } from '../src/worktree.ts';
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -218,7 +219,7 @@ test('cellrun: a run that dies mid-task files a reply saying so and frees the ce
   send(main, 'demo', 'task two');
   // a "claude" that exits at once: node refuses claude's flags. Pretend the session took the task first, then died.
   takeNext(cellWt);
-  const r = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: process.execPath });
+  const r = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: process.execPath, CELLKIT_MIN_FREE_MB: '0' });
   assert.equal(r.status, 3, r.stderr);                                       // in flight: refused, and told how to free it
   const rel = run('mail.ts', ['release', '--as', 'demo'], { CLAUDE_PROJECT_DIR: cellWt });
   assert.equal(rel.status, 0, rel.stderr);
@@ -237,12 +238,74 @@ process.exit(1);
 exec "${process.execPath}" "${fake}.mjs"
 `, { mode: 0o755 });
   t.after(() => { rmSync(`${fake}.mjs`, { force: true }); rmSync(exe, { force: true }); });
-  const died = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: exe });
+  const died = run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: exe, CELLKIT_MIN_FREE_MB: '0' });
   assert.equal(died.status, 1, died.stdout + died.stderr);
   assert.match(died.stderr, /still in flight; filed/);
   assert.equal(status(cellWt).working_on, null);                             // the cell can run again
   const [reply] = receive(main);
   assert.match(reply.body, /without replying .* The task was not done/);
+});
+
+test('cellrun: no MCP servers; one runner per cell; waits for room (sessions, memory) and gives up with the mail queued', (t) => {
+  const { main, cellWt } = world(t);
+  assert.equal(room(8000, 3, 3, 4096), '3 session(s) running (at most 3, CELLKIT_MAX_RUNNERS)');
+  assert.match(room(1000, 0, 3, 4096)!, /1000 MB free \(under 4096/);
+  assert.equal(room(8000, 2, 3, 4096), null);
+  send(main, 'demo', 'task one');
+  const cellrun = (env: Record<string, string>, ...args: string[]) => run('cellrun.ts', ['--root', main, '--cell', 'demo', ...args], { CELLKIT_MIN_FREE_MB: '0', ...env });
+  const lock = join(mailbox(cellWt), 'runner.lock');
+
+  const dry = cellrun({ CELLKIT_MAX_RUNNERS: '0' }, '--dry-run', '--hold', '60');
+  assert.match(dry.stdout, /--strict-mcp-config/);
+  assert.match(dry.stdout, /room not yet: 0 session\(s\) running \(at most 0.*would wait up to 60 s/);
+
+  const full = cellrun({ CELLKIT_MAX_RUNNERS: '0', CELLKIT_CLAUDE: process.execPath }, '--hold', '0');   // no room: gives up
+  assert.equal(full.status, 6, full.stdout + full.stderr);
+  assert.match(full.stdout, /waiting for room/);
+  assert.match(full.stderr, /no room within 0 s; its mail is still queued/);
+  assert.equal(existsSync(lock), false, 'the runner lock is released');
+  assert.equal(status(cellWt).unread, 1);
+
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, at: 'now', state: 'running' }));   // a live runner (this test)
+  assert.equal(liveRunners(main), 1);
+  assert.equal(cellrun({}).status, 5);
+  assert.match(cellrun({}, '--dry-run').stdout, /room no: a runner is already live for this cell/);
+  writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, at: 'then', state: 'running' }));   // its run is gone
+  assert.equal(runnerOf(cellWt), null);
+  assert.equal(liveRunners(main), 0);
+  const ran = cellrun({ CELLKIT_CLAUDE: process.execPath });     // taken over; "claude" (node) refuses its flags and exits
+  assert.match(ran.stdout, /cellrun: demo in .*1 message\(s\) queued/, ran.stdout + ran.stderr);   // it started
+  assert.equal(existsSync(lock), false);
+});
+
+test('cellrun admission: eight runs for eight cells at once, two slots: exactly two start', async (t) => {
+  const { main } = world(t);
+  const cells = Array.from({ length: 8 }, (_, i) => `c${i}`);
+  for (const c of cells) { mkdirSync(join(main, 'cells', c), { recursive: true }); writeFileSync(join(main, 'cells', c, 'binding.json'), '{}'); }
+  const url = (f: string) => JSON.stringify(pathToFileURL(join(src, f)).href);
+  const go = join(main, 'go');
+  // each: take its cell's runner lock, try once for a slot (hold 0), keep it 2 s if admitted, print the verdict
+  const script = (c: string) => `import { admit, claimRunner, dropRunner } from ${url('cellrun.ts')};
+    import { existsSync } from 'node:fs';
+    import { pause } from ${url('log.ts')};
+    const dir = ${JSON.stringify(join(main, 'cells', c))};
+    if (claimRunner(dir)) process.exit(5);
+    while (!existsSync(${JSON.stringify(go)})) pause(1);     // all eight ask in the same instant
+    const ok = admit(${JSON.stringify(main)}, dir, ${JSON.stringify(c)}, 0);
+    if (ok) pause(2000);
+    dropRunner(dir);
+    process.stderr.write(ok ? 'ADMITTED' : 'WAITED');`;
+  const { spawn } = await import('node:child_process');
+  setTimeout(() => writeFileSync(go, ''), 2500);
+  const verdicts = await Promise.all(cells.map((c) => new Promise<string>((done) => {
+    const p = spawn(process.execPath, ['--input-type=module', '-e', script(c)], { env: { ...process.env, CELLKIT_MAX_RUNNERS: '2', CELLKIT_MIN_FREE_MB: '0' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('exit', () => done(err.includes('ADMITTED') ? 'admitted' : err.includes('WAITED') ? 'waited' : err));
+  })));
+  assert.equal(verdicts.filter((v) => v === 'admitted').length, 2, verdicts.join('\n'));
+  assert.equal(verdicts.filter((v) => v === 'waited').length, 6, verdicts.join('\n'));
+  assert.equal(liveRunners(main), 0);
 });
 
 test('cell land: commits the cell\'s work, merges main in, checks, lands it --no-ff, and commits root\'s log', (t) => {

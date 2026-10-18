@@ -1,6 +1,6 @@
 // The log: append is the only writer. Entries are never edited (ontology §3 rule 1).
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { canonical, sha256 } from './canon.ts';
 import { check, type Kind } from './schemas.ts';
 
@@ -87,14 +87,17 @@ export function append(cellDir: string, input: AppendInput): Entry {
 // load (eight writers, a busy machine) a fixed 10 s made waiters give up while every holder was making progress.
 export const lockPath = (cellDir: string) => join(cellDir, 'state', 'log.lock');
 const LOCK_STALE_MS = 30_000, LOCK_WAIT_MS = 10_000, LOCK_WAIT_MAX_MS = 300_000, LOCK_STEP_MS = 25;
-const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
+export const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
 const held = new Map<string, number>();   // lock path → depth, this process
 
-export function withLock<T>(cellDir: string, fn: () => T): T {
-  const path = resolve(lockPath(cellDir));
+export const withLock = <T>(cellDir: string, fn: () => T): T => lockFile(lockPath(cellDir), fn);
+
+// The same lock on any file (cellrun's admission uses it too).
+export function lockFile<T>(lock: string, fn: () => T): T {
+  const path = resolve(lock);
   if (held.has(path)) { held.set(path, held.get(path)! + 1); try { return fn(); } finally { held.set(path, held.get(path)! - 1); } }
-  mkdirSync(join(cellDir, 'state'), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   const start = Date.now();
   let until = start + LOCK_WAIT_MS, seen = '';
   for (;;) {
@@ -110,7 +113,7 @@ export function withLock<T>(cellDir: string, fn: () => T): T {
       continue;
     }
     if (raw && raw !== seen) { seen = raw; until = Date.now() + LOCK_WAIT_MS; }   // a new holder: the lock is moving
-    if (Date.now() > until || Date.now() - start > LOCK_WAIT_MAX_MS) throw new AppendError(`log is locked by pid ${holder.pid ?? '?'} since ${holder.at ?? '?'} (${path})`);
+    if (Date.now() > until || Date.now() - start > LOCK_WAIT_MAX_MS) throw new AppendError(`locked by pid ${holder.pid ?? '?'} since ${holder.at ?? '?'} (${path})`);
     pause(LOCK_STEP_MS);
   }
   held.set(path, 1);

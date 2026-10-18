@@ -4,9 +4,8 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15) and
 
 ## Next
 
-1. **Lighter headless runs, with admission.** `cellrun` starts `claude -p` with `--strict-mcp-config` (cells use no MCP servers, and each server loaded costs node processes). It also waits instead of starting while runners ≥ 3 or free memory < 4 GB, polling every 30 s up to 4 h, with the limits as named constants. On the count, unreadable memory never blocks the run. *Scally 1, 6 (dbd8995, 5e4b688)*
-2. **`cellrun --resume`.** A task whose session died restarts with the task text, plus a note that partial work is uncommitted in the worktree, and the reply is filed against the original message. This replaces release-and-resend. *Scally 1*
-3. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Fix: add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
+1. **`cellrun --resume`.** A task whose session died restarts with the task text, plus a note that partial work is uncommitted in the worktree, and the reply is filed against the original message. This replaces release-and-resend. *Scally 1*
+2. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Fix: add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
 
 ## Later
 
@@ -27,6 +26,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15) and
 
 ## Already in the kit
 
+- Light headless runs that queue for room: Unreleased. *Scally 1, 6*
 - Log lock, and `assume` choosing its id under it: Unreleased. *SF-DEV 3, 7 · Scally 3*
 - Placeholder replies held back by the mail hook: Unreleased. *SF-DEV 2, 13 · Scally 2*
 - Kernel tests failing from a cell worktree: fixed in v0.2. *SF-DEV 1*
