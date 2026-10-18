@@ -1,0 +1,112 @@
+Notes from SF-DEV (D:\PROJECTS\SF-DEV), a cellkit project, 2026-10-10.
+Lessons from running two cells headless for a day. Take what's useful; nothing here is a request.
+
+1. Kernel tests fail from a cell worktree.
+   worktree.test.ts ("cell checkout makes a worktree...") copies kernel/node_modules, which a cell
+   worktree doesn't have (it's git-ignored), so the suite shows 25/26 from any cell. schemas.ts already
+   falls back to the main checkout's node_modules; the test could do the same, or skip with a reason.
+
+2. A cell's final message isn't always a reply.
+   A headless cell once ended its turn with "The test suite is still running. I'll write the reply once
+   it finishes." The Stop hook filed that as the reply and cellrun exited; the work was fine but the
+   reply was empty. Ideas: the cell brief says plainly "never end a turn while something you started is
+   still running"; mail-hook or cellrun flags replies that look like placeholders (very short, future
+   tense, "still running") and asks the cell to continue.
+
+3. "One writer per cell" is a convention, not a check.
+   In SF-DEV a long-running cell tool (an org reset) appends to the cell's log while root runs it in the
+   background; a cell session started at the same time would append too. Nothing stops that today.
+   A lock per log (a lock file held for the life of a writer, checked by append) would make it mechanical.
+
+4. Root sometimes needs to run a cell's tool as a long job.
+   Commands longer than about 2 minutes die when run through Claude Code's "!" prompt, and output is
+   hidden. Root running them in the background works, but it's ad hoc. A small "job" contract (the cell
+   declares command, preconditions, expected duration; root starts and watches it; one job per cell
+   at a time, tied to the lock in 3) would make it part of the kit.
+
+5. Shells eat backslashes.
+   Writing JSON with regexes through a bash heredoc (node - <<'EOF') stripped every backslash. Worth a
+   line in the kit's Traps: write regexes with Edit/Write, then compile them.
+
+6. Cells on another machine.
+   SF-DEV plans to run cells on a remote Debian server while root stays on the operator's PC. Mail under
+   the git common dir and root merging straight from worktrees both assume one shared disk. A transport
+   (git over SSH for branches and logs; mail and cellrun over SSH) would be the kit-level piece.
+
+
+Notes from SF-DEV, 2026-10-12. What we built on the kernel since, and what we'd like you to look at.
+SF-DEV is on windows-guard-fixes (base ff3588d) and will merge cellkit/main before 2026-10-22. Every
+item names its files in SF-DEV; read them with git -C D:\PROJECTS\SF-DEV show main:<path>.
+Full reasoning: D:\PROJECTS\SF-DEV\docs\sketch-kit-reconcile.md. Nothing here is a request.
+
+7. The log lock (item 3, built).                       kernel/src/log.ts, kernel/test/lock.test.ts
+   Every append holds state/log.lock and re-reads a stale tail before writing. A stress test found a
+   Windows race without it: two writers took the same id about 1 run in 20, under parallel load
+   only. With the lock: 0 in 80. Lesson for the kit's Traps: stress new concurrency code; one clean run
+   proves nothing.
+
+8. An operator constraint carries the operator's own words.        kernel/src/generators.ts (constraint)
+   `constraint --quote "…"` is required when the voice is the operator's, beside the writer's --text;
+   render shows both. It caught root adding a condition the operator never gave.
+
+9. Kit drift, before every merge of the kit.                       kernel/src/drift.ts, kernel/test/drift.test.ts
+   `node kernel/src/drift.ts [--branch cellkit/main]`: lists kernel files a project changed beyond its
+   contract points, and the upstream commits since its base that touch them (where the merge will
+   conflict). Read-only. It is how SF-DEV found it was 24 commits behind main.
+
+10. The shell guard matches acts, not text.                        kernel/src/hook-bash.ts (top), boundary.test.ts
+   Quoted strings and heredoc bodies are blanked before the guards run, unless the string is a write's
+   target, holds a write primitive, or goes to a shell (-c, -Command, a heredoc fed to bash). Before this,
+   a commit message or mail body that named `sf data delete` was refused. Your guards.json operator_only
+   patterns match the raw command text ("mention-strict"), so SF-DEV keeps its domain guards in
+   hook-bash.ts until operator_only can match acts too.
+
+11. Two checks we'd like in cell land.                             kernel/src/cellverify.ts
+   SF-DEV's cellverify does what land does minus the commits, plus: every new or changed test file is
+   run N more times (default 3; a test the cell called passing failed 1 in 3), and the cell's own fold
+   and lint run on the merged result. After the merge SF-DEV will run land with cellverify as --check.
+
+12. Maps, predictions, divergences (alpha; one user so far).        kernel/src/maps.ts, schemas: map/prediction/divergence
+   A map declares its territory, instrument, what it sees and its blind spots (with reasons), and
+   stale_after. A write logs a prediction first; a read-back resolves it as a held fact or an open
+   divergence. Lint warns on overdue predictions, open divergences, acceptances near or past their review
+   date, and an error budget; it errors on an acceptance on a no-go map. Rule of three: not ready for the
+   kit. What would help now: an extension point for a project's own lint and fold modules, so maps.ts
+   can live outside kernel/.
+
+13. Item 2 happened three more times.
+   The cell ended its turn while a job it started was still running (a test suite; a live export). The
+   reply said "still running" and the work was in fact complete. Your 4a1585e ("work synchronously")
+   should cover it. Twice, a cell also said a task "arrived again" when it had finished it the turn
+   before: the same message handed over twice (SF-DEV org-16, org-21). Not yet understood.
+
+14. A rule for Traps: a tool path never runs for the first time on the only copy of anything.
+   Root ran a cell tool's untested option on the only pre-reset backup; instead of refusing a folder it
+   didn't recognise, the tool wrote a fresh export into it. Fixed by making --dir read-only everywhere,
+   but the general lesson is the root's.
+
+--- 2026-10-15, after merging cellkit/main (v0.2.1) into SF-DEV ---
+
+15. cell land: dirty() cuts the first letter off a path.            kernel/src/land.ts, test/land-dirty.test.ts
+   git() trims its output, so when the first `git status --porcelain` line is an unstaged change
+   (" M docs/assumptions.md"), the leading space goes and slice(3) gives "ocs/assumptions.md".
+   commitRootLog then skips the generated assumptions doc that the land's own fold changed, and the
+   next land refuses: "root has uncommitted work of its own: ocs/assumptions.md". It happened on our
+   second land in a row. SF-DEV's fix: dirty() runs git status itself and doesn't trim; test included.
+
+16. A cell's own fixture may make test/ before cell new does.        (ours: test/cellverify.test.ts)
+   Since v0.2 cell new creates test/, so a fixture's mkdirSync(test) without recursive throws EEXIST.
+   Ours only; noted in case another project's tests do the same.
+
+17. Merge report. 9 conflicts, all resolved by the reconcile verdicts (items 7-12): your land, rebind,
+   stage, ownership and binding lint taken; our S1-S5, cellverify (now with --no-merge for land's
+   --check) and maps kept as declared drift. Both our cells' bindings predated logged rebinds and lint
+   flagged them: recorded with cell rebind, landed with cell land. It worked first time apart from 15.
+
+18. Nothing guards reads.                                            kernel/src/secrets.ts, hook-read.ts, read-guard.test.ts
+   The kit's hooks match Write|Edit|MultiEdit|NotebookEdit and Bash|PowerShell, so a session can open a
+   neighbouring workspace's keys with the Read tool, Grep (which searches hidden and git-ignored files:
+   it finds .env), or cat. SF-DEV now has a Read|Grep hook and a shell read check (per simple command:
+   a read verb or read primitive plus a denied path; text naming one is not a read), over a denylist:
+   .ssh, .env (not .env.example), keys, plus per-workspace folders. A guards.json "unreadable" list
+   would make this a project setting; the scaffold would need the Read|Grep matcher.

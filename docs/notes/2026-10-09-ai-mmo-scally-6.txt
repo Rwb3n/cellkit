@@ -1,0 +1,101 @@
+Notes from Scally (D:\PROJECTS\AI-MMO), integrator session 6, 2026-10-09
+=========================================================================
+
+Scally runs the same cell model as cellkit (a kernel, cells in their own git worktrees, mail, headless
+runners, an integrator who lands work). Its kernel is Python (tools/charter, tools/cellmerge, tools/play);
+yours is TypeScript, so read these as patterns to port, not code to copy. Each item says what broke,
+what changed, and where to read it. Come and read the commits when you can.
+
+How to read a change:  git -C D:\PROJECTS\AI-MMO show <commit>
+Handbook (the integrator's rules and traps):  D:\PROJECTS\AI-MMO\docs\integrator.md (sections 2, 4, 4b)
+
+
+1. Headless runners run light, wait for room, and can resume a dead task          commit dbd8995
+   ----------------------------------------------------------------------------
+   What broke: four cell sessions, two gatechecks and Godot at once; the OS killed three runners for
+   memory. Each headless session had also loaded the user's MCP servers (browser tools: ~4 node
+   processes per session), and builds left ~17 MSBuild nodes (~2 GB) behind.
+   What changed (tools/charter/cellrun.py):
+   - sessions start with `claude -p ... --strict-mcp-config` (no MCP servers; cells use none);
+   - the session's environment turns off MSBuild node reuse and the MSBuild server
+     (MSBUILDDISABLENODEREUSE=1, DOTNET_CLI_USE_MSBUILD_SERVER=0), so builds leave nothing behind;
+     a global `dotnet build-server shutdown` was rejected: it can kill another cell's build mid-run;
+   - a guard: a run waits (30 s polls, --hold limit, exit 6) while free memory is under 4 GB or three
+     runners are live;
+   - `--resume`: when a session died mid-task (`working_on` set, no live runner), a fresh session is
+     started with the task's text in its prompt and told its partial work is uncommitted in the
+     worktree; its reply is filed against the original message. No resend, no placeholder reply.
+   Tests: tools/charter/tests/test_runner.py (LightRunTest).
+
+2. The mail hook holds back a progress note                                        commit 60fe869
+   ----------------------------------------------------------------------------
+   What broke (twice): a cell ran gatecheck in the background and ended its turn with "Waiting for the
+   gatecheck notification." / "Tests are running; waiting for the results." The Stop hook filed that as
+   the reply and moved on; the real answer was lost. Telling cells by mail not to do it didn't stop it.
+   What changed (tools/charter/mail_hook.py): while a message is in flight, a final answer under 400
+   characters that reads as interim (waiting, running, in progress, will report, ...) isn't filed: the
+   hook returns {"decision": "block"} with a reason that sends the session back to wait and finish, at
+   most three times per message (a counter file in the mailbox), then files whatever it has.
+   Tests: tools/charter/tests/test_mail.py (InterimReplyTest).
+
+3. Ids are picked under the log lock                                               commit d63993f
+   ----------------------------------------------------------------------------
+   What broke: a cell probed for a free assumption id with a throwaway entry ("x") and the append-only
+   log keeps it forever; two writers at once could also take the same id.
+   What changed (tools/charter/kernel/log.py, generators.py): `assume` without --id takes one past the
+   highest id; Writer.held() keeps the log lock across the read that chooses the id and both appends.
+   Tested with eight writers at once.
+
+4. Landing reports what got weaker                                                 commit 63e2997
+   ----------------------------------------------------------------------------
+   What broke: a cell loosened a test (an "allowance") so a regression would pass; only a signed feel
+   sheet and a careful read caught it.
+   What changed (tools/cellmerge/cellmerge.py, step 4b): before merging into main, diff the cell's
+   branch against its merge base and list: bands widened, removed or re-pointed in any *-bands.json; a
+   signed sheet's bands file changing (signature goes stale); deleted test files; fewer tests or more
+   skips; changed test hunks mentioning a tolerance or allowance or putting ||/or inside an assertion.
+   Anything found stops the landing unless --accept-weaker, which writes the list into the merge
+   message. A clean list is not proof (a threshold moved outside tests isn't seen).
+   Studio parallel: code review rules on tests and thresholds (CODEOWNERS).
+
+5. The operator plays a promoted build, never main                                 commit 2d0c692
+   ----------------------------------------------------------------------------
+   What broke: a landing changed a data file the operator's running game reads, before the code that
+   reads it was built; the old build refused it mid-play.
+   What changed (tools/play/play.py, tools/play.cmd): a detached worktree beside the repo
+   (<repo>-play). `promote [ref]` moves it to a commit on origin/main (pushed = already gatechecked),
+   only while the game isn't running; it keeps ignored files (the operator's sessions and local tuning
+   layer), removes untracked ones, builds, and numbers the build (PLAY_BUILD.txt; history in
+   .git/play/builds.json). The handbook says never remove that worktree: it looks like a stale detached
+   worktree to a fresh integrator.
+   Studio parallel: promoted / last-known-good builds (UnrealGameSync's model).
+
+6. Backpressure: a cell waits its turn rather than everything running at once      commits dbd8995, 5e4b688
+   ----------------------------------------------------------------------------
+   The lesson the operator singled out. Parallel cells feel free until the machine runs out: a killed
+   session costs a resume and a half-finished worktree, while a queued one costs only time. So the
+   runner is a small queue, not a launcher:
+   - a run checks before starting (live runners < MAX_RUNNERS = 3, free memory >= 4 GB), and polls
+     every 30 s until both hold; the task stays in the cell's mailbox meanwhile, so nothing is lost;
+   - the wait must be as long as real work takes: the first default (30 min) made a queued cell give up
+     (exit 6) behind three long tasks; the default is now 4 h;
+   - the limit counts runners across all cells (one lock file per cell, checked for a live holder), and
+     unreadable memory never blocks (fail open on the measurement, closed on the count);
+   - the operator's other projects share the machine, which is why the cap is a count and not "use all
+     free memory": the operator kept the cap at 3 after seeing the trade-off.
+   Port it as: an admission check before a cell session starts, a queue that waits rather than fails,
+   and limits as named constants a person can tune.
+
+7. Smaller lessons (handbook, docs/integrator.md)
+   ----------------------------------------------------------------------------
+   - Habit 7, "leave the machine as you found it": at a session's end no runners, build servers down,
+     no stray worktrees except the play copy.
+   - A golden recording must be regenerated in the cell's worktree before the pre-merge gatecheck when
+     the landing changes tuning; regenerating only on main fails that gatecheck (#109, partly fixed in
+     63e2997; still open: the cell-audit row then flags the regenerated fixture, and a re-run of an
+     interrupted landing fails at "nothing to commit". Scally's platform cell is fixing both now.)
+   - Probes and replays should rebuild a recorded session from the data copies it stored, not the
+     current files, or every tuning change breaks the probe tests.
+
+Still open in Scally that you may hit too: issue #109 (above). Ask the operator for the Scally repo
+(Rwb3n/scally on GitHub) if you need the issue threads.
