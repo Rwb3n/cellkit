@@ -114,3 +114,49 @@ test('guards.json: a project adds operator-only commands and protected paths wit
   assert.equal(sh('ls'), 2);                                                   // a cell can't own the kernel
   assert.equal(shellIn('', 'ls', { CELLKIT_CONFIG: `${root}/missing.json` }), 0);   // none: no project guards
 });
+
+const shellOut = (command: string, env: Record<string, string> = {}) =>
+  spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', ...env }, encoding: 'utf8' });
+
+test('shell guard: kernel-owned only as a path from the repo or a cell root; the refusal names the path', () => {
+  assert.equal(tryShell('mkdir -p test/fixtures/PM/state/views && echo {} > test/fixtures/PM/state/views/a.json'), 0);   // a fixture (SF-DEV)
+  assert.equal(tryShell('cp x.json fixtures/ws/state/log/000001.observation.json'), 0);
+  const r = shellOut('echo x > state/views/a.json');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /writes state\/views\/, which is kernel-owned/);
+  assert.equal(tryShell('echo x > ../../state/log/000009.claim.json'), 2);                 // from a cell, up to root's
+  assert.equal(tryShell('echo x > cells/demo/state/log/000009.claim.json'), 2);            // a cell's, from root
+  assert.equal(tryShell('echo x > ../other/state/log/000009.claim.json'), 2);              // a sibling cell's
+  assert.equal(tryShell(`echo x > ${process.cwd().replaceAll('\\', '/')}/state/log/000009.claim.json`), 2);   // the repo, absolute
+  assert.equal(tryShell(`echo x > ${process.cwd().replaceAll('\\', '/')}/cells/demo/state/views/s.json`), 2);
+});
+
+test('guards fail closed: a check that throws, or input they can\'t read, refuses', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cellkit-failclosed-'));            // a directory where guards.json should be: reading throws
+  const r = shellOut('ls', { CELLKIT_CONFIG: dir });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /hook-bash failed \(.*\); refusing/);
+  const g = spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_input: { file_path: 'x.md' } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', CELLKIT_CONFIG: dir }, encoding: 'utf8' });
+  assert.equal(g.status, 2, g.stderr);
+  assert.match(g.stderr, /hook-guard failed/);
+  for (const hook of [bashHook, guard])
+    assert.equal(spawnSync(process.execPath, [hook], { input: '{ not json', env: { ...process.env, CLAUDE_PROJECT_DIR: '' }, encoding: 'utf8' }).status, 2);
+});
+
+test('shell guard: nobody kills processes by name (other projects\' runners die too); by pid is fine', () => {
+  for (const c of ['taskkill /F /IM python.exe', 'taskkill /im claude.exe /t /f', 'pkill -f cellrun', 'killall node', 'Stop-Process -Name node -Force',
+    'Get-Process claude | Stop-Process', 'kill -9 $(pgrep node)'])
+    assert.equal(tryShell(c), 2, c);
+  for (const c of ['taskkill /PID 4242 /T /F', 'kill 4242', 'Stop-Process -Id 4242', 'git commit -m "never taskkill /IM python.exe"'])
+    assert.equal(tryShell(c), 0, c);
+});
+
+test('boundary: a cell may write the temp folder (outside the repo) from Write/Edit, as from the shell', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-tmpw-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  assert.equal(tryWrite(cell, join(tmpdir(), 'cellkit-scratch', 'fix2.mjs')), 0);   // SF-DEV run sources/211643Z
+  assert.equal(tryWrite(cell, '/tmp/fix2.mjs'), 0);
+  assert.equal(tryWrite(cell, `${root}/kernel/x.ts`), 2);                          // the repo is in the temp folder here: still root's
+});

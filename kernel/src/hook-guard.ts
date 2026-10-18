@@ -3,9 +3,11 @@
 //   state/log/, state/views/, docs/assumptions.md  → written by the kernel CLI only
 //   state/bedrock/ (except proposed/)              → changed by amendment only; approval is the operator's
 //   paths bedrock guards.json protects             → only the script it names (config.ts)
+// The temp folder (outside the repo) is open to a cell, as it is from the shell (shell.ts). Fails closed, like hook-bash.
 // stdin is read asynchronously: readFileSync(0) returns empty on Windows pipes.
 
 import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, posix } from 'node:path';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
@@ -17,9 +19,10 @@ let input: { tool_input?: { file_path?: string; notebook_path?: string } } = {};
 try {
   input = JSON.parse(raw || '{}');
 } catch {
-  console.error('hook-guard: could not parse hook input; not blocking');
-  process.exit(0);
+  console.error('Blocked: hook-guard could not parse its input; refusing rather than letting the write through unchecked.');
+  process.exit(2);
 }
+try {
 
 const path = (input.tool_input?.file_path ?? input.tool_input?.notebook_path ?? '').replaceAll('\\', '/');
 const config = loadConfig();
@@ -37,7 +40,9 @@ if (project && existsSync(`${project}/binding.json`)) {
   const abs = posix.normalize(/^[a-zA-Z]:\//.test(path) || path.startsWith('/') ? path : `${project}/${path}`).toLowerCase(); // no ../ escapes
   const top = posix.normalize(`${project}/../..`).toLowerCase();
   const owned = abs.startsWith(top + '/') && ownedRes(config, basename(project)).some((r) => r.test(abs.slice(top.length + 1)));
-  if (!abs.startsWith(project.toLowerCase() + '/') && !owned) {
+  const tmp = tmpdir().replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+  const temp = (abs.startsWith(tmp + '/') || abs.startsWith('/tmp/')) && !abs.startsWith(top + '/');   // /tmp: Git Bash's temp too
+  if (!abs.startsWith(project.toLowerCase() + '/') && !owned && !temp) {
     console.error(`Blocked: ${path} is outside this cell (${project}) and not among the paths it owns. A cell writes only inside its own folder and its owned paths (bedrock guards.json); if anything else needs a change, say so in your reply.`);
     process.exit(2);
   }
@@ -59,5 +64,9 @@ if (/(^|\/)state\/(log|views)\//.test(path) || /(^|\/)docs\/assumptions\.md$/.te
 const guarded = config.protected.find((g) => g.re.test(path));
 if (guarded) {
   console.error(`Blocked: ${path} is written only ${guarded.by ? `by "node ${guarded.by}"` : 'by the operator'} (bedrock guards.json: protected ${guarded.path}).`);
+  process.exit(2);
+}
+} catch (e) {
+  console.error(`Blocked: hook-guard failed (${(e as Error).message}); refusing rather than letting the write through unchecked. Tell root if it persists.`);
   process.exit(2);
 }

@@ -11,11 +11,16 @@
 //    and file verbs whose target leaves the cell; the temp folder is fine). `cell audit` is the backstop.
 // 5. The project's own guards (bedrock guards.json, config.ts): its operator-only commands, and paths only a named
 //    script writes. guards.json itself is bedrock (rule 2).
+// 6. Nobody kills processes by name (taskkill /IM, pkill, killall, Stop-Process -Name): on one machine that takes other
+//    projects' runners and builds too (AI-MMO: another project's `taskkill /F /IM python.exe` took every runner). By pid.
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
+// Fails closed: a check that throws refuses the command, naming the error (an uncaught throw exits 1, which Claude Code
+// doesn't treat as blocking: the command would run unchecked; AI-MMO #134).
 import { existsSync } from 'node:fs';
+import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { outside, writeTargets } from './shell.ts';
 
 let raw = '';
@@ -27,11 +32,12 @@ try {
   command = input.tool_input?.command ?? '';
   cwd = input.cwd ?? '';
 } catch {
-  console.error('hook-bash: could not parse hook input; not blocking');
-  process.exit(0);
+  console.error('Blocked: hook-bash could not parse its input; refusing rather than letting the command run unchecked.');
+  process.exit(2);
 }
 
 const block = (why: string) => { console.error(`Blocked: ${why}`); process.exit(2); };
+try {
 const config = loadConfig();
 if (config.error) block(config.error);
 for (const o of config.operatorOnly) if (o.re.test(command)) block(o.message);
@@ -48,8 +54,30 @@ if (/cli\.ts["']?\s+cell\s+land\b/.test(command) && /--accept-weaker\b/.test(com
   block('landing weaker tests is the operator\'s call. Show them what got weaker, then ask them to run it from their prompt: ! node kernel/src/cli.ts cell land --name <cell> … --accept-weaker "<why>"');
 }
 
+// Killing by name (rule 6), outside quoted text: a commit message may name it.
+const unquoted = command.replace(/"[^"]*"|'[^']*'/g, '""');
+if (/\btaskkill\b[^|;&\n]*[\s/-]im\b|\bpkill\b|\bkillall\b|\bStop-Process\b[^|;&\n]*-(Name|ProcessName)\b|\|\s*(Stop-Process|spps|kill)\b|\bpgrep\b[^;&\n]*\bkill\b|\bkill\b[^;&\n]*\$\(\s*pgrep\b/i.test(unquoted))
+  block('killing processes by name takes every matching process on this machine, other projects\' runners and builds included. Kill by pid (taskkill /PID <pid> /T, kill <pid>, Stop-Process -Id <pid>), only a process you started or can name.');
+
 // state/out/ is not here: it is the cell's exit (metrics.json for cell sync), written by the cell itself.
 const protectedPath = /(state[\\/](log|views|bedrock)[\\/]|docs[\\/]assumptions\.md)/;
+// Kernel-owned only as a path from the repo or a cell's root: bare, ./ or ../ steps, cells/<name>/, ../<name>/, or the
+// repo's absolute path. test/fixtures/x/state/views is a fixture, not root's views (SF-DEV: a cell gave up on static
+// fixtures). The match names the path, so a refusal says which.
+const norm = (p: string) => p.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+const proj = process.env.CLAUDE_PROJECT_DIR ?? '';
+const top = norm(proj && existsSync(`${proj}/binding.json`) ? resolve(proj, '..', '..') : resolve(proj || cwd || '.'));
+const roots = [...new Set([top, norm(inMain(top))])];
+function kernelOwned(c: string): string | null {
+  for (const m of c.matchAll(new RegExp(protectedPath.source, 'gi'))) {
+    const before = c.slice(0, m.index).match(/[^\s"'=>(|;&,]*$/)![0];
+    const pre = before.replaceAll('\\', '/'), low = pre.toLowerCase();
+    const rel = /^(\.{1,2}\/)*$|^(\.{1,2}\/)*cells\/[\w.-]+\/$|^(\.\.\/)+[\w.-]+\/$/i.test(pre);
+    const abs = roots.some((r) => low === `${r}/` || (low.startsWith(`${r}/cells/`) && /^[\w.-]+\/$/.test(low.slice(r.length + 7))));
+    if (rel || abs) return pre + m[0];
+  }
+  return null;
+}
 // PowerShell (same hook, matcher Bash|PowerShell): its cmdlets, aliases and .NET file writes, case-insensitive like the shell.
 // A redirect is never inside quotes: `>` in "a <b@c.com>" or node -e "a > b" is text, so look for it with quoted parts blanked.
 const redirect = /(^|[^=\-0-9])>>?(?![&=])/;
@@ -79,8 +107,12 @@ const guarded = config.protected.find((g) => hits(g.re));
 if (guarded && !config.writers.some((w) => w.test(command)))
   block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (bedrock guards.json).`);
 
-if (protectedPath.test(command) && writes.test(command) && !viaKernel.test(command)) {
+const owned = kernelOwned(command);
+if (owned && writes.test(command) && !viaKernel.test(command)) {
   const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)
     && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
-  if (!proposedOnly) block('that command writes a kernel-owned path (state/log, state/views, state/bedrock, docs/assumptions.md). Use the kernel CLI.');
+  if (!proposedOnly) block(`that command writes ${owned}, which is kernel-owned (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it.`);
+}
+} catch (e) {
+  block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);
 }

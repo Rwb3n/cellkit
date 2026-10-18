@@ -4,8 +4,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Next
 
-1. **Shell guard correctness.** Fail closed on its own errors (exit 2, naming the check); kernel-owned paths only as paths from the repo or cell root, and the message names the one matched; Write/Edit get the shell's temp exemption; refuse killing processes by name (`taskkill /IM`, `pkill`). Then acts, not text (Later). *survey 3–5 · AI-MMO 897ee08*
-2. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
+1. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). A hook denylist is a floor, not a boundary: scripts read past it. The boundary is an OS sandbox (callsheet's OpenShell trial closed reads and script writes), so pair this with making cells sandbox-friendly (hooks without git, relative worktree paths, mail across the boundary; see Watching). *SF-DEV 18 (secrets.ts, hook-read.ts) · survey 10*
 
 ## Later
 
@@ -28,12 +27,13 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Watching (not kit work yet)
 
-- **Cells on another machine or in a sandbox** (a transport over SSH; hooks without git). callsheet's operator named this as a reason to revisit. *SF-DEV 6 · survey 10*
+- **Cells on another machine or in a sandbox** (a transport over SSH; hooks without git; `cellrun` through a sandbox wrapper, as `CELLKIT_CLAUDE` already allows). callsheet ran a cell in NVIDIA OpenShell (WSL 2, experimental on Windows): writes and reads limited by the OS, network per binary, credentials injected outside; the kit's hooks were off inside and mail was carried by hand. Its operator named this as a reason to revisit. *SF-DEV 6 · survey 10 (callsheet #67, 556a6cb)*
 - **Promoted builds**: the operator plays a promoted build, never main. This is project-shaped. *Scally 5*
 - **Maps, predictions, divergences.** Alpha, rule of three. *SF-DEV 12*
 
 ## Already in the kit
 
+- Shell guard correctness: fails closed; kernel-owned paths anchored, refusal names the path; Write/Edit temp exemption; no killing by name: Unreleased. Not done: a hook that can't load still fails open. *survey 3–5 · AI-MMO 897ee08*
 - Cells run on main as it is: bedrock JSON read from the main checkout; `cellrun` merges main into a clean worktree first: Unreleased. Not done: a landing lock for runs to wait on. *survey 6*
 - Dead runs and orphaned sessions: the lock holds the session's pid; recovery from the run log; `cellrun --resume`; exit notes; `run` in mail status: Unreleased. Not done: the session's creation time against pid reuse; `--stop`; the mail hook handing mail only to the lock holder's session. *survey 2 · Scally 1*
 - A task reaches the cell's log at hand-over; mail bodies logged whole or hashed (`guards.json` `mail.log`, operator's choice 2026-10-18: a project setting, default body): Unreleased. *survey 1, 7 · SF-DEV 13*
