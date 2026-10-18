@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`cell land` read a path with its first letter cut off** when the first `git status` line was an unstaged change (` M docs/assumptions.md` → `ocs/assumptions.md`). Root's log commit then skipped the generated doc, and the next land refused it as root's own work. `dirty()` no longer trims git's output (`test/land-dirty.test.ts`). From SF-DEV.
+
 ## v0.2.1 — the rest of the lessons (2026-10-09)
 
 - **`cell land` refuses weaker tests.** If the cell's diff drops test files, cases or assertions, or adds skips or loosening (`|| true`, tolerances), the land stops and undoes itself. Only the operator lands it anyway, with `--accept-weaker "<why>"`; the hook blocks that flag for agents, and the reason goes into the merge commit. From AI-MMO: a cell loosened a test so a regression passed.

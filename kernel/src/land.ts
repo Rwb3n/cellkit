@@ -33,8 +33,14 @@ function git(dir: string, args: string[], check = true): { ok: boolean; out: str
   if (check && r.status !== 0) throw new WorktreeError(`git ${args.join(' ')}: ${out}`);
   return { ok: r.status === 0, out };
 }
-const dirty = (dir: string) => git(dir, ['status', '--porcelain=v1', '-uall']).out.split(/\r?\n/).filter(Boolean)
-  .flatMap((l) => l.slice(3).split(' -> ').map((p) => p.trim().replace(/^"|"$/g, '')));
+// Not git(): its trim() takes the leading space of an unstaged first line (" M docs/x"), and slice(3) then cut a
+// letter off the path (SF-DEV: the next land refused "ocs/assumptions.md" as root's own work).
+export function dirty(dir: string): string[] {
+  const r = spawnSync('git', ['-C', dir, '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-uall'], { encoding: 'utf8' });
+  if (r.status !== 0) throw new WorktreeError(`git status: ${(r.stdout + r.stderr).trim()}`);
+  return r.stdout.split(/\r?\n/).filter(Boolean)
+    .flatMap((l) => l.slice(3).split(' -> ').map((p) => p.trim().replace(/^"|"$/g, '')));
+}
 const head = (dir: string) => git(dir, ['rev-parse', 'HEAD']).out;
 
 export interface LandOptions { name?: string; message?: string; check?: string; into?: string; dryRun?: boolean; acceptWeaker?: string }
