@@ -1,12 +1,14 @@
 // Claude Code Stop hook for a cell session: the mail loop.
-//   1. the session just stopped → if it was working on a message, file its last answer as the reply (outbox/)
+//   1. the session just stopped → if it was working on a message, file its last answer as the reply (outbox/);
+//      an answer that reads as a progress note ("still running…") is held back instead: block, and send the session
+//      back to finish, at most HOLD_MAX times per message (mail.ts hold)
 //   2. wait for the next message in inbox/ (poll every 3 s, up to CELLKIT_MAIL_WAIT seconds; default 1800)
 //   3. a message arrives → block the stop and hand it over as the next instruction; none → let the session stop
 //   A session opened in the wrong checkout (worktree.ts `misplaced`) files any in-flight reply but is handed no new
 //   mail, so the queue waits for the session in the cell's own worktree.
 // Input (stdin): { cwd, transcript_path, last_assistant_message?, stop_hook_active, … }.
 import { readFileSync, existsSync } from 'node:fs';
-import { fileReply, takeNext } from './mail.ts';
+import { fileReply, hold, takeNext } from './mail.ts';
 import { misplaced } from './worktree.ts';
 
 let raw = '';
@@ -30,7 +32,10 @@ function lastAnswer(): string {
   return '(no answer text)';
 }
 
-fileReply(cell, lastAnswer());
+// a progress note ("still running…") isn't a reply: send the session back to finish (mail.ts hold)
+const answer = lastAnswer(), held = hold(cell, answer);
+if (held) { console.log(JSON.stringify({ decision: 'block', reason: held })); process.exit(0); }
+fileReply(cell, answer);
 
 const wrong = misplaced(cell);
 if (wrong) { console.error(wrong); process.exit(0); }

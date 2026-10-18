@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A progress note is not a reply.** While a task is in flight, the mail Stop hook holds back a final answer under 400 characters that reads as interim ("still running", "waiting for", "I'll report once it finishes"): it blocks and sends the session back to finish, at most 3 times per message, then files what it has (`mail.ts` `hold`, `test/mail.test.ts`). From SF-DEV (four lost replies) and AI-MMO (#112).
 - **`cell land` read a path with its first letter cut off** when the first `git status` line was an unstaged change (` M docs/assumptions.md` → `ocs/assumptions.md`). Root's log commit then skipped the generated doc, and the next land refused it as root's own work. `dirty()` no longer trims git's output (`test/land-dirty.test.ts`). From SF-DEV.
 
 ## v0.2.1 — the rest of the lessons (2026-10-09)

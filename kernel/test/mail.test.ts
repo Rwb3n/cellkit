@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { send, receive, current, MailError } from '../src/mail.ts';
+import { send, receive, current, interim, HOLD_MAX, MailError } from '../src/mail.ts';
 
 const hook = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'mail-hook.ts');
 const world = () => {
@@ -80,4 +80,48 @@ test('mail is on the log: every message is an observation on the sender\'s and t
   assert.equal(c[1].body, '445 places');
   assert.deepEqual(lint(root).errors, []);
   assert.deepEqual(lint(c1).errors, []);
+});
+
+test('mail: a progress note is not a reply (the notes SF-DEV and AI-MMO saw filed); a real reply is', () => {
+  for (const note of [
+    "The test suite is still running. I'll write the reply once it finishes.",
+    'Waiting for the gatecheck notification.',
+    'Tests are running; waiting for the results.',
+    'The export is still running; I will report when it completes.',
+  ]) assert.ok(interim(note), note);
+  for (const reply of [
+    '445 places. Lint clean.',
+    'Done: added the adapter (cells/c1/src/a.ts), 12 tests pass, nothing for root to decide.',
+    'Blocked: need a kernel change, sent to root as blocked.',
+    `Done. ${'Details of the change. '.repeat(20)} I'll follow up if root wants more.`,   // long: a reply that mentions a follow-up
+  ]) assert.ok(!interim(reply), reply);
+});
+
+test('mail: the hook holds a progress note back (block, task stays current) up to HOLD_MAX times, then files it', () => {
+  const { root, c1 } = world();
+  const t = send(root, 'c1', 'run the suite');
+  stop(c1, 'started');                                          // hands t over
+  const note = 'The test suite is still running. I\'ll write the reply once it finishes.';
+  for (let i = 0; i < HOLD_MAX; i++) {
+    const held = stop(c1, note);
+    assert.equal(held.decision, 'block');
+    assert.ok(held.reason.includes('Not sent as your reply') && held.reason.includes(t.id));
+    assert.equal(current(c1), t.id);
+    assert.deepEqual(receive(root), []);
+  }
+  assert.equal(stop(c1, note), null);                           // held enough: filed as it is
+  assert.equal(receive(root, t.id)[0].body, note);
+  assert.equal(current(c1), null);
+
+  const t2 = send(root, 'c1', 'run it again');                  // the counter is per message
+  stop(c1, 'started');
+  assert.equal(stop(c1, note).decision, 'block');
+  assert.equal(stop(c1, '43 tests pass.'), null);
+  assert.equal(receive(root, t2.id)[0].body, '43 tests pass.');
+  assert.equal(readdirSync(join(c1, 'inbox')).filter((f) => f.startsWith('.held-')).length, 0);
+});
+
+test('mail: with no task in flight, a progress-sounding answer is not held', () => {
+  const { c1 } = world();
+  assert.equal(stop(c1, 'Waiting for mail.'), null);
 });

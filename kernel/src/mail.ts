@@ -110,12 +110,34 @@ export function receive(dir: string, forId?: string): Message[] {
 const currentPath = (cell: string) => join(inbox(cell), '.current');
 export const current = (cell: string): string | null => (existsSync(currentPath(cell)) ? readFileSync(currentPath(cell), 'utf8').trim() || null : null);
 
+// An answer that reads as a progress note, not a reply: short, and saying it's waiting or still running. A cell that
+// ends its turn with a background job running ("The test suite is still running. I'll write the reply once it
+// finishes.") had that filed as its reply (SF-DEV, four times; AI-MMO #112), though the brief says work synchronously.
+export const HOLD_MAX = 3;
+const INTERIM = /\b(waiting (for|on|until)|still (running|building|going|working|in progress)|(is|are) (still )?running|in progress|once (it|the|they|that)\b[^.]*\b(finish|finishes|completes?|is done|are done|returns?)|(I'll|I will|will) (report|reply|write|update|follow up|let you know|get back)|be back)\b/i;
+export const interim = (answer: string) => answer.trim().length < 400 && INTERIM.test(answer);
+const heldPath = (cell: string, id: string) => join(inbox(cell), `.held-${id}`);
+
+// The reason to send the session back to finish instead of filing its answer, or null to file it. At most HOLD_MAX
+// times per message (a counter in the mailbox); after that the answer is filed as it is.
+export function hold(cell: string, answer: string): string | null {
+  const id = current(cell);
+  if (!id || !interim(answer)) return null;
+  const n = existsSync(heldPath(cell, id)) ? Number(readFileSync(heldPath(cell, id), 'utf8')) || 0 : 0;
+  if (n >= HOLD_MAX) return null;
+  writeFileSync(heldPath(cell, id), String(n + 1));
+  return `Not sent as your reply: it reads as a progress note, and your final message is filed as the reply to ${id}. ` +
+    `Don't end your turn while something you started is still running: wait for it (run it in the foreground, or check its output until it's done), ` +
+    `finish the task, then end with the full reply the task asks for.`;
+}
+
 // The session finished a turn: if it was working on a task, its last answer is the reply (to the asker's inbox).
 export function fileReply(cell: string, answer: string): Message | null {
   const id = current(cell);
   if (!id) return null;
   const asked: Message = JSON.parse(readFileSync(join(inbox(cell), 'read', `${id}.json`), 'utf8'));
   rmSync(currentPath(cell));
+  rmSync(heldPath(cell, id), { force: true });
   return send(cell, asked.from, answer || '(no answer text)', 'reply', id);
 }
 
