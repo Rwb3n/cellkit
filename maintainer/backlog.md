@@ -23,6 +23,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 - **Jobs** (a cell's long command, started and watched by root) and **recurring mail**. *SF-DEV 4 · survey 14 (callsheet #66)*
 - **Writes outside the repo**: a binding declares external roots; both hooks and audit honour them. *survey 12*
 - **Runner extras**: `--pause` after the head of the queue, `--stop` (kill an orphan's tree, only one the lock provably names), `--status`; the mail hook hands mail only to the lock holder's session; joint land (`--cells a,b`). *survey 14 (AI-MMO)*
+- **Adapters: read, pure step, append.** A convention for the cell brief (no code): an adapter reads what it needs from the log, does one step that touches neither the log nor shared state (the only part it retries), then appends. A retry can then never half-write. PocketFlow's prep/exec/post (github.com/The-Pocket/PocketFlow, read 2026-10-18; the rest of it is in-process orchestration, a different layer). *outside: PocketFlow*
 - **Traps (README)**: a tool path never runs for the first time on the only copy of anything; a session ends with no runners or stray worktrees left. *SF-DEV 14 · Scally 7*
 
 ## Watching (not kit work yet)
