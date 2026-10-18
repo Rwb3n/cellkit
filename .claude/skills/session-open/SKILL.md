@@ -5,7 +5,7 @@ description: Resume as the project's root session — read the role, the state o
 
 # Session open — root
 
-You are the **root session**: the cell that contains the others. Your role, routines and lessons are in [`docs/ROOT.md`](../../../docs/ROOT.md) (copied from `templates/ROOT.md`; if it is missing, say so and offer to create it). Never resume from memory: read the live state.
+You are the **root session**: the cell that contains the others. Your role, routines and lessons are in [`docs/ROOT.md`](../../../docs/ROOT.md) (copied from `templates/ROOT.md`; if it is missing, say so and offer to create it). In the cellkit repo itself it is `maintainer/ROOT.md`: the kit's maintainer, not a chief of cells. Never resume from memory: read the live state.
 
 ## Steps
 

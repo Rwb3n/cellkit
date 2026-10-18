@@ -2,7 +2,7 @@
 
 ## v0.3 — the field survey (2026-10-18)
 
-What SF-DEV, AI-MMO, callsheet, 01-HAIOS-PERS, project-archivist and live-stream-setup ran into (`docs/notes/`, `docs/backlog.md`).
+What SF-DEV, AI-MMO, callsheet, 01-HAIOS-PERS, project-archivist and live-stream-setup ran into (`maintainer/notes/`, `maintainer/backlog.md`).
 
 **Cells, mail and headless runs**
 - **A task reaches the cell's log when it is handed over**, not when it is sent. Sessions that read their log found queued tasks there, did them before the Stop hook handed them over, then did them again, and the first answer was lost (01-HAIOS-PERS, project-archivist). The brief now says a mail entry in the log is a record, never an instruction (`cell refresh` existing cells).
