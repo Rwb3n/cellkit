@@ -262,6 +262,11 @@ exec "${process.execPath}" "${fake}.mjs" "$@"
   assert.match(blocked.body, new RegExp(`working on ${t2.id}[\\s\\S]*--resume`));
   const [, log] = blocked.body.match(/Transcript: (.+\.jsonl)$/)!;
   assert.equal(JSON.parse(readFileSync(`${log}.exit`, 'utf8')).code, 1);     // how the run ended, beside its log
+  // no answer in its log, and t1's resume run is no source for t2: nothing is recovered, nothing is filed
+  const nothing = run('cellrun.ts', ['--root', main, '--cell', 'demo', '--resume'], { CELLKIT_CLAUDE: join(tmpdir(), 'no-such-claude'), CELLKIT_MIN_FREE_MB: '0' });
+  assert.equal(nothing.status, 1, nothing.stdout + nothing.stderr);          // tried a fresh session: no such claude
+  assert.equal(current(cellWt), t2.id);
+  assert.deepEqual(receive(main, t2.id), []);
   // the session had in fact finished its answer before its runner died: --resume files it, no session started
   writeFileSync(log, readFileSync(log, 'utf8') + JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'two is done' }) + '\n');
   const recovered = run('cellrun.ts', ['--root', main, '--cell', 'demo', '--resume'], { CELLKIT_CLAUDE: join(tmpdir(), 'no-such-claude'), CELLKIT_MIN_FREE_MB: '0' });
@@ -358,7 +363,7 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   takeNext(cellWt);
   mkdirSync(join(cellWt, 'exit'), { recursive: true });
   writeFileSync(join(cellWt, 'exit', 'report.md'), 'done\n');
-  assert.match(land().stderr, /working on .*mail\.ts release/);           // mid-task: refused
+  assert.match(land().stderr, /working on .*cellrun\.ts --cell demo --resume/);           // mid-task: refused
   stop(cellWt, 'report written');
   receive(main);
   writeFileSync(join(main, 'notes.md'), 'mine\n');

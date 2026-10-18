@@ -78,7 +78,7 @@ export function claimRunner(cellDir: string): string | null {
     let raw = '';
     try { raw = readFileSync(runnerLock(cellDir), 'utf8'); } catch { continue; }
     const r = runnerOf(cellDir);
-    if (r?.orphan) return `an orphaned session (pid ${r.session}; its runner, pid ${r.pid}, is gone) is still working in this cell. Let it finish, or end it (Windows: taskkill /PID ${r.session} /T /F; else kill ${r.session})`;
+    if (r?.orphan) return `an orphaned session (pid ${r.session}; its runner, pid ${r.pid}, is gone) is still working in this cell. Let it finish, or end it (Windows: taskkill /PID ${r.session} /T /F; else kill ${r.session}). If that pid is not a claude session (pids are reused), delete ${runnerLock(cellDir)}`;
     if (r) return `a runner is already live for this cell (pid ${r.pid}, ${r.state} since ${r.at})`;
     // take over only the lock judged gone: if another run took it over first, the file now holds its own
     try { if (readFileSync(runnerLock(cellDir), 'utf8') === raw) rmSync(runnerLock(cellDir)); } catch { /* gone or changed: try again */ }
@@ -135,9 +135,9 @@ export function admit(root: string, cellDir: string, name: string, holdS: number
 export function recoverAnswer(log: string, id: string, resumed = false): string | null {
   if (!existsSync(log)) return null;
   const lines = readFileSync(log, 'utf8').split(/\r?\n/);
-  const from = resumed ? -1 : lines.findLastIndex((l) => l.includes(id));
-  if (!resumed && from < 0) return null;
-  for (let i = lines.length - 1; i > from; i--) {
+  const from = resumed ? 0 : lines.findLastIndex((l) => l.includes(id));   // the hand-over line (or the answer itself)
+  if (from < 0) return null;
+  for (let i = lines.length - 1; i >= from; i--) {
     try {
       const e = JSON.parse(lines[i]) as { type?: string; subtype?: string; is_error?: boolean; result?: unknown };
       if (e.type === 'result') return e.subtype === 'success' && !e.is_error && typeof e.result === 'string' && e.result.trim() ? e.result : null;
@@ -145,6 +145,10 @@ export function recoverAnswer(log: string, id: string, resumed = false): string 
   }
   return null;
 }
+// A --resume run for this task: its task file (beside its log) names it. Another task's resume run is no source.
+const resumedFor = (log: string, id: string) => {
+  try { return readFileSync(log.replace(/\.jsonl$/, '.task.md'), 'utf8').startsWith(`# Task ${id} `); } catch { return false; }
+};
 const runLogs = (cellDir: string) => {
   const d = join(mailbox(cellDir), 'runs');
   return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.jsonl')).sort().map((f) => join(d, f)) : [];
@@ -191,7 +195,7 @@ async function main(argv: string[]): Promise<number> {
       // the session may have finished its answer before it (or its runner) died: file that, no new session needed
       const id = st.working_on!;
       for (const l of runLogs(cellDir).reverse()) {
-        const answer = recoverAnswer(l, id) ?? recoverAnswer(l, id, existsSync(l.replace(/\.jsonl$/, '.task.md')));
+        const answer = recoverAnswer(l, id, resumedFor(l, id));
         if (!answer) continue;
         const m = fileReply(cellDir, `${answer}\n\n(recovered by cellrun from ${l}: the session finished but its reply was never filed)`);
         console.log(`cellrun: ${name}: recovered the reply to ${id} from ${l}; filed ${m?.id}`);

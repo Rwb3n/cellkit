@@ -50,7 +50,7 @@ export function cellLand(root: string, o: LandOptions): string[] {
   const wt = cellWorktree(main, name);
   if (!wt) throw new WorktreeError(`cell ${name} has no worktree (node kernel/src/cli.ts cell checkout --name ${name})`);
   const busy = status(join(wt, 'cells', name)).working_on;
-  if (busy) throw new WorktreeError(`cell ${name} is working on ${busy}; land it after its reply (or mail.ts release --as ${name} if its session died)`);
+  if (busy) throw new WorktreeError(`cell ${name} is working on ${busy}; land it after its reply (if its session died: node kernel/src/cellrun.ts --cell ${name} --resume)`);
   const into = o.into ?? currentBranch(main);
   if (currentBranch(main) !== into) throw new WorktreeError(`the main checkout is on ${currentBranch(main)}, not ${into}`);
   const mine = dirty(main).filter((p) => !ROOT_WRITTEN.some((r) => r.test(p)));

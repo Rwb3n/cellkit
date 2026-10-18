@@ -183,7 +183,7 @@ export function runnerOf(cell: string): (Runner & { orphan: boolean }) | null {
 // session is live. cellrun --resume first: it recovers the reply from the run log, or a fresh session finishes the task.
 export function release(cell: string, note = '(released: the session ended without a reply; the task was not done)'): Message | null {
   const r = runnerOf(cell);
-  if (r) throw new MailError(`${nameOf(cell)} has a live ${r.orphan ? `orphaned session (pid ${r.session}, its runner gone)` : `run (pid ${r.pid})`}; let it finish`);
+  if (r) throw new MailError(`${nameOf(cell)} has a live ${r.orphan ? `orphaned session (pid ${r.session}, its runner gone)` : `run (pid ${r.pid})`}; let it finish. If that pid is not a claude session or cellrun (pids are reused), delete ${runnerLock(cell)}`);
   return fileReply(cell, note);
 }
 
