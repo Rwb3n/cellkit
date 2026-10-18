@@ -24,6 +24,8 @@ import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { append } from './log.ts';
+import { sha256 } from './canon.ts';
+import { configPath, loadConfig } from './config.ts';
 import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
 
 export type MailKind = 'task' | 'reply' | 'blocked' | 'question' | 'done';
@@ -80,18 +82,23 @@ export function send(fromDir: string, to: string, body: string, kind: MailKind =
   const text = JSON.stringify(m, null, 2) + '\n';
   writeFileSync(join(inbox(toDir), `${m.id}.json`), text, { flag: 'wx' });
   writeFileSync(join(sent(resolve(fromDir)), `${m.id}.json`), text, { flag: 'wx' });
-  logMail(logHome(root, from), m);   // the files are transport; the log is the record — on both sides
-  logMail(logHome(root, to), m);
+  // the files are transport; the log is the record, on both sides. A task reaches the cell's log when it is handed over
+  // (takeNext), not now: a session that read its log found a task queued there, did it before the Stop hook handed it
+  // over, then did it again and its first answer was lost (01-HAIOS-PERS, project-archivist).
+  logMail(root, logHome(root, from), m);
+  if (to === 'root') logMail(root, logHome(root, to), m);
   return m;
 }
 
-// One observation per message, on a box's own log. Two sessions (root and a cell's Stop hook) can append to the same
-// log at once; the kernel's `wx` refuses a clash, so re-read and retry.
-function logMail(dir: string, m: Message): void {
+// One observation per message, on a box's own log: the body itself, or (bedrock guards.json mail.log "hash") its sha256
+// and length, the body then living in the mailbox alone. Two sessions (root and a cell's Stop hook) can append to the
+// same log at once; the kernel's `wx` refuses a clash, so re-read and retry.
+function logMail(root: string, dir: string, m: Message): void {
+  const body = loadConfig(configPath(inMain(root))).mailLog === 'hash' ? { body_sha256: sha256(m.body), body_chars: m.body.length } : { body: m.body };
   for (let attempt = 1; ; attempt++) {
     try {
       append(dir, { kind: 'observation', body: { source: { adapter: 'kernel', provider: 'mail', capability: 'mail' }, observed_at: m.at, reliability: [], licence: { store: 'full' },
-        payload: { id: m.id, kind: m.kind, from: m.from, to: m.to, ...(m.reply_to ? { reply_to: m.reply_to } : {}), body: m.body } } });
+        payload: { id: m.id, kind: m.kind, from: m.from, to: m.to, ...(m.reply_to ? { reply_to: m.reply_to } : {}), ...body } } });
       return;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= 5) throw e;
@@ -141,12 +148,14 @@ export function fileReply(cell: string, answer: string): Message | null {
   return send(cell, asked.from, answer || '(no answer text)', 'reply', id);
 }
 
-// Hand the oldest unread task to the session (marks it read and current).
+// Hand the oldest unread task to the session (marks it read and current), and record it on the cell's log now.
 export function takeNext(cell: string): Message | null {
   const [m] = unread(cell);
   if (!m) return null;
   markRead(cell, m.id);
   writeFileSync(currentPath(cell), m.id);
+  const root = inMain(rootOf(cell));
+  logMail(root, logHome(root, nameOf(cell)), m);
   return m;
 }
 

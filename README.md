@@ -30,7 +30,7 @@ Each guarantee names the mechanism that enforces it and the test that proves it 
 | **Assumptions** | every guess is a hypothesis claim with a status (guess → some → evidence · refuted, or parked); `docs/assumptions.md` is generated; `assume` without `--id` takes the next free id under the log's lock | `assume` / `evidence` / `constraint` CLI; hook blocks hand edits | `core`: assumptions and constraints · `lock`: 8 processes assuming at once |
 | **Checks** | a model's verification is a claim *about a claim*; it adjusts belief, never counts as a voice | claim schema + `append` | `core`: a check must be about an earlier, non-check claim |
 | **Cells** | `cell new` creates a cell with its own brief, hooks, binding, log and mailboxes; the parent logs the birth | `cell new` / `cell refresh` | `core`: cell new · cell sync |
-| **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply. A short "still running…" answer is held back and the session sent to finish (3 times at most). No agent writes message files | Stop hook + `mail.ts` | `mail` (7 tests) |
+| **Mail** | you (or a root agent) send a cell instructions; the cell's Claude session picks them up, works, and its final answer comes back as the reply. A short "still running…" answer is held back and the session sent to finish (3 times at most). A task reaches the cell's log only when it is handed over. Bodies are logged whole, or only hashed (`guards.json` `mail.log`). No agent writes message files | Stop hook + `mail.ts` | `mail` (10 tests) |
 | **Hand approval** | a cell proposes one exact claim against a rule; only the operator decides | `review`, Bash hook | `review` (4 tests) |
 | **Worktrees** | each cell works in its own git worktree on branch `cell/<name>`, so its changes touch nothing else until root merges them; a session opened in the wrong checkout writes nothing and gets no mail | `cell checkout`, the three hooks, `cell audit` | `worktree`: checkout · wrong checkout (2) · audit · writes never fork a chain (2) |
 | **Boundary** | a cell writes only in its folder and the paths it owns, from Write/Edit and from the shell | both hooks (`shell.ts`) | `boundary` (2 tests) · `worktree`: owns |
@@ -117,7 +117,7 @@ A project changes the kit's behaviour through its **configuration surface**, nev
 |---|---|---|---|
 | What the system is made of | `state/bedrock/ontology.md` | amend → **operator approves** | people, agents |
 | Your claim kinds | `state/bedrock/kinds.json` | amend → **operator approves** | `append`, `lint` (schemas.ts) |
-| Your guards, and which repo paths each cell owns | `state/bedrock/guards.json` | amend → **operator approves** | both hooks, `cell audit`, `cell land`, the cell brief, `lint` |
+| Your guards, which repo paths each cell owns, and whether mail bodies go into the logs (`"mail": { "log": "hash" }` keeps them out: the log is append-only, so personal data in a task would stay forever) | `state/bedrock/guards.json` | amend → **operator approves** | both hooks, `cell audit`, `cell land`, the cell brief, `lint`, mail |
 | One cell's domain (scope, thresholds, vocabularies) | `cells/<x>/binding.json` | root: `cell rebind` (logged) | that cell's code and brief |
 
 Bedrock docs are `.md` (read by people) or `.json` (read by the kernel). The rules:

@@ -4,15 +4,20 @@
 //     "operator_only": [ { "command": "portfolio/src/pm.ts decide", "message": "…" },          a script + subcommand
 //                        { "pattern": "\\bsf\\s+data\\s+delete\\b", "message": "…" } ],         or a raw regex (case-insensitive)
 //     "protected":     [ { "path": "docs/portfolio/", "by": "portfolio/src/pm.ts" } ],          written only by that script
-//     "cells":         { "game": { "owns": ["game/**", "sim/**"] } }                           paths a cell owns beyond its folder
+//     "cells":         { "game": { "owns": ["game/**", "sim/**"] } },                          paths a cell owns beyond its folder
+//     "mail":          { "log": "hash" }                                                       mail bodies kept out of the logs
 //   }
+// mail.log: "body" (default) logs each message whole, so the log is the record of what was asked and answered; "hash"
+// logs its sha256 and length only, and the body lives in the mailbox alone (transient, under .git, deletable). For a
+// project whose rules keep personal data out of every log (callsheet's ontology rule 8): the log is append-only.
 // Change it like any bedrock doc: `stage --doc guards` (or write proposed/guards.json), `amend`, and the operator
 // approves. amend and approve refuse a doc that doesn't check (checkGuards); a .json doc goes live only on approval.
 // The hooks read the live file. Where root's folded views are present (the main checkout) they also check its hash
 // against the approved one and refuse everything on a mismatch; in a cell's worktree they trust the file. Either way the
 // real guards are elsewhere: bedrock is hook-protected, a cell can't write outside its folder, `cell audit` catches
 // script writes, and lint catches a hand edit at every session start.
-// Missing = no project guards. Invalid = every command and write is refused until the operator fixes it.
+// Missing = no project guards. Invalid = every command and write is refused until the operator fixes it, and mail logs
+// hashes only (a broken config never leaks a body into a log).
 // CELLKIT_CONFIG overrides the path (tests).
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -23,11 +28,13 @@ import { globRe } from './glob.ts';
 export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; error?: string }
+export type MailLog = 'body' | 'hash';
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; error?: string }
 interface Raw {
   operator_only?: { command?: string; pattern?: string; message?: string }[];
   protected?: { path?: string; by?: string }[];
   cells?: Record<string, { owns?: string[] }>;
+  mail?: { log?: string };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -48,7 +55,14 @@ export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail)`);
+  if (raw.mail !== undefined) {
+    if (!raw.mail || typeof raw.mail !== 'object' || Array.isArray(raw.mail)) out.push('mail must be an object ({ "log": "body" | "hash" })');
+    else {
+      for (const k of Object.keys(raw.mail)) if (k !== 'log') out.push(`mail: unknown key "${k}" (log)`);
+      if (raw.mail.log !== undefined && !['body', 'hash'].includes(raw.mail.log)) out.push(`mail.log must be "body" or "hash", not ${JSON.stringify(raw.mail.log)}`);
+    }
+  }
   for (const [i, o] of (raw.operator_only ?? []).entries()) {
     if (!o.command === !o.pattern) out.push(`operator_only[${i}] needs exactly one of "command" or "pattern"`);
     if (o.pattern) try { new RegExp(o.pattern); } catch (e) { out.push(`operator_only[${i}].pattern: ${(e as Error).message}`); }
@@ -70,9 +84,9 @@ const repoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '.
 export const configPath = (root = repoRoot()) => process.env.CELLKIT_CONFIG || join(root, 'state', 'bedrock', `${GUARDS}.json`);
 
 export function loadConfig(path = configPath()): Config {
-  const none: Config = { operatorOnly: [], protected: [], writers: [], owns: {} };
+  const none: Config = { operatorOnly: [], protected: [], writers: [], owns: {}, mailLog: 'body' };
   if (!existsSync(path)) return none;
-  const fail = (why: string): Config => ({ ...none, error: `${path} ${why}; the operator must fix it` });
+  const fail = (why: string): Config => ({ ...none, mailLog: 'hash', error: `${path} ${why}; the operator must fix it` });
   const text = readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
   // best effort (see the header): the main checkout's folded views know the approved hash
   const views = join(dirname(path), '..', 'views', 'bedrock.json');
@@ -93,6 +107,7 @@ export function loadConfig(path = configPath()): Config {
     protected: guarded,
     writers: guarded.flatMap((g) => (g.by ? [new RegExp(pathRe(g.by), 'i')] : [])),
     owns: Object.fromEntries(Object.entries(raw.cells ?? {}).map(([n, c]) => [n, c.owns ?? []])),
+    mailLog: raw.mail?.log === 'hash' ? 'hash' : 'body',
   };
 }
 

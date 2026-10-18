@@ -6,5 +6,6 @@
   "protected": [
     { "path": "docs/report/", "by": "tools/report.ts" },
     { "path": "docs/models/trace.md" }
-  ]
+  ],
+  "mail": { "log": "body" }
 }

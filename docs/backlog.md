@@ -4,15 +4,10 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Next
 
-1. **A cell does its task before it's handed over.** The task is logged on the cell's log at send, so a session reading its log does it early, then again on hand-over, and the first answer is lost. Log it on the cell's side at hand-over (root's side stays at send), and the brief says a mail entry in the log is a record, never an instruction. *survey 1 (01-HAIOS-PERS, project-archivist) · likely SF-DEV 13*
-2. **Dead runs and orphaned sessions.** runner.lock records the session's pid (spawn, not spawnSync); while the session lives the lock isn't stale, orphans count toward MAX_RUNNERS, and a new run refuses. `working_on` with no live runner is reported as orphaned (mail status, session-open). Recovery in order: file the answer from the run log if there is one (marked recovered), else `cellrun --resume` (task text + "partial work is uncommitted in the worktree", reply filed to the original), else release. An exit note beside each run log. *survey 2 (project-archivist stuck 7 days; AI-MMO d1b3deb, d1030f4) · Scally 1*
-3. **Cells run on main's bedrock and guards.** `cellrun` merges main into a clean, idle cell before starting (conflict: abort, check, exit with the mail queued; never over uncommitted work or ignored files main would overwrite), and kinds and secrets read bedrock from the main checkout as guards already do. *survey 6 (SF-DEV S-3c, 2c87840, 9f28d63; AI-MMO 849252f, ca8ec08)*
-4. **Shell guard correctness.** Fail closed on its own errors (exit 2, naming the check); kernel-owned paths only as paths from the repo or cell root, and the message names the one matched; Write/Edit get the shell's temp exemption; refuse killing processes by name (`taskkill /IM`, `pkill`). Then acts, not text (Later). *survey 3–5 · AI-MMO 897ee08*
-5. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
-
-## Waiting on the operator
-
-- **Mail bodies in the log.** The log is append-only, so a task carrying personal data stays forever; callsheet's rule 8 (no personal data in any log) kept its Trust organ from being a cell. Options: keep bodies (today), log a hash plus the mailbox path, or a project check at send. *survey 7 (callsheet #67)*
+1. **Dead runs and orphaned sessions.** runner.lock records the session's pid (spawn, not spawnSync); while the session lives the lock isn't stale, orphans count toward MAX_RUNNERS, and a new run refuses. `working_on` with no live runner is reported as orphaned (mail status, session-open). Recovery in order: file the answer from the run log if there is one (marked recovered), else `cellrun --resume` (task text + "partial work is uncommitted in the worktree", reply filed to the original), else release. An exit note beside each run log. *survey 2 (project-archivist stuck 7 days; AI-MMO d1b3deb, d1030f4) · Scally 1*
+2. **Cells run on main's bedrock and guards.** `cellrun` merges main into a clean, idle cell before starting (conflict: abort, check, exit with the mail queued; never over uncommitted work or ignored files main would overwrite), and kinds and secrets read bedrock from the main checkout as guards already do. *survey 6 (SF-DEV S-3c, 2c87840, 9f28d63; AI-MMO 849252f, ca8ec08)*
+3. **Shell guard correctness.** Fail closed on its own errors (exit 2, naming the check); kernel-owned paths only as paths from the repo or cell root, and the message names the one matched; Write/Edit get the shell's temp exemption; refuse killing processes by name (`taskkill /IM`, `pkill`). Then acts, not text (Later). *survey 3–5 · AI-MMO 897ee08*
+4. **Guard reads.** Today a session can read a neighbouring workspace's `.env` with Read, Grep or `cat`. Add a `Read|Grep` hook matcher, a read check on shell commands, and a `guards.json` `"unreadable"` list (defaults: `.ssh`, `.env` but not `.env.example`, key files). *SF-DEV 18 (secrets.ts, hook-read.ts)*
 
 ## Later
 
@@ -41,6 +36,7 @@ From the projects' notes in [`notes/`](notes/): SF-DEV (2026-10-10 to 10-15), AI
 
 ## Already in the kit
 
+- A task reaches the cell's log at hand-over; mail bodies logged whole or hashed (`guards.json` `mail.log`, operator's choice 2026-10-18: a project setting, default body): Unreleased. *survey 1, 7 · SF-DEV 13*
 - Light headless runs that queue for room: Unreleased (20cfefb). *Scally 1, 6 · survey: callsheet loaded 11 MCP servers*
 - Log lock, and `assume` choosing its id under it: Unreleased (7b18ce8). *SF-DEV 3, 7 · Scally 3*
 - Placeholder replies held back by the mail hook: Unreleased (2f2add6). *SF-DEV 2, 13 · Scally 2*

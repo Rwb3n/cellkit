@@ -82,6 +82,54 @@ test('mail is on the log: every message is an observation on the sender\'s and t
   assert.deepEqual(lint(c1).errors, []);
 });
 
+test('mail: a task reaches the cell\'s log when it is handed over, not when it is sent (a queued task is no instruction)', async () => {
+  const { readLog } = await import('../src/log.ts');
+  const { root, c1 } = world();
+  const kinds = (dir: string) => readLog(dir).filter((e) => (e.body as { source: { capability?: string } }).source?.capability === 'mail')
+    .map((e) => (e.body as { payload: { kind: string; id: string } }).payload);
+  const t1 = send(root, 'c1', 'first');
+  send(root, 'c1', 'second');
+  assert.deepEqual(kinds(c1), []);                                 // queued: nothing on the cell's log to find
+  assert.deepEqual(kinds(root).map((p) => p.kind), ['task', 'task']);
+  stop(c1, 'started');                                             // hands t1 over
+  assert.deepEqual(kinds(c1).map((p) => p.id), [t1.id]);
+  stop(c1, 'done one');                                            // reply to t1, hands t2 over
+  assert.deepEqual(kinds(c1).map((p) => p.kind), ['task', 'reply', 'task']);
+});
+
+test('mail: guards.json mail.log "hash" keeps bodies out of every log; the mailbox still carries them', async (t) => {
+  const { readLog } = await import('../src/log.ts');
+  const { lint } = await import('../src/lint.ts');
+  const { sha256 } = await import('../src/canon.ts');
+  const { root, c1 } = world();
+  const cfg = join(root, 'guards.json');
+  writeFileSync(cfg, JSON.stringify({ mail: { log: 'hash' } }));
+  process.env.CELLKIT_CONFIG = cfg;
+  t.after(() => { delete process.env.CELLKIT_CONFIG; });
+  const t1 = send(root, 'c1', 'call Ada Lovelace on 0123');
+  assert.ok(stop(c1, 'started').reason.includes('call Ada Lovelace'));   // the session still gets the task
+  stop(c1, 'Ada says yes');
+  assert.equal(receive(root, t1.id)[0].body, 'Ada says yes');            // and root the reply
+  for (const dir of [root, c1]) {
+    const text = readLog(dir).map((e) => JSON.stringify(e)).join('\n');
+    assert.ok(!/Ada/.test(text), `no body on ${dir}'s log`);
+    assert.ok(text.includes(sha256('call Ada Lovelace on 0123')));
+    assert.deepEqual(lint(dir).errors, []);
+  }
+});
+
+test('mail: mail.log takes "body" or "hash"; a broken guards.json logs hashes', async () => {
+  const { checkGuards, loadConfig } = await import('../src/config.ts');
+  assert.deepEqual(checkGuards({ mail: { log: 'hash' } }), []);
+  assert.deepEqual(checkGuards({ mail: { log: 'body' } }), []);
+  assert.match(checkGuards({ mail: { log: 'none' } }).join(), /mail\.log must be "body" or "hash"/);
+  assert.match(checkGuards({ mail: { keep: 1 } }).join(), /unknown key "keep"/);
+  const dir = mkdtempSync(join(tmpdir(), 'cellkit-cfg-'));
+  assert.equal(loadConfig(join(dir, 'none.json')).mailLog, 'body');
+  writeFileSync(join(dir, 'bad.json'), '{ not json');
+  assert.equal(loadConfig(join(dir, 'bad.json')).mailLog, 'hash');
+});
+
 test('mail: a progress note is not a reply (the notes SF-DEV and AI-MMO saw filed); a real reply is', () => {
   for (const note of [
     "The test suite is still running. I'll write the reply once it finishes.",
