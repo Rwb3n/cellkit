@@ -61,7 +61,7 @@ Fan out read-only investigators, one per project (or per group of small ones), e
 - **Run logs:** `-p --output-format stream-json` writes one `result` line per turn; the Stop hook's hand-over shows as a user line naming the task id.
 - **`git worktree add --relative-paths`** marks the whole repo for git ≥ 2.48; WSL's Ubuntu 24.04 has 2.43. Not used.
 - **Files here flow into every project on merge.** Don't add kit-private files outside `maintainer/`. That includes `.github/`: an issue form there would become every project's own. The field-note format lives in `templates/ROOT.md` instead.
-- **GitHub refuses fast bursts of issue creation** (it stopped at the 27th of 46): pause a few seconds between creates. The board's item list lags behind adds; check from the issue side (`projectItems` in `gh api graphql`).
+- **GitHub refuses fast bursts of issue creation** (it stopped at the 27th of 46): pause a few seconds between creates. The board's item list lags behind adds; check from the issue side (`projectItems` in `gh api graphql`). A push that closes an issue (`Fixes #n`) doesn't move it to Done on the board: set the Status by hand.
 
 ## The operator
 
