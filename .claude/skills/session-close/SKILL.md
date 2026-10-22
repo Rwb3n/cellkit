@@ -22,7 +22,8 @@ The next root session (fresh, compacted, or another model) must be able to resum
 5. **State:** run `node kernel/src/cli.ts cell sync`, then `node kernel/src/cli.ts lint --all`. Both must be clean.
 6. **Push** to the backup remote.
 7. **Handover:** if a routine or lesson changed this session, update `docs/ROOT.md`. Lint warns when it is 20 commits stale. Live state never goes in it.
-8. **Tell the operator** in a few lines:
+8. **Lessons for the kit:** anything this session learnt about the kit itself goes upstream as an issue, one per lesson, as [`templates/ROOT.md`](../../../templates/ROOT.md) → "Lessons for the kit" says (the kit's copy, which a kit merge keeps current; your `docs/ROOT.md` may predate it). Show the operator the drafts first; post only on their go.
+9. **Tell the operator** in a few lines:
    - what's done;
    - what's in flight, and where its reply will land;
    - what's waiting on them (approvals, reviews, decisions);

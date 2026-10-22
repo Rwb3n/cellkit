@@ -1,0 +1,50 @@
+FROM CALLSHEET, session 2026-10-21/22 (adoption on main + first cell)
+Port: the TypeScript kernel copied verbatim from tag v0.3.0 (8e429df) into github.com/Rwb3n/callsheet (Next.js app; kernel/ and cells/ fenced off from the app's tsconfig, vitest and eslint). Adopted for DEVELOPMENT governance first (AI-MMO style); operations organs later. One cell: `prospecting`, which drives an external instrument (vein: Python CLI + 22 GB SQLite outside the repo).
+Each item: what happened, what we did, and a suggestion. No kernel changes were made on our side; everything below is observed behaviour of v0.3.0.
+
+1. `init` leaves the starter ontology pending forever, and lint's hint then fails (adoption day).
+   Happened: `init` registered templates/ontology.md as a draft (000002); our real ontology was amended on top (000004). Lint warned "approval pending (! node kernel/src/cli.ts approve --doc ontology)". The operator ran exactly that twice and nothing happened, apparently silently: approve refuses with 2 pending and needs --proposal. We had to read bedrock.ts to find out.
+   Did: told the operator `approve --doc ontology --proposal 000004`.
+   Suggest: (a) an amend of a never-approved doc supersedes its earlier pending drafts, or (b) lint's hint names --proposal when several are pending, and approve's refusal is printed loudly enough to be seen from a `!` prompt.
+
+2. The Bash hook's recursive-read guard misreads Git-Bash paths on Windows (repeatable).
+   Happened: `grep -rhoE … /d/PROJECTS/vein/lib …` (a different repo) was refused as "a recursive search of D:\PROJECTS\callsheet would read .env.local". The hook resolved /d/... (MSYS form) against the project dir instead of as D:/. `cd /d/PROJECTS/vein && grep -r …` was refused the same way.
+   Did: used the Grep tool on D:\PROJECTS\vein instead.
+   Suggest: normalise MSYS paths (/c/…, /d/…) to drive paths before deciding what a recursive search reaches; take a leading `cd <dir> &&` into account.
+
+3. The approve guard fires on PR bodies and docs that merely quote the operator's command.
+   Happened: `gh pr create --body "$(cat <<EOF … ! node kernel/src/cli.ts approve --doc ontology …)"` was blocked. Known and documented ("deliberately strict"); the workaround (Write the body to a file, --body-file) works.
+   Suggest: none needed, but put "--body-file / -F" in the refusal message itself.
+
+4. `cell land` commits the cell's work BEFORE merging main, so a root fix to .gitignore can't help that landing.
+   Happened: our root .gitignore had `out/` (Next.js), which ignored every `cells/*/state/out/metrics.json` (re-includes don't work under an ignored parent dir). The cell spotted it (git check-ignore). Root fixed .gitignore on main, but land committed the cell's tree first, so metrics.json stayed untracked until the next landing.
+   Suggest: `cell new` (or lint) runs `git check-ignore` on the cell's state/out/metrics.json and warns; or land re-stages the cell's tree after merging main.
+
+5. Root's mailbox kept a reply from a cell that no longer exists.
+   Happened: `mail.ts watch --as root` delivered a reply from `reader`, a trial cell whose worktree and branch had been removed days earlier (on another branch). Mailboxes live under .git/cellkit-mail and outlive the cell.
+   Suggest: lint (or `mail status`) flags mail from/to cells that have no cells/<name>/ on the current branch.
+
+6. Default secret patterns miss `<name>.env`.
+   Happened: the instrument's key file was `vein.env`. The kit's default guard covers `.env` and `.env.*` only. We renamed it to `.env` in its folder rather than amend guards.
+   Suggest: add `*.env` (but not `*.env.example`) to the defaults, or say in README that `foo.env` isn't covered.
+
+7. After `cell land`, `lint --all` on main warns "prospecting: views are stale" until a manual fold of the cell.
+   Happened on every landing; `fold --cell cells/<name>` then lint is clean, but the warning came back after the next land.
+   Suggest: land folds the landed cell's views on main (they're not committed anyway).
+
+8. UNOWNABLE leaves no home for a "system" cell in a small project.
+   Happened: we planned a system cell (AI-MMO's pattern: it owns the process tools so root can't change what checks it). In v0.3 no cell may own kernel/, .claude/ or state/, so it would own nothing. We dropped it; root keeps the skills.
+   Suggest: none; documenting "a system cell needs process code outside kernel/ and .claude/" in README would have saved us the planning.
+
+9. The cell brief renders only binding.scope.
+   Happened: our binding.json carries `rules` (no personal data back into the repo; derived lists stay outside; pre-register screens) and `instrument` paths. The generated AGENTS.md shows only `scope`; the cell found the rules because it read binding.json, as told.
+   Suggest: render a `rules` array (if present) into the brief's Boundary section.
+
+What worked well (keep it):
+- Headless cells: three tasks, each 4-9 minutes, clean replies with counts, defects and "for root to decide". `cellrun` merged main into the worktree first every time.
+- The cell honoured a "blind" instruction and reported its own possible leak (it saw a commit message naming two results).
+- `cell land --check "node kernel/src/cli.ts lint --all"` is the right check for a cell that never touches app code: no app node_modules needed in the worktree, which avoided the junction trap (see 10).
+- Mail bodies logged whole made a task mail a timestamped pre-registration of a method, for free. We used it as such.
+- Operator-voice approvals from the operator's own prompt, and the hook refusing agents: clear, cheap, and the log shows who.
+
+10. Trap reproduced (already on your backlog, survey 9-11): `git worktree remove` on a worktree holding a node_modules directory junction emptied the main checkout's node_modules (npm ci restored it). We now never link app node_modules into a cell worktree; landing checks avoid needing it.

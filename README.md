@@ -223,7 +223,7 @@ How the projects that use it do it:
 - A kit fix found in a project goes back to cellkit as its own commit, never mixed with the project's log or domain code.
 - Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover. Set `origin` to a private backup and push after committing: the log is the record, so don't let it live on one disk.
 - Set `core.autocrlf=false` (see Traps).
-- `maintainer/` is the kit's own: its backlog, the projects' notes and its root handover. A merge brings it along; delete it in your project, or leave it.
-- A lesson for the kit: write it up (what broke, what changed, the commit and test) and drop it in the kit repo's root as `FROM-<PROJECT>.txt`. The kit's root session files it under `maintainer/notes/`.
+- `maintainer/` is the kit's own: the projects' notes and its root handover (the backlog is the kit repo's GitHub issues). A merge brings it along; delete it in your project, or leave it.
+- A lesson for the kit: file it as an issue on the kit's repo, one per lesson, labelled `intake` (`templates/ROOT.md` → "Lessons for the kit"; `/session-close` asks). Without access, drop it in the kit repo's root as `FROM-<PROJECT>.txt`.
 
 Not in the kit yet: a person-data seal (crypto-shredding, carnet `seal.ts`), a model map (carnet `models.ts`), and requirement tracing (AI-MMO, DTG).

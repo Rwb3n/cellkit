@@ -53,6 +53,21 @@ Root is the cell that contains the others. Its session is the operator's working
 2. Every in-flight task is visible in `mail.ts status --as <cell>`.
 3. `cell sync` and `lint --all` are clean. Push to the backup remote.
 4. Anything the next session must know that isn't in the sources above goes in your tracker, not in this file.
+5. Lessons for the kit (below) are filed with the operator's go.
+
+## Lessons for the kit
+
+When the kit itself got in the way (a guard refused the wrong thing or let the wrong thing through, a command's message misled, a step was missing) or a fix you built would help every project, file it upstream: **one issue per lesson**.
+
+1. Write the body to a file in the scratchpad (not the repo), under these headings:
+   - **Project:** its name, and the kit version (`kernel/package.json`) or your port.
+   - **What happened:** the command or step, what it did, what you expected. Exact output if it is short.
+   - **What we did:** the workaround, or the commit and test if you fixed it.
+   - **Suggestion:** optional.
+2. Show the operator the title and body. Posting sends it outside this repo.
+3. `gh issue create --repo Rwb3n/cellkit --label intake --title "[<project>] <one line>" --body-file <file>`
+
+No secrets and no personal data; only as much of the project's own content as the lesson needs. Without `gh` access to the kit's repo, put the same text in `FROM-<PROJECT>.txt` in the root of the kit's checkout.
 
 ## Lessons (keep them)
 

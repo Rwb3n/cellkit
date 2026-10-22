@@ -1,0 +1,59 @@
+FROM AI-MMO (Scally), sessions 10-12 (2026-10-13 .. 2026-10-18)
+Port: Python stdlib (tools/charter, tools/cellmerge, tools/play). Repo: github.com/Rwb3n/scally.
+Each item: what broke, what changed, the commit and its test. Session 9 and earlier are already in your survey.
+
+1. The shell hook didn't read git's global options (session 12).
+   Broke: `git -C <main> checkout -- docs/assumptions.md` (and `--work-tree`, `--git-dir`, `-c k=v`, `--no-pager` before the subcommand) passed a guard that refused the bare form: the parser took the first option as the subcommand and found no target. Found by our system cell while writing a recovery line that relied on it.
+   Changed: hook_bash.py parses git's globals first (`_git_globals`: -C composes, `-C<dir>`, env expansion), then checks the target paths once per folder they may be relative to. Additions only: a 1,540-command corpus through the old and new hook refused 605 vs 965, 0 newly allowed; it still fails closed.
+   Commit 1e39484; tools/charter/tests/test_hooks.py (four protected paths x 12 option prefixes). We grepped your kernel/src/hook-bash.ts and saw no -C handling: likely the same gap.
+   Open (our D202): `git reset --hard/--keep`, `git clean`, `git stash` aren't read as writes either; they can delete untracked log entries. Needs printed undo lines moved into the landing tool first.
+
+2. A landing killed mid-gatecheck lost root-log entries on recovery (session 12).
+   Broke: the OS reaped a landing (memory) after its merge into main, before the push. The obvious recovery, `git reset --keep origin/main`, deleted 10 root-log entries the landing had committed (cells' assumptions, decisions logged from the reply). Restored by hand from the dead commit.
+   Changed: the next landing's step 0 prints ONE command, `cellmerge.py restore-log --from <sha> --base origin/main --reset`: it restores the generated view, resets and writes the undone commits' entries back untracked in one go (no window for another log write). It refuses, writing nothing, on an id already on disk under any kind, different bytes, a chain that wouldn't verify, or a --from that doesn't descend from --base; exclusive create; re-running is harmless.
+   Commit 1e39484; tools/cellmerge/tests/test_effects.py (TheRecoveryForALandingKilledInStepSixKeepsItsRootLogEntries and the refusal cases, with real NNNNNN.<kind>.json chained entries).
+   Parked: run the clash and chain checks before the reset so a refusal leaves main untouched.
+
+3. A merge conflict in a generated file stopped a landing (session 12).
+   Broke: the cell's branch and main had both regenerated docs/assumptions.md (fold output); merging main into the cell conflicted and the landing stopped.
+   Changed: a conflict limited to generated files (models/**, docs/assumptions.md) takes main's side, regenerates (rebuild, fold in the worktree) and commits; any other conflicting path still aborts. Commit 1e39484; test_rebuilds.py AssumptionsInTheMerge.
+
+4. Parallel jobs were reaped for memory (session 12).
+   Broke: two cell runs (one a Godot build and smoke) plus a landing's parallel gatecheck plus the operator's game: Claude Code's background-job reaper killed a runner and the landing. Your runner memory wait covers headless runs only; landings and promotes aren't gated.
+   Changed: a working rule only so far ("one heavy job at a time"); a mechanism (landings and promotes wait on the same memory/slot check as runners) is on our list.
+
+5. Permanent worktrees are locked with git's own lock (session 12).
+   Broke: a by-hand throwaway worktree in a dead session's scratchpad outlived it with 61 edited files (all already merged). Nothing told permanent from throwaway.
+   Changed: `cell checkout` and the play copy are created with `git worktree add --lock --reason "cell <name>" / "play copy"`; git then refuses remove/prune without -f -f, so unlocked = throwaway as a structure. Porcelain parsers checked against the extra `locked` line. Commit 6e5c18f; test_worktrees.py, tools/play/tests/test_play.py.
+
+6. Operator load (session 12, not a code fix yet).
+   About 40 decisions reached the operator in one session; most were "keep the value as built", logged one per reply question. A pre-mortem ranked "the operator's attention runs out" as the likeliest failure. Our next agenda item is two weights of decision (as-asked values go in the landing message, not the decisions view). Your survey's callsheet "park it" and 01-HAIOS-PERS notes look like the same pressure.
+
+7. Taken from you, thanks: the session-close skill with a stale-handover lint warning, the file guard failing closed (ours still fails open by design as the repair path when the shell guard breaks; we'll name the way back first), and counting independent voices per subject in the fold.
+
+--- Session 13 (2026-10-20) ---
+None of these is fixed yet; each one names the rung it should land on (structure > mechanism > trigger > skill).
+
+8. A landing's gatecheck reads the main checkout's untracked files.
+   Broke: while a landing ran its step-6 gatecheck on main, the integrator wrote four research files into main's working tree. The cell-audit row ("owned by no cell") failed, so nothing was pushed. All 23 other rows had passed on the exact commit. Recovery: move the files aside, re-run only the audit row (clean), then push the checked commit.
+   Becomes (structure): the root write guard refuses Write/Edit to the main checkout while the landing lock is held. Alternative (mechanism): step 6 audits the commit's tree rather than the working tree. The root hook already refuses commits during a landing, but not file writes.
+
+9. The pause dance as the way to run one task.
+   Broke: running one task meant --unpause, then run, then --pause (after it had started) about six times in one session. Once the order was wrong (pause before run), and the run had to be redone.
+   Becomes (mechanism): `cellrun --cell X --one` takes exactly one queued message, then leaves the cell paused. It was on our list behind a freeze that has now lifted.
+
+10. Every cell reply needed a fresh-review round trip.
+   What happened: three replies in a row each came back from a fresh-context reviewer with a real defect. One was an OS libm Math.Atan2 feeding the sim's input, inside a cross-machine determinism check. Another was a result worded stronger than its evidence. Reviewing the task mail before sending caught three more blockers: a publish command that fails restore, a rebuild that would silently pass hidden state through, and scripts that couldn't exercise the field under test.
+   Becomes (mechanism): the cell's own session runs a fresh reviewer before it replies, and the reply carries the verdict. The integrator also reviews the mail before sending, as a step in the send command rather than a habit. A review verdict as a landing precondition is already on our list.
+
+11. A landing's output ends with the undo list.
+   Broke: a successful landing prints "done so far" plus "to undo, newest first", so a `tail` of the output reads like a failure and needs a grep to confirm the push.
+   Becomes (mechanism): the last line is always one verdict, `LANDED <sha>, pushed` or `STOPPED at step N: <why>`.
+
+12. Hand-written context in task mails goes stale.
+   Broke: a mail's header said "your queued flaky-test task first" after that task had already landed. The cell flagged it as confusing.
+   Becomes (mechanism): the header's "in flight" and queue lines are generated from mail status when the mail is sent.
+
+13. Results that move a key assumption need their wording reviewed, not just their code.
+   What happened: a spike's summary said "the car predicts bit for bit from published state alone". The fresh review showed it held only with the input log, the event log and the previous tick's view, which today's restore paths drop. The code was right; the claim wasn't.
+   Becomes (skill, then maybe structure): a reply that moves a tracked assumption states its claim in one sentence with its conditions, and the reviewer checks that sentence against the evidence. Possibly a field in the reply format.

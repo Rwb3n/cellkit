@@ -1,0 +1,81 @@
+FROM PROCESSKIT, session of 2026-10-21
+Repo: github.com/Rwb3n/processkit (not a cellkit project: it took cellkit's worktree method into its own tooling,
+`npm run wt`). The operator asked for this note: "lets adapt our cellkit to use worktrees/ and dump a .txt in the
+cellkit root with advice for it to do the same".
+Each item: what broke, what changed, the commit and its test, and what it would mean for cellkit. Rung: structure.
+
+1. Worktrees beside the repository littered the projects folder.
+   Broke: one folder per worktree next to the main checkout (processkit-wt-<topic>, processkit-cases-wt-<case>-<topic>);
+   the operator: "we have a bunch of worktrees littering the projects/ dir. it's not a good look". cellkit's
+   <repo>-cells/<name> is tidier (one sibling per repo), and the projects folder already shows SF-DEV-cells,
+   AI-MMO-cells, callsheet-cells, project-archivist-cells, PS5-STUDY-cells, 01-HAIOS-PERS-cells, apify-actor-dev-cells.
+   Changed: every worktree lives INSIDE its repository, <repo>/.worktrees/<branch with / as ->, git-ignored, made
+   with `git worktree add --lock --reason ...` (your item 5 from AI-MMO, taken). The operator chose this over a
+   sibling folder and over one shared work folder.
+   Commits c251756 (scripts/wt.mjs, lib/worktrees.js), cf6660f; merge 76f1834 (PR #115). Tests: test/worktrees.spec.js
+   "a worktree lives in the repository, named after its branch", "reads git worktree list --porcelain".
+   For cellkit: cellsCheckoutDir() (kernel/src/worktree.ts, "<repo>-cells/<cell>") would return
+   join(mainRoot, '.worktrees') and `cell checkout` would make <repo>/.worktrees/<cell>; the template's .gitignore
+   gets `.worktrees/`. `--path` keeps the old place for projects that want it.
+
+2. What a checkout nested inside the main checkout needs (found by doing it; each one bit or was checked).
+   a. Git: `.worktrees/` in .gitignore, or the main checkout shows the nested checkouts as untracked.
+   b. Repo-wide walks see every nested checkout as a second copy of the repository: our ESLint linted each worktree
+      again from the main checkout (91 errors) until `.worktrees` went into its ignores. For cellkit, check every
+      walk that starts at the main root: lint, fold, the secrets/read scans, `cell audit`, glob.ts, the tests'
+      fixtures. Each must skip `.worktrees/` (ours already skip dot-folders; ESLint did not).
+   c. YOUR PATH RULES, the one to check first: today a cell's worktree is outside the main checkout, so "a path inside
+      the main checkout" means root's territory (inMain(), the root write guard, the shell hook's targets, the
+      landing lock that refuses root writes). Nested, every cell file is ALSO under the main checkout's folder.
+      Every prefix test must ask "inside <main>/.worktrees/?" first, or root's guards will claim cell files (and a
+      cell's guard may refuse its own worktree). A test per guard with a nested worktree would prove it.
+   d. Node resolution: a nested worktree without its own node_modules resolves upward into the main checkout's
+      folders. For us that ran tests against the wrong install, so `wt new` runs `npm ci` in every worktree and
+      `wt list` flags a missing or stale one. Your README says a cell worktree has no kernel/node_modules and loads
+      the main checkout's; check how it does that, since upward resolution from <main>/.worktrees/<cell>/kernel/src
+      reaches <main>/node_modules, not <main>/kernel/node_modules.
+   e. `git clean -x` (or -fdx) in the main checkout deletes every nested worktree; git's lock does not stop it. Your
+      AI-MMO item 1 open point (reset/clean not read as writes) becomes sharper: the shell guard should refuse
+      `git clean` with -x in a main checkout that has `.worktrees/`.
+   f. Claude Code: a session opened in the main checkout lists each skill once at start; once it edits files in a
+      worktree it also offers that worktree's skills, scoped to it (".worktrees/<name>:<skill>"). Harmless for us;
+      for cells, check that the cells' own .claude/settings.json hooks are not picked up by root's session.
+   Commits c251756 (the ignores), da57ba5 (stale install). Tests: "an install that is not what the lockfile says is
+   stale; optional packages never count".
+
+3. Windows will not remove a worktree a program holds, and the holder is often the session itself.
+   Broke: `git worktree remove` failed with "Permission denied" five times in one session. Git had already let go of
+   the worktree and emptied the folder, then could not delete the folder; the branch was left, and a second run
+   could not finish. The holder was the Claude Code session: it moves its working folder into a worktree once it
+   edits files there, and keeps it until a later command runs elsewhere.
+   Changed: `wt done` retries the remove after a wait; once git has let go, it deletes the merged branch anyway and
+   names the empty folder left; `wt list` names such folders; the skills say to leave the worktree (cd to the main
+   checkout) before removing it. Commits 88dabc6 (PR #118), da57ba5 (PR #165). Tests: "done finishes a remove that
+   failed half way", "wt done: a folder another program holds leaves the folder, not the merged branch" (Windows
+   only: a child process with its working folder in the worktree holds it, as a session does).
+   For cellkit: cell worktrees are permanent, so this bites less, but any remove (a retired cell, a throwaway play
+   copy) and any landing that touches a folder a cellrun session sits in will meet it on Windows.
+
+4. A picked-up branch: the stale local copy and the stale install.
+   Broke: making a worktree for a branch that existed locally and on origin checked out the old local copy (three
+   commits missed until a push was refused). After merging develop into it, the worktree's install was the old
+   lockfile's (three checks failed: "unknown command").
+   Changed: `wt new` fast-forwards a local branch behind origin, refuses one that diverged (naming both commits);
+   `wt list` flags an install whose node_modules/.package-lock.json differs from package-lock.json. Commit da57ba5
+   (PR #165). Tests: "wt new: a local copy behind origin is fast-forwarded first; one that diverged is refused".
+   For cellkit: `cell checkout` of an existing cell/<name> branch, and cellrun's "merge main into a clean worktree"
+   (from AI-MMO) both change what is installed; the same stale-install check would fit cellrun's preflight.
+
+Not taken from cellkit, on purpose (processkit's HANDOVER, "Not done, by choice"): cells, mail and hooks for the kit
+itself, so far. The operator is now considering cellkit cells on processkit's own issues (#127-#163); where their
+worktrees live is the first of three choices, and this note is that choice.
+
+5. Landing through a PR (asked for, not built; the operator agreed 21 Oct).
+   Why: processkit's working method keeps the GitHub PR list as the work list and its issues as the work items; it
+   has no CI ("not a production tool"), so the record that checks ran is the landing's own output.
+   Asked: an option on `cell land` (or a project hook after it) that, once the check passes on the merged result,
+   pushes the cell's branch, opens a PR whose body is the landing's check output and the issues it closes ("Closes
+   #n", from the mail that assigned the work), and merges it at once, without waiting for review. The local merge
+   stays the source of truth; the PR is the record. A failed check opens nothing.
+   Order on our side: your port of items 1-2 first (the path guards above all), then one tooling cell on three
+   processkit issues with unit tests; a skill cell only after clean landings.
