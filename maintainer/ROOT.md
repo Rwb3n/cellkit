@@ -60,10 +60,15 @@ Fan out read-only investigators, one per project (or per group of small ones), e
 - **A fake `claude`:** `CELLKIT_CLAUDE` pointing at a `.cmd` shim around a `.mjs` that prints stream-json (`{"type":"result",…}`) exercises `cellrun` end to end, the cmd.exe quoting included.
 - **Run logs:** `-p --output-format stream-json` writes one `result` line per turn; the Stop hook's hand-over shows as a user line naming the task id.
 - **`git worktree add --relative-paths`** marks the whole repo for git ≥ 2.48; WSL's Ubuntu 24.04 has 2.43. Not used.
+- **Take-out scripts:** mutate and restore source files as bytes (`read_bytes`/`write_bytes`), or Python's text mode rewrites LF as CRLF; run them with `python -u` in the background (or the output stays buffered); never run the suite while one is running (it sees a mutated file). A take-out that fails no test is code nothing needs, or a missing test: decide which.
+- **Verify a claim before it goes in a doc or a CHANGELOG, especially one repeated from a project's note**: two this session were wrong (processkit's `git clean -fdx` deletes nested worktrees: only `-ffdx` does; `grep -f .env` listed as newly refused: it already was). A throwaway repo in the scratchpad settles most in a minute.
+- **Probe Claude Code's own behaviour with a subagent or `claude -p`** in a throwaway repo, with markers (which `CLAUDE.md` loaded, whose hooks judged): cheaper and surer than reading the docs alone. Results so far: `maintainer/notes/2026-10-22-native-agents.md`.
 - **Files here flow into every project on merge.** Don't add kit-private files outside `maintainer/`. That includes `.github/`: an issue form there would become every project's own. The field-note format lives in `templates/ROOT.md` instead.
 - **GitHub refuses fast bursts of issue creation** (it stopped at the 27th of 46): pause a few seconds between creates. The board's item list lags behind adds; check from the issue side (`projectItems` in `gh api graphql`). A push that closes an issue (`Fixes #n`) doesn't move it to Done on the board: set the Status by hand.
 
 ## The operator
 
+- What they want from the kit (2026-10-22): **tight governance**, clean and well architected, closed loop, recoverable, observable. Weigh a design against that: a structural rule over exceptions (cells live outside the repo, #26), work reaching main only through `cell land` or root commits (#48), the operator's acts mention-strict (#2).
+- Asks "what's your confidence?": answer per claim (tested · docs · memory · opinion), and offer the cheap test that would settle the weakest one.
 - Says "go" / "go on" to proceed with the proposed next step; asks "suggestion?" when they want one recommendation with its reasons, not a menu.
 - Decides per-project settings and anything outward (push, release). Choices made 2026-10-18: mail bodies in the log are a project setting, default `body` (`guards.json` `mail.log`); the read guard as a hook denylist now, OS sandboxing watched until a project needs it. 2026-10-22: the backlog moved to GitHub issues and the cellkit board; projects file their lessons there instead of dropping `FROM-*.txt`.
