@@ -463,6 +463,27 @@ test('lint: a root handover untouched for 20 commits gets a warning', async (t) 
   assert.match(run('cli.ts', ['lint', '--cell', main]).stderr, /docs\/ROOT\.md last changed 20 commits ago/);
 });
 
+test('lint: a native worktree left in the repo, or its branch unmerged, gets a warning; a cell\'s own worktree doesn\'t (#48)', async (t) => {
+  const { main } = world(t);
+  const { lintNativeWorktrees } = await import('../src/lint.ts');
+  assert.deepEqual(lintNativeWorktrees(main), []);                          // demo's sibling worktree is a cell's, not native
+  const n = join(main, '.claude', 'worktrees', 'agent-1');
+  git(main, 'worktree', 'add', '-q', n, '-b', 'worktree-agent-1');
+  writeFileSync(join(n, 'x.md'), 'x'); git(n, 'add', '-A'); git(n, 'commit', '-qm', 'side work');
+  let w = lintNativeWorktrees(main);
+  assert.equal(w.length, 1, w.join('\n'));                                   // the worktree; its branch is said with it
+  assert.match(w[0], /native worktree \.claude\/worktrees\/agent-1 \(worktree-agent-1\)/);
+  assert.match(run('cli.ts', ['lint', '--cell', main]).stderr, /native worktree/);
+  assert.deepEqual(lintNativeWorktrees(join(main, 'cells', 'demo')), []);  // a cell's lint leaves it to root
+  git(main, 'worktree', 'remove', '--force', n);
+  w = lintNativeWorktrees(main);
+  assert.equal(w.length, 1, w.join('\n'));
+  assert.match(w[0], /branch worktree-agent-1 holds commits main doesn't have/);
+  git(main, 'branch', '-D', 'worktree-agent-1');
+  git(main, 'branch', 'worktree-merged');                                    // nothing of its own: nothing to say
+  assert.deepEqual(lintNativeWorktrees(main), []);
+});
+
 test('cell land: weaker tests stop the land; the operator lands them with a reason that goes into the merge', (t) => {
   const { main, wt, cellWt } = world(t);
   const suite = join(main, 'cells', 'demo', 'test', 'a.test.ts');

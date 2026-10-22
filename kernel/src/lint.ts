@@ -9,6 +9,7 @@ import { lintBinding, lintCells } from './cell.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
 import { spawnSync } from 'node:child_process';
+import { inMain } from './worktree.ts';
 
 export interface LintResult { errors: string[]; warnings: string[]; entries: number }
 
@@ -41,6 +42,30 @@ export function lintOwnership(root: string): { errors: string[]; warnings: strin
     if (by.length > 1) errors.push(`${f} is owned by ${by.join(' and ')} (guards.json): one owner per path`);
   }
   return { errors, warnings };
+}
+
+// Claude Code's own worktrees (isolation: "worktree", EnterWorktree) sit in the main checkout at .claude/worktrees/, on
+// worktree-* branches. Their work reaches main only through cell land or root's own commits (#48), and the shell guard
+// refuses merging them; one left behind, or a branch holding commits main doesn't have, is flagged so a session ends
+// with none. Root's lint only: a cell's leaves it to root.
+export function lintNativeWorktrees(root: string): string[] {
+  if (existsSync(join(root, 'binding.json'))) return [];
+  const g = (...a: string[]) => spawnSync('git', ['-C', root, ...a], { encoding: 'utf8' });
+  const list = g('worktree', 'list', '--porcelain');
+  if (list.status !== 0) return [];
+  const main = inMain(root).replaceAll('\\', '/').toLowerCase();
+  const out: string[] = [], held = new Set<string>();
+  for (const block of list.stdout.split(/\r?\n\r?\n/)) {
+    const path = /^worktree (.+)$/m.exec(block)?.[1].replaceAll('\\', '/');
+    const branch = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1] ?? '(detached)';
+    if (!path || !path.toLowerCase().startsWith(`${main}/.claude/worktrees/`)) continue;
+    held.add(branch);
+    out.push(`native worktree ${path.slice(main.length + 1)} (${branch}) is still here: its work reaches main only through cell land or a root commit, never a merge. Move what it holds into a cell task or a commit on main, then remove it (git worktree remove).`);
+  }
+  const unmerged = g('branch', '--list', 'worktree-*', '--no-merged', 'HEAD', '--format=%(refname:short)');
+  for (const b of unmerged.status === 0 ? unmerged.stdout.split(/\r?\n/).filter(Boolean) : [])
+    if (!held.has(b)) out.push(`branch ${b} holds commits main doesn't have, from a native worktree: it won't be merged (cell land or a root commit instead). Take what's needed, then delete it (git branch -D ${b}).`);
+  return out;
 }
 
 export function lint(cellDir: string): LintResult {
@@ -88,6 +113,7 @@ export function lint(cellDir: string): LintResult {
     warnings.push(...o.warnings);
     const stale = handoverAge(cellDir);
     if (stale !== null && stale >= HANDOVER_STALE) warnings.push(`docs/ROOT.md last changed ${stale} commits ago: are its routines and lessons still true?`);
+    warnings.push(...lintNativeWorktrees(cellDir));
   }
 
   const summaryPath = join(viewsDir(cellDir), 'summary.json');

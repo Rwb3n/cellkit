@@ -22,7 +22,7 @@ import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
 import { basename, posix, resolve } from 'node:path';
-import { outside, writeTargets } from './shell.ts';
+import { gitGlobals, outside, simpleCommands, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
 
 let raw = '';
@@ -74,12 +74,15 @@ const norm = (p: string) => p.replaceAll('\\', '/').replace(/\/+$/, '').toLowerC
 const proj = process.env.CLAUDE_PROJECT_DIR ?? '';
 const top = norm(proj && existsSync(`${proj}/binding.json`) ? resolve(proj, '..', '..') : resolve(proj || cwd || '.'));
 const roots = [...new Set([top, norm(inMain(top))])];
+// Claude Code's own worktrees (isolation: "worktree", EnterWorktree) are checkouts of the repo nested in the main one, at
+// .claude/worktrees/<name>/ (#48): their kernel-owned paths are kernel-owned too.
+const native = String.raw`(\.claude\/worktrees\/[\w.-]+\/)?(cells\/[\w.-]+\/)?`;
 function kernelOwned(c: string): string | null {
   for (const m of c.matchAll(new RegExp(protectedPath.source, 'gi'))) {
     const before = c.slice(0, m.index).match(/[^\s"'=>(|;&,]*$/)![0];
     const pre = before.replaceAll('\\', '/'), low = pre.toLowerCase();
-    const rel = /^(\.{1,2}\/)*$|^(\.{1,2}\/)*cells\/[\w.-]+\/$|^(\.\.\/)+[\w.-]+\/$/i.test(pre);
-    const abs = roots.some((r) => low === `${r}/` || (low.startsWith(`${r}/cells/`) && /^[\w.-]+\/$/.test(low.slice(r.length + 7))));
+    const rel = new RegExp(String.raw`^(\.{1,2}\/)*${native}$|^(\.\.\/)+[\w.-]+\/$`, 'i').test(pre);
+    const abs = roots.some((r) => low.startsWith(`${r}/`) && new RegExp(`^${native}$`).test(low.slice(r.length + 1)));
     if (rel || abs) return pre + m[0];
   }
   return null;
@@ -127,7 +130,16 @@ function holdsOwned(target: string): boolean {
   for (const r of roots) if (p === r) p = '.'; else if (p.startsWith(`${r}/`)) p = p.slice(r.length + 1);
   if (/^([a-z]:)?\//.test(p)) return false;                                  // elsewhere on the disk
   p = posix.normalize(p.replace(/(^|\/)[^/]*[*?[].*$/, '') || '.').replace(/\/+$/, '');   // a glob: the folder it starts in
+  p = p.replace(/^\.claude\/worktrees\/[\w.-]+(\/|$)/, '') || '.';           // a native worktree is a checkout of its own (#48)
   return /^(\.\.\/)*(\.|\.\.|docs|state|state\/(log|views|bedrock)|cells|cells\/[\w.-]+(\/state(\/(log|views|bedrock))?)?)$/.test(p);
+}
+// A native worktree's branch (worktree-*) never goes into another branch (#48): its work reaches main through cell land
+// (audit, test check) or root's own commits. Merge, pull, cherry-pick, rebase and reset onto it are refused.
+for (const words of simpleCommands(command)) {
+  if (!/^git(\.exe)?$/i.test(words[0] ?? '')) continue;
+  const [sub = '', ...args] = gitGlobals(words.slice(1)).rest;
+  const side = /^(merge|pull|cherry-pick|rebase|reset)$/i.test(sub) && args.find((a) => !a.startsWith('-') && /(^|[/.])worktree-[\w.-]/i.test(a));
+  if (side) block(`${side} is a branch of Claude Code's own worktree (.claude/worktrees/): its work reaches main only through cell land or root's own commits, never a merge of the branch. Turn the change into a cell task, or redo it as a commit on main. If the operator wants this merge, they run it from their prompt.`);
 }
 for (const t of writeTargets(command)) {
   if (!t.git || /state[\\/]bedrock[\\/]proposed[\\/]/i.test(t.target!)) continue;

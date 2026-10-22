@@ -3,6 +3,8 @@ node_modules/
 .env.*
 !.env.example
 .claude/settings.local.json
+# Claude Code's own worktrees (isolation: "worktree"): throwaway, never committed or merged (#48)
+.claude/worktrees/
 .DS_Store
 Thumbs.db
 

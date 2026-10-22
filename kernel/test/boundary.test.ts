@@ -171,6 +171,35 @@ test('shell guard: git checkout, restore, rm and mv write their paths, read thro
   assert.equal(shellIn(cell, 'git -C ../.. restore kernel/src/log.ts'), 2);
 });
 
+test('Claude Code\'s own worktrees (.claude/worktrees/) are guarded like a checkout, and never merged into main (#48)', () => {
+  // A subagent with isolation: "worktree" runs under root's hooks and project dir; before #48 its worktree's
+  // kernel-owned files could be restored from the shell, and its branch merged into main past cell land.
+  const r = mkdtempSync(join(tmpdir(), 'cellkit-native-')).replaceAll('\\', '/');
+  const n = `${r}/.claude/worktrees/agent-1`;
+  const sh = (command: string, cwd = r) => shellOut(command, { CLAUDE_PROJECT_DIR: r }, cwd);
+  for (const [c, cwd] of [[`git checkout -- ${n}/docs/assumptions.md`, n], [`git checkout -- ${n}/docs/assumptions.md`, r], [`git -C ${n} checkout -- .`, r],
+    [`git checkout -- ${n}`, n], [`echo x > ${n}/state/log/000009.claim.json`, r], ['echo x > .claude/worktrees/agent-1/state/views/s.json', r],
+    [`rm ${n}/cells/demo/state/log/000001.observation.json`, r], [`git restore ${n}/state`, n]]) {
+    const out = sh(c, cwd);
+    assert.equal(out.status, 2, c);
+    assert.match(out.stderr, /kernel-owned/, c);
+  }
+  for (const c of ['git merge worktree-agent-1', 'git merge --no-ff -m x worktree-agent-1', 'git pull . worktree-agent-1', 'git cherry-pick main..worktree-agent-1',
+    'git rebase worktree-agent-1', 'git reset --hard worktree-agent-1~1', `git -C ${r} merge refs/heads/worktree-x`, 'git merge --squash origin/worktree-x']) {
+    const out = sh(c);
+    assert.equal(out.status, 2, c);
+    assert.match(out.stderr, /cell land or root's own commits/, c);
+  }
+  for (const c of ['git merge main', 'git log worktree-agent-1', 'git diff main..worktree-agent-1', 'git branch -D worktree-agent-1', 'git worktree remove .claude/worktrees/agent-1',
+    `cat ${n}/state/log/000001.observation.json`, 'git commit -m "not merging worktree-agent-1"', `echo x > ${n}/notes.md`, `git checkout -- ${n}/src/a.ts`])
+    assert.equal(sh(c).status, 0, c);
+  // Write/Edit already match kernel-owned paths at any depth: keep it so
+  assert.equal(tryWrite(r, `${n}/state/log/000009.claim.json`), 2);
+  assert.equal(tryWrite(r, `${n}/docs/assumptions.md`), 2);
+  assert.equal(tryWrite(r, `${n}/state/bedrock/ontology.md`), 2);
+  assert.equal(tryWrite(r, `${n}/README.md`), 0);
+});
+
 test('guards fail closed: a check that throws, or input they can\'t read, refuses', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cellkit-failclosed-'));            // a directory where guards.json should be: reading throws
   const r = shellOut('ls', { CELLKIT_CONFIG: dir });
