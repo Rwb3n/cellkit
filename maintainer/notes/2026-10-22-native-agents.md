@@ -32,4 +32,13 @@ So a subagent can't be a cell: it has root's hooks, root's project dir, root's i
 - **#34 jobs: keep.** Nothing native admits or detaches a root job that survives the session and is logged.
 - **#12 one landing at a time: keep.** Nothing native.
 - **#26 where worktrees live:** native isolation already nests worktrees in the main checkout (`.claude/worktrees/`), and root's guard doesn't protect kernel-owned files there (spike 2). Evidence for the nested-worktree risks, whichever way the operator decides.
+
+## Follow-up for #26: nested worktrees, tested
+
+Two of the reasons given against nesting cell worktrees in the main checkout were checked in a throwaway repo:
+
+- **`git clean -fdx` in the main checkout does not delete a nested worktree**: "Skipping repository .worktrees/c". Only `-ffdx` does. processkit's note (item 2e) overstated it.
+- **A headless session in a nested worktree does not load the main checkout's `CLAUDE.md`.** Markers in each file: a session in `<main>/.worktrees/c/cells/c` loaded the cell's and its worktree's own root `CLAUDE.md`, and one from the folder above the repo, but not `<main>/CLAUDE.md`. A plain `<main>/cells/c` did load it, and a sibling worktree behaved like the nested one. (Claude Code 2.1.295, `claude -p`, haiku.)
+
+What stands against nesting: root's guards judge anything under the main checkout as root's (spike 2), so every prefix test needs a "not under `.worktrees/`" case; folder scans that start at the repo root need the exclusion; Node resolves upward into the main checkout.
 - **Inside sessions:** root and cells should use native subagents for fan-out, review and research. Nothing in the kit needs to change for that; their writes are judged by the session's own hooks.
