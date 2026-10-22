@@ -99,3 +99,27 @@ test('read guard: the shell reads by act, not by text', () => {
     assert.equal(sh(c), 0, c);
   assert.equal(sh('cat vault/k.txt', `${r}/CASTLE`), 2);                       // relative, from inside the workspace
 });
+
+test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
+  // apify-actor-dev and callsheet: `cd <another repo> && grep -r …` was judged against this project's .env, and
+  // /d/PROJECTS/x was read as relative to the project.
+  const { root: r, cfg } = world();
+  const sh = (command: string, cwd = `${r}/APP`) => run('hook-bash.ts', { cwd, tool_input: { command } }, cfg);
+  const clean = `${r}/CASTLE/docs/decisions`;                                   // no secret in or below it
+  for (const c of [`cd ${clean} && grep -rn x .`, `cd "${clean}"; grep -r x .`, 'cd ../CASTLE/docs/decisions && rg x', `pushd ${clean} && grep -rn x . && popd`,
+    `cd /d ${clean} && grep -r x .`, `Set-Location ${clean}; Select-String -Path * -Pattern x`, `cd ${clean} && cat ADR.md`])
+    assert.equal(sh(c), 0, c);
+  for (const c of [`cd ${clean} && cd ../.. && grep -r x .`, 'cd kernel && grep -rn x ..', `cd ${clean} && cat ../../vault/k.txt`,
+    `cd ${clean} && cd ${r}/CASTLE && cat vault/k.txt`, 'cd $CELLKIT_UNSET_X && grep -rn x .', 'cd %CELLKIT_UNSET_X% && grep -r x .', 'cd ~ && rg x', 'git status && rg x',
+    `cd ${clean} && cd $CELLKIT_UNSET_X && grep -r x .`, 'cd kernel && cat ../.env', `pushd ${clean} && popd && grep -rn x .`])
+    assert.equal(sh(c), 2, c);                                                 // a cd it can't judge ($x, %x%, ~): judged from the session's folder, as before
+  if (process.platform === 'win32') {
+    const msys = r.replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`);
+    assert.equal(sh(`cat ${msys}/APP/.env`), 2);
+    assert.equal(sh(`cat ${msys}/CASTLE/vault/k.txt`), 2);
+    assert.equal(sh(`grep -rn x ${msys}/CASTLE/docs/decisions`), 0);
+    assert.equal(sh(`grep -rn x ${msys}/CASTLE`), 2);
+    assert.equal(sh(`cd ${msys}/CASTLE/docs/decisions && grep -rn x .`), 0);
+    assert.equal(sh(`cd ${msys}/APP && grep -rn x .`), 2);
+  }
+});

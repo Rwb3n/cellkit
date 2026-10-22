@@ -38,17 +38,59 @@ export function simpleCommands(command: string): string[][] {
 
 const LAST = /^(cp|mv|copy|move|cpi|mi|copy-item|move-item|ln)$/i;
 const ALL = /^(rm|rmdir|touch|mkdir|tee|truncate|del|erase|rd|ri|remove-item|ni|new-item|sc|set-content|ac|add-content|clear-content|out-file|ren|rename|rename-item|unlink)$/i;
+export const CD = /^(cd|set-location|sl|chdir|pushd)$/i;
 
-// The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]
-export function writeTargets(command: string): { cd?: string; target?: string }[] {
-  const out: { cd?: string; target?: string }[] = [];
+// $X, ${X}, %X%, $env:X from the environment (an unset one stays as written, so it still reads as unjudgeable)
+export const expandEnv = (s: string) => s.replace(/\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m);
+
+// git's own options before the subcommand (#1, AI-MMO 1e39484): the subcommand's words, and the folders its paths may
+// be relative to. -C <dir> moves the folder as git does (each relative to the one before); --work-tree adds the work
+// tree, --git-dir the folder holding it (a pathspec is relative to the cwd inside the work tree, to its top outside it:
+// both are checked). '' is the shell's own folder. Never throws: an unknown option just advances, a missing value is ''.
+const GIT_VALUED = /^(-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--exec-path|--attr-source)$/;
+export function gitGlobals(args: string[]): { rest: string[]; bases: string[] } {
+  const join = (base: string, d: string) => {
+    let s = expandEnv(d).replaceAll('\\', '/');
+    if (process.platform === 'win32') s = s.replace(/^\/([a-zA-Z])(\/|$)/, '$1:/');
+    return posix.normalize(/^([a-zA-Z]:)?\//.test(s) || !base ? s : `${base}/${s}`);
+  };
+  let at = '', i = 0;
+  const extra: string[] = [];
+  while (i < args.length && args[i].startsWith('-') && args[i] !== '--') {
+    const a = args[i], eq = a.indexOf('=');
+    let name = eq > 0 ? a.slice(0, eq) : a, value = eq > 0 ? a.slice(eq + 1) : '';
+    if (a === '-C' || (GIT_VALUED.test(name) && eq < 0)) { value = args[i + 1] ?? ''; i += 2; }
+    else if (a.startsWith('-C') && a.length > 2) { name = '-C'; value = a.slice(2); i++; }   // -C<dir>, as git reads it
+    else i++;
+    if (!value) continue;
+    if (name === '-C') at = join(at, value);
+    else if (name === '--work-tree') extra.push(join(at, value));
+    else if (name === '--git-dir') extra.push(posix.dirname(join(at, value)));
+  }
+  if (args[i] === '--') i++;
+  return { rest: args.slice(i), bases: [...new Set([at, ...extra])] };
+}
+
+// The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
+// git's checkout, restore, rm or mv writes, already joined to the folder git's own options name.
+export function writeTargets(command: string): { cd?: string; target?: string; git?: boolean }[] {
+  const out: { cd?: string; target?: string; git?: boolean }[] = [];
   for (const words of simpleCommands(command)) {
     for (let i = 0; i < words.length; i++) if (/^(\d|&)?>>?$/.test(words[i]) && words[i + 1]) out.push({ target: words[i + 1] });
     const ws = words.filter((w, i) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(words[i - 1] ?? ''));
     const [verb, ...args] = ws;
     if (!verb) continue;
     const plain = args.filter((a) => !/^-/.test(a));
-    if (/^(cd|set-location|sl|chdir|pushd)$/i.test(verb) && plain[0]) out.push({ cd: plain[0] });
+    if (CD.test(verb) && plain[0]) out.push({ cd: plain[0] });
+    else if (/^git(\.exe)?$/i.test(verb)) {
+      const { rest, bases } = gitGlobals(args);
+      const [sub = '', ...gargs] = rest;
+      // index only: rm --cached, restore --staged (-S) without --worktree (-W); neither touches a file
+      const indexOnly = gargs.some((a) => /^(--cached|--staged|-S)$/.test(a)) && !gargs.some((a) => /^(--worktree|-W)$/.test(a));
+      if (/^(checkout|restore|rm|mv)$/i.test(sub) && !indexOnly)
+        for (const p of gargs.filter((a) => !a.startsWith('-')))
+          for (const b of bases) out.push({ target: b ? posix.normalize(/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) ? p : `${b}/${p}`) : p, git: true });
+    }
     else if (LAST.test(verb) && plain.length) out.push({ target: plain.at(-1)! });
     else if (ALL.test(verb)) for (const a of plain) out.push({ target: a });
     else if (verb === 'sed' && args.some((a) => /^-i/.test(a)) && plain.length) out.push({ target: plain.at(-1)! });

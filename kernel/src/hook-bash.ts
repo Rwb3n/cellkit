@@ -21,7 +21,7 @@ import { existsSync } from 'node:fs';
 import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
-import { basename, resolve } from 'node:path';
+import { basename, posix, resolve } from 'node:path';
 import { outside, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
 
@@ -89,8 +89,8 @@ function kernelOwned(c: string): string | null {
 const redirect = /(^|[^=\-0-9])>>?(?![&=])/;
 const verbs = /(\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b|(^|[;|&({]\s*)(del|erase|ri|copy|move|ren|sc|ac)\s|\[(System\.)?IO\.File\]::)/i;
 const writes = { test: (c: string) => redirect.test(c.replace(/"[^"]*"|'[^']*'/g, '""')) || verbs.test(c) };
-// `git rm --cached` only untracks; it never changes or deletes the files themselves.
-const viaKernel = /kernel[\\/](src[\\/](cli|mail)\.ts|scripts[\\/])|^\s*git\s+rm\s+(-r\s+)?--cached\b/;
+// `git rm --cached` only untracks; it never changes or deletes the files themselves (git's own options may come first).
+const viaKernel = /kernel[\\/](src[\\/](cli|mail)\.ts|scripts[\\/])|^\s*git(\s+(-C|-c|--git-dir|--work-tree)\s+\S+|\s+-\S+)*\s+rm\s+(-r\s+)?--cached\b/;
 const project = process.env.CLAUDE_PROJECT_DIR ?? '';
 if (project && existsSync(`${project}/binding.json`)
   && (writes.test(command) || /\bgit\b/.test(command) || /cli\.ts["']?\s+(?!fold\b|lint\b|review\s+list\b)\S/.test(command))) {
@@ -118,6 +118,21 @@ if (owned && writes.test(command) && !viaKernel.test(command)) {
   const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)
     && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
   if (!proposedOnly) block(`that command writes ${owned}, which is kernel-owned (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it.`);
+}
+// git's checkout, restore, rm and mv write their paths, read through git's own options (-C, --work-tree, --git-dir: #1).
+// Their text has no write verb, so the check above never saw them (`git checkout -- docs/assumptions.md` passed). A
+// folder or pathspec that holds a kernel-owned path writes it too: `.`, `docs`, `state/log`, `cells/<x>`, `*.md`.
+function holdsOwned(target: string): boolean {
+  let p = norm(target);
+  for (const r of roots) if (p === r) p = '.'; else if (p.startsWith(`${r}/`)) p = p.slice(r.length + 1);
+  if (/^([a-z]:)?\//.test(p)) return false;                                  // elsewhere on the disk
+  p = posix.normalize(p.replace(/(^|\/)[^/]*[*?[].*$/, '') || '.').replace(/\/+$/, '');   // a glob: the folder it starts in
+  return /^(\.\.\/)*(\.|\.\.|docs|state|state\/(log|views|bedrock)|cells|cells\/[\w.-]+(\/state(\/(log|views|bedrock))?)?)$/.test(p);
+}
+for (const t of writeTargets(command)) {
+  if (!t.git || /state[\\/]bedrock[\\/]proposed[\\/]/i.test(t.target!)) continue;
+  if (kernelOwned(t.target!) || holdsOwned(t.target!))
+    block(`that command writes ${t.target} (git restores or removes it), which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
 }
 } catch (e) {
   block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);

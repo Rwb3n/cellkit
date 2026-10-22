@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+**Guards**
+- **git's restores are writes** (#1). `git checkout -- docs/assumptions.md`, `git restore …` and `git checkout HEAD -- state/log/…` passed the shell guard: their text has no write verb. They are refused now, as are the same commands behind git's own options (`-C <dir>`, `-C<dir>`, `--work-tree`, `--git-dir`, `-c k=v`, `--no-pager`), which AI-MMO found passing its port (1e39484). So is a folder or pathspec that holds a kernel-owned path (`git checkout -- .`, `git restore state/log`, `"*.md"`): name the files you mean. Index-only forms stay open (`rm --cached`, `restore --staged`). The same git paths count for the project's own guarded paths (`guards.json` `protected`) and, in a cell, against its boundary.
+- **The read guard follows `cd`, and `/d/x` is `D:/x` on Windows** (#1). `cd <another repo> && grep -r …` was judged against this project's `.env` (apify-actor-dev, callsheet); a Git Bash path was read as a folder of the project. A `cd` it can't judge (`$x`, `%x%`, `~`) is judged from the session's folder, as before.
+
+**Upgrading a project:** nothing to run. A session that restored a generated file with `git checkout --`, or discarded everything with `git checkout -- .`, now gets a refusal: regenerate with `node kernel/src/cli.ts fold`, and restore other files by name.
+
 ## v0.3 — the field survey (2026-10-18)
 
 What SF-DEV, AI-MMO, callsheet, 01-HAIOS-PERS, project-archivist and live-stream-setup ran into (`maintainer/notes/`, `maintainer/backlog.md`).

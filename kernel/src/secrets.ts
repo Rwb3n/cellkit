@@ -7,6 +7,7 @@
 //     folder, * matches within one name. Case-insensitive.
 import { existsSync, statSync } from 'node:fs';
 import { posix } from 'node:path';
+import { CD, expandEnv, simpleCommands } from './shell.ts';
 
 export interface Hit { path: string; why: string }
 export interface Unreadable { path: string; why: string }
@@ -31,8 +32,12 @@ const entryRe = (p: string) => {
   return new RegExp(`(^|/)${body}(/|$)`, 'i');
 };
 
+// Git Bash's /d/x is D:/x on Windows (#1: callsheet's /d/PROJECTS/vein was read as a folder of the project); elsewhere
+// /d/x is a real path.
+const drive = (s: string) => process.platform === 'win32' ? s.replace(/^\/([a-zA-Z])(\/|$)/, '$1:/') : s;
+
 export function absPath(p: string, cwd: string): string {
-  const s = norm(p.trim().replace(/^["']|["']$/g, ''));
+  const s = drive(norm(p.trim().replace(/^["']|["']$/g, '')));
   return /^[a-zA-Z]:\//.test(s) || s.startsWith('/') ? posix.normalize(s) : posix.normalize(`${norm(cwd)}/${s}`);
 }
 
@@ -92,8 +97,19 @@ const readPrimitive = /readFileSync|readFile\(|createReadStream|ReadAllText|Read
 const searchVerb = /^\s*(rg(?=\s|$)|e?grep\s(?:[^\n]*\s)?-[a-zA-Z]*[rR]|findstr\s(?:[^\n]*\s)?\/s\b|Select-String\b)/i;
 const narrowedSearch = /(--glob|\s-g\s|--include|--type|\s-t\s)/;
 
-export function shellRefusal(command: string, cwd: string, own: Unreadable[] = []): string | null {
+// A `cd` moves the folder later segments are judged from (#1: `cd <another repo> && grep -r …` was judged against this
+// project). One it can't judge ($x, %x%, ~, `…`) goes back to the session's folder, as before.
+export function shellRefusal(command: string, session: string, own: Unreadable[] = []): string | null {
+  let cwd = session;
   for (const seg of command.split(/;|&&?|\|\|?|\n/)) {
+    const words = simpleCommands(seg)[0] ?? [];
+    if (/^popd$/i.test(words[0] ?? '')) { cwd = session; continue; }        // back where it was: judged from the session's folder
+    if (CD.test(words[0] ?? '')) {
+      const args = words.slice(1).filter((w) => !/^-/.test(w));
+      const to = expandEnv(args.length > 1 && /^\/d$/i.test(args[0]) ? args[1] : args[0] ?? '');   // cmd's `cd /d D:\x`; Git Bash's `cd /d` is D:/
+      if (to) cwd = /[$%~`]/.test(to) ? session : absPath(to, cwd);
+      continue;
+    }
     const unquoted = seg.replace(/"[^"]*"|'[^']*'/g, '""');
     if (!startsRead.test(unquoted) && !readPrimitive.test(seg)) continue;
     const tokens = seg.split(/[\s()<>`,=]+/).map((t) => t.replace(/^["'@]+|["')]+$/g, '').replace(/^["']|["']$/g, '')).filter((t) => t && !t.startsWith('-'));

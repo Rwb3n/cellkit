@@ -96,6 +96,8 @@ test('guards.json: a project adds operator-only commands and protected paths wit
   assert.equal(sh('cat docs/portfolio/holdings.md'), 0);
   assert.equal(sh('rm docs/models/trace.md'), 2);
   assert.equal(sh('rm docs/models/trace.md.bak'), 0);
+  assert.equal(sh('git -C . checkout -- docs/models/trace.md'), 2);           // git's writes too (#1)
+  assert.equal(sh('git restore --staged docs/models/trace.md'), 0);
   assert.equal(sh('echo {} > state/bedrock/guards.json'), 2);                 // the guards are bedrock
   assert.equal(sh('cp draft.json state/bedrock/proposed/guards.json'), 0);    // …proposed like any bedrock doc
   assert.equal(sh('cat state/bedrock/guards.json'), 0);
@@ -115,8 +117,8 @@ test('guards.json: a project adds operator-only commands and protected paths wit
   assert.equal(shellIn('', 'ls', { CELLKIT_CONFIG: `${root}/missing.json` }), 0);   // none: no project guards
 });
 
-const shellOut = (command: string, env: Record<string, string> = {}) =>
-  spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', ...env }, encoding: 'utf8' });
+const shellOut = (command: string, env: Record<string, string> = {}, cwd?: string) =>
+  spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd, tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', ...env }, encoding: 'utf8' });
 
 test('shell guard: kernel-owned only as a path from the repo or a cell root; the refusal names the path', () => {
   assert.equal(tryShell('mkdir -p test/fixtures/PM/state/views && echo {} > test/fixtures/PM/state/views/a.json'), 0);   // a fixture (SF-DEV)
@@ -129,6 +131,44 @@ test('shell guard: kernel-owned only as a path from the repo or a cell root; the
   assert.equal(tryShell('echo x > ../other/state/log/000009.claim.json'), 2);              // a sibling cell's
   assert.equal(tryShell(`echo x > ${process.cwd().replaceAll('\\', '/')}/state/log/000009.claim.json`), 2);   // the repo, absolute
   assert.equal(tryShell(`echo x > ${process.cwd().replaceAll('\\', '/')}/cells/demo/state/views/s.json`), 2);
+});
+
+test('shell guard: git checkout, restore, rm and mv write their paths, read through git\'s own options (#1)', () => {
+  // Before #1 the bare `git checkout -- docs/assumptions.md` passed (no write verb in the text), and every form behind
+  // git's options (-C <dir>, --work-tree, --git-dir, -c, --no-pager) did too. AI-MMO 1e39484 (test_hooks.py).
+  const r = mkdtempSync(join(tmpdir(), 'cellkit-git-')).replaceAll('\\', '/');
+  const sh = (command: string, cwd = r) => shellOut(command, { CLAUDE_PROJECT_DIR: r }, cwd);
+  const owned = ['docs/assumptions.md', 'state/log/000009.claim.json', 'state/views/summary.json', 'state/bedrock/ontology.md'];
+  const bare = owned.flatMap((p) => ['checkout --', 'restore', 'rm', 'checkout HEAD --', 'restore --source HEAD --staged --worktree'].map((sub) => `git ${sub} ${p}`));
+  const prefixes = [`-C ${r}`, `-C "${r}"`, '-C .', `-C ${r}/docs -C ..`, `-C${r}`, '--no-pager', '-c core.autocrlf=false',
+    `-C /nowhere --work-tree=${r}`, `-C /nowhere --work-tree ${r}`, `--git-dir=${r}/.git`, '-C $CLAUDE_PROJECT_DIR', '-C ${CLAUDE_PROJECT_DIR}'];
+  const refused = [...bare, ...bare.flatMap((c) => prefixes.map((pre) => c.replace('git ', `git ${pre} `))),
+    `git -C ${r}/docs checkout -- assumptions.md`, 'git -C docs restore assumptions.md', 'git mv notes.md docs/assumptions.md',
+    `cd /nowhere && git -C ${r} checkout -- docs/assumptions.md`, `git status && git -C ${r} checkout -- state/log/000001.observation.json`,
+    // a folder or pathspec that holds them: the usual discard-everything forms
+    'git checkout -- .', 'git checkout .', 'git restore .', 'git restore ./', 'git checkout -- state', 'git restore state/log', 'git restore state/views/',
+    'git checkout -- docs', `git -C ${r} checkout -- .`, `git checkout -- ${r}`, `git -C ${r}/kernel checkout -- ..`, 'git checkout -- "*.md"',
+    'git restore -- state/*', 'git checkout -- cells/demo', 'git restore cells/demo/state/log', 'git checkout HEAD~1 -- .'];
+  for (const c of refused) {
+    const out = sh(c);
+    assert.equal(out.status, 2, c);
+    assert.match(out.stderr, /kernel-owned/, c);
+  }
+  for (const c of ['git status', `git -C ${r} status`, `git -C ${r} rm --cached state/views/summary.json`, 'git rm -r --cached state/views',
+    'git restore --staged docs/assumptions.md', 'git restore -S state/log/000009.claim.json', `git -C ${r} log -- docs/assumptions.md`,
+    `git -C ${r} -c x=y diff state/log`, 'git -C /nowhere checkout -- docs/assumptions.md', `git -C ${r} checkout -- docs/notes.md`,
+    'git checkout -- state/bedrock/proposed/ontology.md', 'git checkout main && cat docs/assumptions.md', 'git -C', 'git -c', 'git --work-tree',
+    'git checkout -- kernel', 'git restore docs/notes.md', 'git checkout -- cells/demo/exit', 'git restore "kernel/*.ts"', 'git checkout -b feature',
+    'git checkout -', 'git rm -r --cached .', `git checkout -- /nowhere/state/log`])
+    assert.equal(sh(c).status, 0, c);
+  // in a cell, git's writes count against the boundary too
+  const cell = `${r}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  assert.equal(shellIn(cell, 'git checkout -- exit/report.md'), 0);
+  assert.equal(shellIn(cell, 'git checkout main'), 0);
+  assert.equal(shellIn(cell, 'git checkout -- ../../kernel/src/log.ts'), 2);
+  assert.equal(shellIn(cell, 'git -C ../.. restore kernel/src/log.ts'), 2);
 });
 
 test('guards fail closed: a check that throws, or input they can\'t read, refuses', () => {
