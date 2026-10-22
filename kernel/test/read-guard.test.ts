@@ -100,6 +100,28 @@ test('read guard: the shell reads by act, not by text', () => {
   assert.equal(sh('cat vault/k.txt', `${r}/CASTLE`), 2);                       // relative, from inside the workspace
 });
 
+test('read guard: a pattern, a message or a heredoc written to a file is text, not a read (#2)', () => {
+  // root 2026-10-22 (a grep whose pattern named the secrets file), apify-actor-dev 1a–c (a script written by heredoc,
+  // a sed replacement), SF-DEV S5. What runs is still judged: interpreters reading code from stdin, -c strings, $(…).
+  const { root: r, cfg } = world();
+  const sh = (command: string, cwd = `${r}/APP`) => run('hook-bash.ts', { cwd, tool_input: { command } }, cfg);
+  for (const c of ['grep -nE "\\.env|secrets" kernel/src/a.ts', "grep -n '.env' kernel/src/a.ts", 'rg "\\.env" kernel', 'rg -e .env -t ts kernel',
+    "sed -i 's/CONFIG/.env/' kernel/src/a.ts", 'sed -n "/.ssh/p" kernel/src/a.ts', "awk '/vault\\/k.txt/' kernel/src/a.ts", 'Select-String -Pattern ".env" -Path kernel/src/a.ts',
+    'git commit -m "readFileSync(.env) is gone"', 'git commit -m "a; cat .env"', "git commit -m 'never `cat .env` or $(cat .env)'",
+    "cat > tools/set-env.py <<'EOF'\nimport os\nprint(open(os.path.join(root, '.env')).read())\nEOF",
+    "cat > notes.md <<EOF\ncat .env\nEOF", "node kernel/src/mail.ts send --to x --file - <<'EOF'\nnever cat .env\nEOF",
+    "python - > out.md <<'EOF'\nprint(open('kernel/src/a.ts').read())\nEOF", 'grep -rn x kernel/src/a.ts', 'Select-String -Pattern x -Path kernel/src/a.ts'])
+    assert.equal(sh(c), 0, c);                                                 // a search given files reads those files only
+  assert.equal(sh('grep -rn x kernel/src/a.ts .'), 2);
+  for (const c of ['cat ".env"', 'grep KEY .env', 'grep -e KEY .env', 'rg -e KEY -- .env', 'sed -n 1p .env', 'awk 1 .env', 'Select-String -Pattern KEY -Path .env',
+    'node -e "console.log(require(\'fs\').readFileSync(\'.env\',\'utf8\'))"', 'python -c "print(open(\'.env\').read())"',
+    "python - <<'EOF'\nprint(open('.env').read())\nEOF", "python3 -u - <<'EOF'\nprint(open('.env').read())\nEOF",
+    "node --input-type=module - <<'EOF'\nimport fs from 'node:fs'; fs.readFileSync('.env')\nEOF", "bash <<'EOF'\ncat .env\nEOF", 'bash -c "cat .env"', "pwsh -Command 'Get-Content .env'",
+    'echo "$(cat .env)"', 'x=$(cat .env)', 'echo `cat .env`', 'git commit -m "never `cat .env`"', '$k = Get-Content .env', 'git commit -m "x" && cat .env',
+    'grep -f .env kernel/src/a.ts', 'cmd /c "type .env"'])
+    assert.equal(sh(c), 2, c);
+});
+
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
   // apify-actor-dev and callsheet: `cd <another repo> && grep -r …` was judged against this project's .env, and
   // /d/PROJECTS/x was read as relative to the project.

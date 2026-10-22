@@ -22,7 +22,7 @@ import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
 import { basename, posix, resolve } from 'node:path';
-import { gitGlobals, outside, simpleCommands, writeTargets } from './shell.ts';
+import { acts, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
 
 let raw = '';
@@ -91,7 +91,10 @@ function kernelOwned(c: string): string | null {
 // A redirect is never inside quotes: `>` in "a <b@c.com>" or node -e "a > b" is text, so look for it with quoted parts blanked.
 const redirect = /(^|[^=\-0-9])>>?(?![&=])/;
 const verbs = /(\bsed\s+-i|\btee\b|\bcp\b|\bmv\b|\brm\b|\btruncate\b|\bdd\b|writeFileSync|unlinkSync|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b|(^|[;|&({]\s*)(del|erase|ri|copy|move|ren|sc|ac)\s|\[(System\.)?IO\.File\]::)/i;
-const writes = { test: (c: string) => redirect.test(c.replace(/"[^"]*"|'[^']*'/g, '""')) || verbs.test(c) };
+const writes = { test: (c: string) => redirect.test(c.replace(/"[^"]*"|'[^']*'/g, '""')) || verbs.test(c) || writePrimitive.test(c) };
+// What the command does, not text it carries (#2): quoted text blanked unless it is a target or code, data heredocs dropped,
+// what runs inside (-c strings, $(…), shell-fed heredocs) appended. The operator's acts above stay mention-strict.
+const act = acts(command);
 // `git rm --cached` only untracks; it never changes or deletes the files themselves (git's own options may come first).
 const viaKernel = /kernel[\\/](src[\\/](cli|mail)\.ts|scripts[\\/])|^\s*git(\s+(-C|-c|--git-dir|--work-tree)\s+\S+|\s+-\S+)*\s+rm\s+(-r\s+)?--cached\b/;
 const project = process.env.CLAUDE_PROJECT_DIR ?? '';
@@ -109,17 +112,17 @@ if (project && existsSync(`${project}/binding.json`)) {
 // every mention: a commit message or mail body that names a protected path is not a write.
 const targets = writeTargets(command).flatMap((t) => (t.target ? [t.target] : []));
 const scriptWrite = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|\[(System\.)?IO\.File\]::/i;
-const hits = (re: RegExp) => targets.some((t) => re.test(t)) || (scriptWrite.test(command) && re.test(command));
+const hits = (re: RegExp) => targets.some((t) => re.test(t)) || (scriptWrite.test(act) && re.test(act));
 if (project && existsSync(`${project}/binding.json`) && hits(/(^|[\\/\s"'=])binding\.json(?![\w.-])/i))
   block('binding.json is this cell\'s domain, set by root (node kernel/src/cli.ts cell rebind, logged). If it should change, say what and why in your reply.');
 const guarded = config.protected.find((g) => hits(g.re));
 if (guarded && !config.writers.some((w) => w.test(command)))
   block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (bedrock guards.json).`);
 
-const owned = kernelOwned(command);
-if (owned && writes.test(command) && !viaKernel.test(command)) {
-  const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(command) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(command)
-    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(command.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
+const owned = kernelOwned(act);
+if (owned && writes.test(act) && !viaKernel.test(command)) {
+  const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(act) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(act)
+    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(act.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
   if (!proposedOnly) block(`that command writes ${owned}, which is kernel-owned (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it.`);
 }
 // git's checkout, restore, rm and mv write their paths, read through git's own options (-C, --work-tree, --git-dir: #1).
@@ -135,16 +138,17 @@ function holdsOwned(target: string): boolean {
 }
 // A native worktree's branch (worktree-*) never goes into another branch (#48): its work reaches main through cell land
 // (audit, test check) or root's own commits. Merge, pull, cherry-pick, rebase and reset onto it are refused.
-for (const words of simpleCommands(command)) {
+for (const words of commandsRun(command)) {
   if (!/^git(\.exe)?$/i.test(words[0] ?? '')) continue;
   const [sub = '', ...args] = gitGlobals(words.slice(1)).rest;
   const side = /^(merge|pull|cherry-pick|rebase|reset)$/i.test(sub) && args.find((a) => !a.startsWith('-') && /(^|[/.])worktree-[\w.-]/i.test(a));
   if (side) block(`${side} is a branch of Claude Code's own worktree (.claude/worktrees/): its work reaches main only through cell land or root's own commits, never a merge of the branch. Turn the change into a cell task, or redo it as a commit on main. If the operator wants this merge, they run it from their prompt.`);
 }
+// Every write target, quoted or not (#2: the text check above no longer sees inside quotes): `cp a "state/log/x"`.
 for (const t of writeTargets(command)) {
-  if (!t.git || /state[\\/]bedrock[\\/]proposed[\\/]/i.test(t.target!)) continue;
-  if (kernelOwned(t.target!) || holdsOwned(t.target!))
-    block(`that command writes ${t.target} (git restores or removes it), which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
+  if (/state[\\/]bedrock[\\/]proposed[\\/]/i.test(t.target ?? '') || !t.target) continue;
+  if (t.git ? kernelOwned(t.target) || holdsOwned(t.target) : kernelOwned(t.target) && !viaKernel.test(command))
+    block(`that command writes ${t.target}${t.git ? ' (git restores or removes it)' : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it${t.git ? ', or name the files you mean' : ''}.`);
 }
 } catch (e) {
   block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);

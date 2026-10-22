@@ -7,7 +7,7 @@
 //     folder, * matches within one name. Case-insensitive.
 import { existsSync, statSync } from 'node:fs';
 import { posix } from 'node:path';
-import { CD, expandEnv, simpleCommands } from './shell.ts';
+import { CD, expandEnv, parts, PATTERNED, segments, simpleCommands, verbOf } from './shell.ts';
 
 export interface Hit { path: string; why: string }
 export interface Unreadable { path: string; why: string }
@@ -88,21 +88,55 @@ export function grepRefusal(i: { path?: string; glob?: string; type?: string; ou
   return t ? `a content search of ${absPath(where, cwd)} would read ${t.path} (${t.why}). Narrow it with glob or type, search a subfolder, or use output_mode files_with_matches.` : null;
 }
 
-// The shell, one simple command at a time (split at ; & | and newlines). A segment reads when it starts with a read
-// verb, or holds a read primitive (node -e "…readFileSync…", python's open()). Only a reading segment's path tokens
-// count, quoted or not: a commit message naming .ssh is text, `cat ".env"` is a read.
+// The shell, one simple command at a time, split outside quotes (#2). A segment reads when it starts with a read verb, or
+// holds a read primitive outside quotes (`$k = Get-Content .env`). Program code an interpreter runs (node -e, python -c,
+// `python - <<EOF`) reads when it holds a read primitive; what runs in a shell string, $(…), backticks or a shell-fed
+// heredoc is judged as commands; a heredoc a program reads as data (`cat > f <<EOF`) is text. Only a reading segment's
+// path tokens count, quoted or not, less a search's pattern or a sed/awk script: a commit message naming .ssh is text,
+// `cat ".env"` is a read.
 const verbs = 'cat|type|gc|Get-Content|head|tail|less|more|grep|egrep|rg|findstr|Select-String|sed|awk|cp|copy|Copy-Item|scp|rsync|tar|zip|7z|base64|xxd|od|strings|source|Import-Csv|Get-FileHash';
 const startsRead = new RegExp(String.raw`^\s*(?:sudo\s+|npx\s+)?(?:${verbs})(?=\s|$)`, 'i');
 const readPrimitive = /readFileSync|readFile\(|createReadStream|ReadAllText|ReadAllBytes|ReadAllLines|read_text|read_bytes|\bopen\(|Get-Content/i;
 const searchVerb = /^\s*(rg(?=\s|$)|e?grep\s(?:[^\n]*\s)?-[a-zA-Z]*[rR]|findstr\s(?:[^\n]*\s)?\/s\b|Select-String\b)/i;
 const narrowedSearch = /(--glob|\s-g\s|--include|--type|\s-t\s)/;
 
+const quoted = /"[^"]*"|'[^']*'/g;
+const tokensOf = (s: string) => s.split(/[\s()<>`,=]+/).map((t) => t.replace(/^["'@]+|["')]+$/g, '').replace(/^["']|["']$/g, '')).filter((t) => t && !t.startsWith('-'));
+
+// A search's pattern, or sed's and awk's script, is text, not a path (#2: `grep -n "\.env" src/a.ts`): the first operand,
+// or each -e / --regexp / -Pattern value. An option's value that is a file (-f, -Path) stays.
+function withoutPattern(seg: string): string {
+  const words = simpleCommands(seg)[0] ?? [];
+  const { verb, i } = verbOf(words);
+  if (!PATTERNED.test(verb)) return seg;
+  const pats: string[] = [];
+  let explicit = false, operand = false;
+  for (let j = i + 1; j < words.length; j++) {
+    const w = words[j];
+    if (/^(-e|--regexp|--expression|-pattern)$/i.test(w)) { explicit = true; if (j + 1 < words.length) pats.push(words[++j]); continue; }
+    if (/^(--regexp|--expression|-pattern)=/i.test(w)) { explicit = true; pats.push(w.slice(w.indexOf('=') + 1)); continue; }
+    if (/^(-[ABCmgtTdf]|--(file|glob|type|type-not|max-count|after-context|before-context|context|include|exclude|max-depth)|-(path|literalpath|include|exclude|encoding))$/i.test(w)) { j++; continue; }
+    if (w.startsWith('-') || operand) continue;
+    operand = true;
+    if (!explicit) pats.push(w);
+  }
+  let out = seg, from = seg.indexOf(words[i]) + (words[i]?.length ?? 0);
+  for (const pat of pats) {
+    for (const form of [`"${pat}"`, `'${pat}'`, pat]) {
+      const k = out.indexOf(form, from);
+      if (k >= 0 && form) { out = out.slice(0, k) + out.slice(k + form.length); from = k; break; }
+    }
+  }
+  return out;
+}
+
 // A `cd` moves the folder later segments are judged from (#1: `cd <another repo> && grep -r …` was judged against this
 // project). One it can't judge ($x, %x%, ~, `…`) goes back to the session's folder, as before.
-export function shellRefusal(command: string, session: string, own: Unreadable[] = []): string | null {
+export function shellRefusal(command: string, session: string, own: Unreadable[] = [], depth = 0): string | null {
+  const p = parts(command);
   let cwd = session;
-  for (const seg of command.split(/;|&&?|\|\|?|\n/)) {
-    const words = simpleCommands(seg)[0] ?? [];
+  for (const raw of segments(p.text)) {
+    const words = simpleCommands(raw)[0] ?? [];
     if (/^popd$/i.test(words[0] ?? '')) { cwd = session; continue; }        // back where it was: judged from the session's folder
     if (CD.test(words[0] ?? '')) {
       const args = words.slice(1).filter((w) => !/^-/.test(w));
@@ -110,20 +144,31 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
       if (to) cwd = /[$%~`]/.test(to) ? session : absPath(to, cwd);
       continue;
     }
-    const unquoted = seg.replace(/"[^"]*"|'[^']*'/g, '""');
-    if (!startsRead.test(unquoted) && !readPrimitive.test(seg)) continue;
-    const tokens = seg.split(/[\s()<>`,=]+/).map((t) => t.replace(/^["'@]+|["')]+$/g, '').replace(/^["']|["']$/g, '')).filter((t) => t && !t.startsWith('-'));
+    const unquoted = raw.replace(quoted, '""');
+    if (!startsRead.test(unquoted) && !readPrimitive.test(unquoted)) continue;
+    const tokens = tokensOf(withoutPattern(raw));
     for (const t of tokens) {
       const d = denied(t, cwd, own);
       if (d) return `that command reads ${d.path} (${d.why}): no session reads it. ${how}`;
     }
     if (searchVerb.test(unquoted) && !narrowedSearch.test(unquoted)) {
-      const dirs = tokens.slice(1).map((t) => absPath(t, cwd)).filter(isDir);
-      for (const dir of dirs.length ? dirs : [cwd]) {
+      const operands = tokens.slice(1);                                     // files or folders; none: the current folder
+      for (const dir of operands.length ? operands.map((t) => absPath(t, cwd)).filter(isDir) : [cwd]) {
         const h = treeHolds(dir, '', own);
         if (h) return `a recursive search of ${dir} would read ${h.path} (${h.why}). Search a subfolder, or narrow it (--include / --glob / -t).`;
       }
     }
+  }
+  for (const code of p.code) {
+    if (!readPrimitive.test(code)) continue;
+    for (const t of tokensOf(code)) {
+      const d = denied(t, cwd, own);
+      if (d) return `that command reads ${d.path} (${d.why}): no session reads it. ${how}`;
+    }
+  }
+  if (depth < 4) for (const s of p.shell) {
+    const r = shellRefusal(s, cwd, own, depth + 1);
+    if (r) return r;
   }
   return null;
 }

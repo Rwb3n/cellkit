@@ -71,11 +71,102 @@ export function gitGlobals(args: string[]): { rest: string[]; bases: string[] } 
   return { rest: args.slice(i), bases: [...new Set([at, ...extra])] };
 }
 
+// What a command does, not the text it carries (#2; SF-DEV S5, retro C8). A heredoc's body is text unless a shell or an
+// interpreter reads its program from it (`bash <<EOF`, `python - <<EOF`; not `cat > f <<EOF`, `git commit -F -`, or
+// `node script.ts <<EOF`, which reads it as data). What runs wherever it stands: command substitution ($(…), backticks;
+// not in single quotes), a shell's -c / -Command / cmd's /c string, eval's arguments, an interpreter's -e / -c code.
+const SHELLS = /^(bash|sh|zsh|dash|ksh|fish|pwsh|powershell|cmd|eval)(\.exe)?$/i;
+const INTERPRETERS = /^(node|nodejs|deno|bun|tsx|ts-node|python[\d.]*|py|pythonw|ruby|perl|php|rscript|osascript)(\.exe)?$/i;
+const REMOTE = /^(ssh|wsl|docker|podman|kubectl)(\.exe)?$/i;                  // their heredoc runs as commands elsewhere
+export const PATTERNED = /^(grep|egrep|fgrep|rg|findstr|sed|awk|gawk|select-string|sls)(\.exe)?$/i;
+const PREFIX = /^(sudo|env|time|command|nice|nohup|exec|npx|bunx|pnpx|[A-Za-z_]\w*=.*)$/i;
+
+// The verb of a simple command's words, past prefixes (sudo, env, npx, X=y), without its folder.
+export function verbOf(words: string[]): { verb: string; i: number } {
+  let i = 0;
+  while (i < words.length - 1 && PREFIX.test(words[i])) i++;
+  return { verb: (words[i] ?? '').replace(/^.*[\\/]/, ''), i };
+}
+
+// Simple commands as written (quotes kept), split at ; & | and newlines outside quotes.
+export function segments(s: string): string[] {
+  const out: string[] = [];
+  let cur = '', q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { cur += c; if (c === q) q = ''; continue; }
+    if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    if (c === ';' || c === '\n' || c === '|' || (c === '&' && s[i - 1] !== '>' && s[i + 1] !== '>')) {
+      out.push(cur); cur = '';
+      if (s[i + 1] === c) i++;
+      continue;
+    }
+    cur += c;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
+// How the command before a heredoc reads its body: as shell commands, as program code, or (null) as data.
+function reader(head: string): 'shell' | 'code' | null {
+  const words = simpleCommands(segments(head).at(-1) ?? '')[0] ?? [];
+  const { verb, i } = verbOf(words);
+  const args = words.slice(i + 1).filter((w, j, a) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(a[j - 1] ?? ''));
+  const script = args.find((w) => !w.startsWith('-'));
+  const ownProgram = !!script && /\.(c|m)?[jt]s$|\.(py|rb|pl|php|ps1|sh|bash)$/i.test(script);
+  if (SHELLS.test(verb)) return ownProgram ? null : 'shell';
+  if (INTERPRETERS.test(verb)) return ownProgram ? null : 'code';
+  return REMOTE.test(verb) ? 'shell' : null;
+}
+
+// text: the command with data heredocs' bodies taken out (quotes kept). shell: strings that run as shell commands.
+// code: program code an interpreter runs. One level; callers recurse into shell.
+export function parts(command: string): { text: string; shell: string[]; code: string[] } {
+  const shell: string[] = [], code: string[] = [];
+  const heredoc = /<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2[ \t]*(?=\n|$)/g;
+  const text = command.replace(heredoc, (m: string, _q: string, _tag: string, body: string, off: number, all: string) => {
+    const kind = reader(all.slice(all.lastIndexOf('\n', off) + 1, off));
+    if (kind === 'shell') shell.push(body); else if (kind === 'code') code.push(body);
+    return m.slice(0, m.indexOf('\n'));
+  });
+  const unsingle = text.replace(/'[^']*'/g, (q) => ' '.repeat(q.length));
+  for (const m of unsingle.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) shell.push(m[1] ?? m[2]);
+  for (const seg of segments(text)) {
+    const words = simpleCommands(seg)[0] ?? [];
+    const { verb, i } = verbOf(words);
+    if (/^eval$/i.test(verb)) { shell.push(words.slice(i + 1).join(' ')); continue; }
+    if (SHELLS.test(verb)) {
+      const k = words.findIndex((w, j) => j > i && /^(-c|-command|\/c|\/k)$/i.test(w));
+      if (k > 0) shell.push(words.slice(k + 1).join(' '));
+      continue;
+    }
+    if (PATTERNED.test(verb) || /^git(\.exe)?$/i.test(verb)) continue;    // grep -e, sed -e, git commit -c: not code
+    for (let j = i + 1; j < words.length - 1; j++) if (/^(-e|--eval|-c|-p|--print|-E|-r)$/.test(words[j])) code.push(words[j + 1]);
+  }
+  return { text, shell, code };
+}
+
+// Writes in program code (SF-DEV): a quoted string or heredoc that holds one counts.
+export const writePrimitive = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|WriteAllText|WriteAllLines|AppendAllText|write_text|write_bytes|\bopen\([^)]*,\s*['"][wax]|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b/i;
+
+// The command as acts, for the text checks: quoted text blanked unless it holds a write primitive (code for a runner
+// parts() doesn't know: `deno eval "…"`) or substitutes a command; data heredocs dropped; what runs (shell strings, code
+// with a write primitive) appended, one per line. Write targets, quoted or not, are checked one by one (writeTargets).
+export function acts(command: string, depth = 0): string {
+  const p = parts(command);
+  const quoted = /"[^"]*"|'[^']*'/g;
+  const writesBare = writePrimitive.test(p.text.replace(quoted, '""'));
+  const kept = p.text.replace(quoted, (q: string) =>
+    writesBare || writePrimitive.test(q) || (q[0] === '"' && /\$\(|`/.test(q)) ? q : '""');
+  return [kept, ...(depth < 4 ? p.shell.map((s) => acts(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))].join('\n');
+}
+
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
-// git's checkout, restore, rm or mv writes, already joined to the folder git's own options name.
+// git's checkout, restore, rm or mv writes, already joined to the folder git's own options name. Data heredocs are text
+// (#2); what runs in a shell string or a shell-fed heredoc counts.
 export function writeTargets(command: string): { cd?: string; target?: string; git?: boolean }[] {
   const out: { cd?: string; target?: string; git?: boolean }[] = [];
-  for (const words of simpleCommands(command)) {
+  for (const words of commandsRun(command)) {
     for (let i = 0; i < words.length; i++) if (/^(\d|&)?>>?$/.test(words[i]) && words[i + 1]) out.push({ target: words[i + 1] });
     const ws = words.filter((w, i) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(words[i - 1] ?? ''));
     const [verb, ...args] = ws;
@@ -96,6 +187,12 @@ export function writeTargets(command: string): { cd?: string; target?: string; g
     else if (verb === 'sed' && args.some((a) => /^-i/.test(a)) && plain.length) out.push({ target: plain.at(-1)! });
   }
   return out;
+}
+
+// The simple commands a command runs (words, quotes taken off): its own, less data heredocs, then what runs inside it.
+export function commandsRun(command: string, depth = 0): string[][] {
+  const p = parts(command);
+  return [...simpleCommands(p.text), ...(depth < 4 ? p.shell.flatMap((s) => commandsRun(s, depth + 1)) : [])];
 }
 
 const norm = (p: string) => {

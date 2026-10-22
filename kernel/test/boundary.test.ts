@@ -133,6 +133,27 @@ test('shell guard: kernel-owned only as a path from the repo or a cell root; the
   assert.equal(tryShell(`echo x > ${process.cwd().replaceAll('\\', '/')}/cells/demo/state/views/s.json`), 2);
 });
 
+test('shell guard: it matches what a command does, not text it carries (#2)', () => {
+  // SF-DEV S5 (retro C8): a commit message, a mail body, a heredoc that is a message or only reads.
+  for (const c of ['git commit -q -m "maps.json and maps.md under state/views/ now" && git log -1', "git commit -F - <<'EOF'\nC3: state/views/maps.md is rebuilt\nEOF",
+    "python - > out.md <<'EOF'\nprint(open('state/bedrock/ontology.md').read())\nEOF", 'echo "see state/log/000001.observation.json" > notes.md',
+    'git commit -m "fix state/log/ handling" && rm build.tmp', "cat > notes.md <<EOF\nnode -e \"writeFileSync('state/log/x.json')\"\nEOF",
+    "cat > tools/fix.mjs <<'EOF'\nwriteFileSync('docs/assumptions.md', s)\nEOF", 'printf "%s" "state/views/ => rebuilt" > out.txt',
+    "cat > notes.md <<EOF\nrm state/views/x\necho y > state/log/z\nEOF"])
+    assert.equal(tryShell(c), 0, c);
+  // acts: still refused
+  for (const c of ['tee "state/log/000009.claim.json" < x', 'Set-Content -Path "state/log/000009.claim.json" -Value x', 'echo x > "state/log/000009.claim.json"',
+    'cp a.json "state/log/000009.claim.json"', 'mv "a.json" "state/views/s.json"', "python - <<'EOF'\nopen('state/log/000009.claim.json', 'w').write('x')\nEOF",
+    "bash <<'EOF'\necho x > state/log/000009.claim.json\nEOF", 'bash -c "rm state/views/summary.json"', 'node -e "require(\'fs\').writeFileSync(\'docs/assumptions.md\', \'x\')"',
+    '[IO.File]::WriteAllText("state/log/x.json", "x")', "node - <<'EOF'\nrequire('fs').rmSync('state/views/summary.json')\nEOF",
+    'cmd /c "del state\\views\\summary.json"', 'echo "x > state/log/000009.claim.json', 'echo "$(rm state/views/summary.json)"',
+    'deno eval "Deno.writeFileSync(\'state/log/000009.claim.json\', x)"'])
+    assert.equal(tryShell(c), 2, c);
+  // the operator's acts stay mention-strict: a wrapper could hide them
+  for (const c of ['bash -c "node kernel/src/cli.ts approve --doc x"', 'git commit -m "ran node kernel/src/cli.ts approve --doc x"'])
+    assert.equal(tryShell(c), 2, c);
+});
+
 test('shell guard: git checkout, restore, rm and mv write their paths, read through git\'s own options (#1)', () => {
   // Before #1 the bare `git checkout -- docs/assumptions.md` passed (no write verb in the text), and every form behind
   // git's options (-C <dir>, --work-tree, --git-dir, -c, --no-pager) did too. AI-MMO 1e39484 (test_hooks.py).
