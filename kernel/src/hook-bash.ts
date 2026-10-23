@@ -167,12 +167,16 @@ for (const t of [...writeTargets(command), ...codeTargets(act)]) {
     continue;
   }
   if (!t.target || /state[\\/]bedrock[\\/]proposed([\\/]|$)/i.test(t.target)) continue;   // staging a proposal is anyone's
-  const joined = t.git || !base || /^([a-zA-Z]:)?[\\/]/.test(t.target) ? t.target : posix.join(base, t.target.replaceAll('\\', '/'));
+  const joined = !base || /^([a-zA-Z]:)?[\\/]/.test(t.target) ? t.target : posix.join(base, t.target.replaceAll('\\', '/'));
   // Git Bash's /d/x is D:/x on Windows (as the read guard reads it): `cd /d/PROJECTS/x && rm -rf state/views` passed
   const p = process.platform === 'win32' ? joined.replace(/^\/([a-zA-Z])(\/|$)/, '$1:/') : joined;
+  // a reset moves the whole checkout, wherever in it it runs: refused unless it runs in another repository (#3)
+  if (t.reset && (!/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) || roots.some((r) => norm(p) === r || norm(p).startsWith(`${r}/`))))
+    block(`git reset ${t.reset} moves this checkout back: the commits after ${t.reset.split(' ')[1]} leave the branch, and the log entries in them with it (AI-MMO lost 10 that way). Undo a commit with git revert (a landing: git revert -m 1 <merge>); if the operator wants the reset, they run it from their prompt with "!".`);
+  if (t.reset) continue;
   const owned = t.git ? kernelOwned(p) || holdsOwned(p) : (kernelOwned(p) || kernelOwned(`${p}/`) || (t.removes && removesOwned(p))) && !viaKernel.test(command);
   if (owned)
-    block(`that command ${t.removes ? 'removes' : 'writes'} ${p}${t.git ? ' (git restores or removes it)' : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
+    block(`that command ${t.removes ? 'removes' : 'writes'} ${p}${t.git ? (t.removes ? ' (git clean or stash -u takes away what is not committed there, new log entries included)' : ' (git restores or removes it)') : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
 }
 } catch (e) {
   block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);

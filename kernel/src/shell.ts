@@ -167,7 +167,14 @@ export function acts(command: string, depth = 0): string {
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
 // git's checkout, restore, rm or mv writes, already joined to the folder git's own options name; `removes` one deleted
 // or moved away (rm, mv's sources). Data heredocs are text (#2); what runs in a shell string or a shell-fed heredoc counts.
-export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean }
+export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string }
+// A git command's pathspecs: its arguments that aren't options (nor the value of one in `valued`), or all after `--`;
+// none means the whole checkout ('.').
+function pathspecs(args: string[], valued: string[]): string[] {
+  if (args.includes('--')) return args.slice(args.indexOf('--') + 1).filter(Boolean).length ? args.slice(args.indexOf('--') + 1) : ['.'];
+  const out = args.filter((a, i) => !a.startsWith('-') && !valued.includes(args[i - 1]));
+  return out.length ? out : ['.'];
+}
 export function writeTargets(command: string): WriteTarget[] {
   const out: WriteTarget[] = [];
   for (const words of commandsRun(command)) {
@@ -182,9 +189,24 @@ export function writeTargets(command: string): WriteTarget[] {
       const [sub = '', ...gargs] = rest;
       // index only: rm --cached, restore --staged (-S) without --worktree (-W); neither touches a file
       const indexOnly = gargs.some((a) => /^(--cached|--staged|-S)$/.test(a)) && !gargs.some((a) => /^(--worktree|-W)$/.test(a));
+      const at = (p: string) => bases.map((b) => (b ? posix.normalize(/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) ? p : `${b}/${p}`) : p));
       if (/^(checkout|restore|rm|mv)$/i.test(sub) && !indexOnly)
-        for (const p of gargs.filter((a) => !a.startsWith('-')))
-          for (const b of bases) out.push({ target: b ? posix.normalize(/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) ? p : `${b}/${p}`) : p, git: true });
+        for (const p of gargs.filter((a) => !a.startsWith('-'))) for (const t of at(p)) out.push({ target: t, git: true });
+      // #3: what deletes files git doesn't hold yet (a log entry not committed) or the commits that hold them.
+      // clean that deletes (-f, not -n), unless only ignored files (-X: views, locks, never a log entry): its pathspecs
+      const flags = gargs.filter((a) => /^-[^-]/.test(a)).join('');
+      if (/^clean$/i.test(sub) && (/f/.test(flags) || gargs.includes('--force')) && !/n/.test(flags) && !gargs.includes('--dry-run') && !(/X/.test(flags) && !/x/.test(flags)))
+        for (const p of pathspecs(gargs, ['-e', '--exclude'])) for (const t of at(p)) out.push({ target: t, git: true, removes: true });
+      // stash that takes untracked files away (-u, -a): its pathspecs (after --), else the whole checkout
+      const stashArgs = /^stash$/i.test(sub) && /^(push|save)?$/i.test(gargs[0]?.startsWith('-') ? '' : gargs[0] ?? '') ? gargs.filter((a) => !/^(push|save)$/i.test(a)) : null;
+      if (stashArgs && stashArgs.some((a) => /^(-[a-zA-Z]*[ua][a-zA-Z]*|--include-untracked|--all)$/.test(a) && !/^-[a-zA-Z]*m/.test(a)))
+        for (const p of stashArgs.includes('--') ? stashArgs.slice(stashArgs.indexOf('--') + 1) : ['.']) for (const t of at(p)) out.push({ target: t, git: true, removes: true });
+      // reset that moves the checkout back (--hard, --keep, --merge to a commit other than HEAD): the commits since go,
+      // and the log entries in them (AI-MMO lost 10 after a landing that way)
+      const mode = gargs.find((a) => /^--(hard|keep|merge)$/.test(a));
+      const commit = gargs.slice(0, gargs.includes('--') ? gargs.indexOf('--') : undefined).find((a) => !a.startsWith('-'));
+      if (/^reset$/i.test(sub) && mode && commit && !/^(HEAD|@)$/i.test(commit))
+        for (const t of at('.')) out.push({ target: t, git: true, reset: `${mode} ${commit}` });
     }
     else if (LAST.test(verb) && plain.length) {
       out.push({ target: plain.at(-1)! });

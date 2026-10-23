@@ -175,6 +175,23 @@ test('shell guard: a kernel-owned folder named without its slash, or a folder ho
     assert.equal(tryShell(c), 0, c);
 });
 
+test('shell guard: git clean, stash -u and reset to an earlier commit delete log entries: refused where they would (#3)', () => {
+  // Checked in a throwaway repo: reset --hard/--keep/--merge HEAD~1 deleted the entry committed since; clean -f and
+  // stash -u/-a took the uncommitted one away; reset --hard (HEAD), --mixed, plain stash and clean -n kept everything.
+  for (const c of ['git reset --hard HEAD~1', 'git reset --keep origin/main', 'git reset --merge abc123', 'git -C cells/demo reset --hard HEAD~2',
+    'cd cells/demo && git reset --hard HEAD~1', 'git clean -fd', 'git clean -f', 'git clean -fdx', 'git clean -ffdx', 'git clean --force -d state',
+    'git clean -fd cells/demo', 'cd cells/demo && git clean -fd', 'git stash -u', 'git stash push --include-untracked', 'git stash -a', 'git stash save -u wip',
+    'git stash push -u -- state/log', 'git clean -fd -e build', 'git -c core.x=y clean -fd'])
+    assert.equal(tryShell(c), 2, c);
+  for (const c of ['git reset --hard', 'git reset --hard HEAD', 'git reset --keep @', 'git reset --mixed HEAD~1', 'git reset --soft HEAD~1', 'git reset HEAD~1',
+    'git reset -- state/log/000001.observation.json', 'git clean -n', 'git clean -nd', 'git clean --dry-run -fd', 'git clean -fdX', 'git clean -fd build/',
+    'cd build && git clean -fdx', 'git stash', 'git stash push -m wip', 'git stash pop', 'git stash list', 'git stash -u -- build/',
+    'git -C /tmp/other reset --hard HEAD~1', 'cd /tmp/other && git reset --hard HEAD~1', 'git clean -fd /tmp/x'])
+    assert.equal(tryShell(c), 0, c);
+  const r = shellOut('git reset --hard HEAD~1');
+  assert.match(r.stderr, /moves this checkout back[\s\S]*git revert/);
+});
+
 test('shell guard: git checkout, restore, rm and mv write their paths, read through git\'s own options (#1)', () => {
   // Before #1 the bare `git checkout -- docs/assumptions.md` passed (no write verb in the text), and every form behind
   // git's options (-C <dir>, --work-tree, --git-dir, -c, --no-pager) did too. AI-MMO 1e39484 (test_hooks.py).
