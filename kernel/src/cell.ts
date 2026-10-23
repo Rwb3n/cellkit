@@ -60,14 +60,17 @@ node ${toRoot}/kernel/src/cli.ts lint --cell .
 \`\`\`
 `;
 
+// The guards end `|| exit 2`: a hook that can't load (a syntax error, a broken import, no node) exits 1 or 127, which Claude
+// Code doesn't treat as a block, so the call would go through unchecked (#38; tested with claude -p, 2.1.295).
+export const guard = (path: string) => `node "${path}" || exit 2`;
 const settings = (toRoot: string) => {
   const k = `$CLAUDE_PROJECT_DIR/${toRoot}/kernel/src`;
   return {
     hooks: {
       PreToolUse: [
-        { matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: `node "${k}/hook-guard.ts"` }] },
-        { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `node "${k}/hook-bash.ts"` }] },
-        { matcher: 'Read|Grep', hooks: [{ type: 'command', command: `node "${k}/hook-read.ts"` }] },
+        { matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: guard(`${k}/hook-guard.ts`) }] },
+        { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: guard(`${k}/hook-bash.ts`) }] },
+        { matcher: 'Read|Grep', hooks: [{ type: 'command', command: guard(`${k}/hook-read.ts`) }] },
       ],
       SessionStart: [{ hooks: [{ type: 'command', command: `node "${k}/cli.ts" fold --cell "$CLAUDE_PROJECT_DIR" && node "${k}/cli.ts" lint --cell "$CLAUDE_PROJECT_DIR"` }] }],
       // the mail loop: file the last answer as the reply, wait for the next message, hand it over (kernel/src/mail-hook.ts)

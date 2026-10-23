@@ -4,19 +4,19 @@
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-guard.ts\"" }
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-guard.ts\" || exit 2" }
         ]
       },
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-bash.ts\"" }
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-bash.ts\" || exit 2" }
         ]
       },
       {
         "matcher": "Read|Grep",
         "hooks": [
-          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-read.ts\"" }
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/hook-read.ts\" || exit 2" }
         ]
       }
     ],

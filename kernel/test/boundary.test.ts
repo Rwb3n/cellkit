@@ -1,7 +1,7 @@
 // The cell boundary: a session running in a cell writes only inside it; root sessions are unaffected.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,4 +249,32 @@ test('boundary: a cell may write the temp folder (outside the repo) from Write/E
   assert.equal(tryWrite(cell, join(tmpdir(), 'cellkit-scratch', 'fix2.mjs')), 0);   // SF-DEV run sources/211643Z
   assert.equal(tryWrite(cell, '/tmp/fix2.mjs'), 0);
   assert.equal(tryWrite(cell, `${root}/kernel/x.ts`), 2);                          // the repo is in the temp folder here: still root's
+});
+
+// #38: a guard that can't load (a syntax error, a broken import, no node) exits 1, which Claude Code doesn't treat as a
+// block. The hook commands, root's (the template every project copies) and every cell's, turn that into a refusal.
+test('guards: a hook that can\'t load refuses; one that loads allows and blocks as it says (#38)', async () => {
+  const { cellNew } = await import('../src/cell.ts');
+  const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const bash = process.platform === 'win32'                                // Git Bash, as Claude Code runs hooks (not WSL's)
+    ? join(spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim(), '..', '..', '..', 'usr', 'bin', 'bash.exe') : 'bash';
+  const project = mkdtempSync(join(tmpdir(), 'cellkit-load-')).replaceAll('\\', '/');
+  cellNew(project, { name: 'c1' });
+  const commands = (settings: string) => (JSON.parse(readFileSync(settings, 'utf8')).hooks.PreToolUse as { hooks: { command: string }[] }[]).flatMap((m) => m.hooks.map((h) => h.command));
+  const sets = [
+    { dir: project, cmds: commands(join(repo, '.claude', 'settings.json')) },
+    { dir: `${project}/cells/c1`, cmds: commands(`${project}/cells/c1/.claude/settings.json`) },
+  ];
+  for (const hook of ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts']) assert.equal(sets.every((s) => s.cmds.some((c) => c.includes(hook))), true, hook);
+  mkdirSync(`${project}/kernel/src`, { recursive: true });
+  const status = (dir: string, cmd: string, body: string) => {
+    for (const h of ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts']) writeFileSync(`${project}/kernel/src/${h}`, body);
+    return spawnSync(bash, ['-c', cmd], { input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: dir }, encoding: 'utf8' }).status;
+  };
+  for (const { dir, cmds } of sets) for (const cmd of cmds) {
+    assert.equal(status(dir, cmd, 'this is not ( javascript\n'), 2, `${cmd}: a syntax error`);
+    assert.equal(status(dir, cmd, "import './missing.ts';\n"), 2, `${cmd}: a broken import`);
+    assert.equal(status(dir, cmd, 'process.exit(0);\n'), 0, `${cmd}: allowed`);
+    assert.equal(status(dir, cmd, 'process.exit(2);\n'), 2, `${cmd}: blocked`);
+  }
 });
