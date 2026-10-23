@@ -179,6 +179,29 @@ test('bedrock: a copy staged from an older live version is refused; with several
   assert.equal(readFileSync(live, 'utf8'), 'v1\nfrom v1\n');
 });
 
+test('bedrock: with a draft and an amend on top, lint\'s hint is the command that works, and approving it drops the starter (#4)', async () => {
+  // callsheet's adoption day: init registered the starter ontology, the real one was amended on top; lint's hint
+  // (approve --doc ontology) was refused for want of --proposal, twice.
+  const { register, amend, approve, stage, foldBedrock, lintBedrock } = await import('../src/bedrock.ts');
+  const cell = freshCell();
+  mkdirSync(join(cell, 'state', 'bedrock', 'proposed'), { recursive: true });
+  writeFileSync(join(cell, 'state', 'bedrock', 'ontology.md'), 'starter\n');
+  register(cell, { doc: 'ontology', layer: 'meta' });             // what init does
+  stage(cell, { doc: 'ontology' });
+  writeFileSync(join(cell, 'state', 'bedrock', 'proposed', 'ontology.md'), 'ours\n');
+  amend(cell, { doc: 'ontology', layer: 'meta', reason: 'ours' });
+  const [starter, ours] = foldBedrock(readLog(cell)).ontology.pending;
+  const hint = lintBedrock(cell, readLog(cell)).warnings.join('\n');
+  assert.match(hint, new RegExp(`2 proposals pending \\(${starter.entry}, ${ours.entry}\\)`));
+  const cmd = new RegExp(`approve --doc ontology --proposal ${ours.entry}`);
+  assert.match(hint, cmd);
+  assert.throws(() => approve(cell, { doc: 'ontology' }), cmd);    // the refusal names the same command
+  approve(cell, { doc: 'ontology', proposal: ours.entry });
+  assert.deepEqual(foldBedrock(readLog(cell)).ontology.pending, []); // the starter went with it
+  assert.equal(readFileSync(join(cell, 'state', 'bedrock', 'ontology.md'), 'utf8'), 'ours\n');
+  assert.deepEqual(lintBedrock(cell, readLog(cell)).warnings, []);
+});
+
 test('cell new: born by script with brief, hooks, mailboxes, first entries, and a record in the parent', async () => {
   const { cellNew } = await import('../src/cell.ts');
   const root = freshCell();

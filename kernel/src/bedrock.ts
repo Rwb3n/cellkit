@@ -137,6 +137,11 @@ export function amend(cell: string, o: { doc?: string; layer?: string; reason?: 
   return [from, c.id];
 }
 
+// The operator's command for a doc's pending proposals: the only one, or the newest by name (approving it drops the older).
+const approveHint = (doc: string, pending: { entry: string }[]) => pending.length > 1
+  ? `! node kernel/src/cli.ts approve --doc ${doc} --proposal ${pending.at(-1)!.entry} (the newest; approving it drops the older ones)`
+  : `! node kernel/src/cli.ts approve --doc ${doc}`;
+
 // With several proposals pending, the operator names one (--proposal <entry>): approving a newer one drops the older
 // ones; approving an older one keeps the newer pending. 01-HAIOS-PERS lost an ordering to "approve takes the latest".
 export function approve(cell: string, o: { doc?: string; proposal?: string }): string[] {
@@ -145,7 +150,8 @@ export function approve(cell: string, o: { doc?: string; proposal?: string }): s
   const pic = foldBedrock(log)[o.doc];
   if (!pic?.pending.length) throw new AppendError(`no pending proposal for ${o.doc}`);
   if (pic.pending.length > 1 && !o.proposal)
-    throw new AppendError(`${pic.pending.length} proposals pending for ${o.doc}; name one with --proposal:\n` + pic.pending.map((x) => `  ${x.entry}  ${x.layer}  ${x.reason}`).join('\n'));
+    throw new AppendError(`${pic.pending.length} proposals pending for ${o.doc}; name one with --proposal:\n` + pic.pending.map((x) => `  ${x.entry}  ${x.layer}  ${x.reason}`).join('\n')
+      + `\n${approveHint(o.doc, pic.pending)}`);
   const latest = o.proposal ? pic.pending.find((x) => x.entry === o.proposal) : pic.pending[0];
   if (!latest) throw new AppendError(`${o.proposal} is not a pending proposal for ${o.doc} (pending: ${pic.pending.map((x) => x.entry).join(', ')})`);
   const content = proposalContent(log, latest.entry);
@@ -195,8 +201,11 @@ export function lintBedrock(cell: string, log: Entry[]): { errors: string[]; war
   for (const p of Object.values(pics)) {
     const f = `${p.doc}.${p.format}`;
     if (!files.includes(f) && p.live_hash !== null) errors.push(`bedrock/${f}: missing (log has it)`);
-    if (p.status === 'draft') warnings.push(`bedrock/${f} is a draft — operator approval pending (! node kernel/src/cli.ts approve --doc ${p.doc})`);
-    else if (p.pending.length) warnings.push(`bedrock/${f} has ${p.pending.length} pending proposal(s)`);
+    // the hint is the command that works: with several pending (init's starter draft and an amend on top: callsheet ran
+    // `approve --doc ontology` twice, refused for want of --proposal), it names the newest (#4)
+    if (p.pending.length > 1)
+      warnings.push(`bedrock/${f}: ${p.pending.length} proposals pending (${p.pending.map((x) => x.entry).join(', ')}) — the operator approves one: ${approveHint(p.doc, p.pending)}`);
+    else if (p.status === 'draft' || p.pending.length) warnings.push(`bedrock/${f} ${p.status === 'draft' ? 'is a draft' : 'has a proposal'} — operator approval pending (${approveHint(p.doc, p.pending)})`);
   }
   return { errors, warnings };
 }
