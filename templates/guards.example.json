@@ -11,5 +11,6 @@
   "unreadable": [
     { "path": "OTHER_PROJECT/vault/", "why": "another project's vault" },
     { "path": "records/*bank*", "why": "bank records" }
-  ]
+  ],
+  "worktrees": { "home": "../.cells/myproject" }
 }

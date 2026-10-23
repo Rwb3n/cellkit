@@ -50,7 +50,7 @@ function world(t: TestContext, o: { kernel?: boolean } = {}) {
   const wt = cellCheckout(main, { name: 'demo' });
   t.after(() => {
     for (const l of git(main, 'worktree', 'list', '--porcelain').split(/\r?\n/))
-      if (l.startsWith('worktree ') && !samePath(l.slice(9), main)) spawnSync('git', ['-C', main, 'worktree', 'remove', '--force', l.slice(9)]);
+      if (l.startsWith('worktree ') && !samePath(l.slice(9), main)) spawnSync('git', ['-C', main, 'worktree', 'remove', '-f', '-f', l.slice(9)]);   // -f -f: cells' worktrees are locked
     rmSync(tmp, { recursive: true, force: true });
   });
   return { tmp, main, wt, cellWt: join(wt, 'cells', 'demo'), cellMain: join(main, 'cells', 'demo') };
@@ -62,10 +62,15 @@ test('worktree: cell checkout makes a worktree on branch cell/<name> beside the 
   assert.equal(git(wt, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'cell/demo');
   assert.ok(samePath(cellWorktree(main, 'demo')!, wt));
   assert.equal(cellWorktree(main, 'other'), null);
+  assert.match(git(main, 'worktree', 'list', '--porcelain'), /^locked cell demo$/m);   // kept, not throwaway (#22)
   const gone = cellCheckout(main, { name: 'other' });                       // a worktree folder deleted by hand
   rmSync(gone, { recursive: true, force: true });
   assert.equal(cellWorktree(main, 'other'), null);                           // is no worktree: its main copy is the cell's
+  git(main, 'worktree', 'prune');                                            // a locked one stays registered: checkout says how
+  assert.throws(() => cellCheckout(main, { name: 'other' }), /still registered to the worktree .* git worktree unlock/);
+  git(main, 'worktree', 'unlock', gone);
   git(main, 'worktree', 'prune');
+  assert.ok(samePath(cellCheckout(main, { name: 'other' }), gone));
   assert.ok(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8').includes('branch `cell/demo`'));   // the brief says so
   // node_modules is git-ignored, so the worktree has none: its kernel copy (the cell's hooks) loads the main checkout's
   assert.equal(existsSync(join(wt, 'kernel', 'node_modules')), false);
@@ -74,7 +79,8 @@ test('worktree: cell checkout makes a worktree on branch cell/<name> beside the 
   const stopped = spawnSync(process.execPath, [join(wt, 'kernel', 'src', 'mail-hook.ts')], { input: '{}', encoding: 'utf8',
     env: { ...process.env, CLAUDE_PROJECT_DIR: cellWt, CELLKIT_MAIL_WAIT: '0' } });
   assert.equal(stopped.status, 0, stopped.stderr);
-  git(main, 'worktree', 'remove', '--force', wt);
+  assert.notEqual(spawnSync('git', ['-C', main, 'worktree', 'remove', '--force', wt]).status, 0);   // locked: one -f won't
+  git(main, 'worktree', 'remove', '-f', '-f', wt);
   assert.ok(existsSync(join(main, 'kernel', 'node_modules', 'ajv', 'package.json')));   // main's are left alone
 });
 
@@ -88,6 +94,45 @@ test('worktree: checkout refuses a cell not committed at HEAD, a second worktree
   t.after(() => rmSync(plain, { recursive: true, force: true }));
   cellNew(plain, { name: 'c1' });
   assert.throws(() => cellCheckout(plain, { name: 'c1' }), /not a git repository/);
+});
+
+test('worktree: guards.json worktrees.home puts cells in one folder outside the repo; none goes inside the main checkout (#26)', async (t) => {
+  const { tmp, main } = world(t);
+  const { lintCellWorktrees } = await import('../src/lint.ts');
+  const guards = join(main, 'state', 'bedrock', 'guards.json');
+  mkdirSync(dirname(guards), { recursive: true });
+  writeFileSync(guards, JSON.stringify({ worktrees: { home: '../.cells/repo' } }));
+  assert.ok(samePath(cellCheckout(main, { name: 'other' }), join(tmp, '.cells', 'repo', 'other')));
+  let l = lintCellWorktrees(main);
+  assert.deepEqual(l.errors, []);
+  assert.match(l.warnings.join('\n'), /cell demo's worktree .* is not at .*worktrees\.home/);   // checked out before home was set
+  assert.doesNotMatch(l.warnings.join('\n'), /cell other/);
+  // inside the main checkout: refused, by home or by --path
+  cellNew(main, { name: 'third' });
+  git(main, 'add', '-A');
+  git(main, 'commit', '-qm', 'third');
+  writeFileSync(guards, JSON.stringify({ worktrees: { home: '../repo/.worktrees' } }));
+  assert.throws(() => cellCheckout(main, { name: 'third' }), /inside the main checkout/);
+  writeFileSync(guards, '{}');
+  const nested = join(main, '.worktrees', 'third');
+  assert.throws(() => cellCheckout(main, { name: 'third', path: nested }), /inside the main checkout/);
+  assert.equal(existsSync(nested), false);
+  // one made by hand there is a lint error, and unlocked a warning
+  git(main, 'worktree', 'add', '-q', '-b', 'cell/third', nested);
+  l = lintCellWorktrees(main);
+  assert.match(l.errors.join('\n'), /cell third's worktree .* is inside the main checkout/);
+  assert.match(l.warnings.join('\n'), /cell third's worktree .* is not locked/);
+  assert.doesNotMatch(l.warnings.join('\n'), /cell (demo|other)'s worktree .* is not locked/);
+  const cli = run('cli.ts', ['lint', '--cell', main]);                      // root's lint at session start says so
+  assert.notEqual(cli.status, 0);
+  assert.match(cli.stdout + cli.stderr, /cell third's worktree .* is inside the main checkout/);
+  assert.deepEqual(lintCellWorktrees(join(main, 'cells', 'demo')), { errors: [], warnings: [] });   // a cell's lint leaves it to root
+  // the setting: relative to the main checkout and outside it, never by drive (the project opens from Windows and WSL)
+  const { checkGuards } = await import('../src/config.ts');
+  for (const home of ['../.cells/repo', './../x', '..']) assert.deepEqual(checkGuards({ worktrees: { home } }), [], home);
+  for (const home of ['D:/PROJECTS/.cells/repo', '/mnt/d/x', '~/cells']) assert.match(checkGuards({ worktrees: { home } }).join(), /never by drive/, home);
+  for (const home of ['.worktrees', './cells-home', '']) assert.match(checkGuards({ worktrees: { home } }).join(), /inside the repository|must be a folder/, home);
+  assert.match(checkGuards({ worktrees: { root: 'x' } }).join(), /worktrees: unknown key "root"/);
 });
 
 test('worktree: root and the cell\'s worktree share one mailbox outside both checkouts; each log records mail in one place', (t) => {

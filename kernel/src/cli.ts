@@ -13,7 +13,7 @@
 //   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
 //   cell rebind --name <name> [--binding <file.json>]   → change its binding (root only), logged on the cell's log
 //   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
-//   cell checkout --name <name> [--path <dir>]          → its git worktree on branch cell/<name> (<repo>-cells/<name>)
+//   cell checkout --name <name> [--path <dir>]          → its locked git worktree on branch cell/<name> (<repo>-cells/<name>, or guards.json worktrees.home/<name>)
 //   cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/
 //   cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
 //                                                       → root's loop in one: commit, merge main in, audit, check, merge, sync (land.ts)

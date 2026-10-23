@@ -1,6 +1,7 @@
-// One git worktree per cell. Each cell works in its own checkout of the repository on branch cell/<name>, beside the
-// main checkout (<repo>-cells/<name> by default), so nothing it changes touches the main checkout or another cell until
-// root merges it, and an audit can attribute every changed file to the cell that wrote it.
+// One git worktree per cell. Each cell works in its own locked checkout of the repository on branch cell/<name>, outside
+// the main checkout (<repo>-cells/<name> by default, or guards.json worktrees.home/<name>), so nothing it changes touches
+// the main checkout or another cell until root merges it, and an audit can attribute every changed file to the cell that
+// wrote it.
 //   - Mail lives under the git common dir (shared by every checkout, inside none): see mail.ts `mailbox`.
 //   - Root-log writes made from a worktree land in the main checkout's log (cli.ts), so root's hash chain never forks;
 //     a cell's own log is written in its worktree (mail.ts `logHome`), so the cell's chain never forks either.
@@ -11,7 +12,7 @@
 //   node kernel/src/cli.ts cell checkout --name <cell> [--path <dir>]     (the cell must be committed at HEAD)
 //   node kernel/src/cli.ts cell audit --name <cell> [--except <glob>]…
 import { existsSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { globRe } from './glob.ts';
 import { configPath, loadConfig } from './config.ts';
@@ -59,25 +60,43 @@ export function inMain(dir: string): string {
 
 export const isLinkedWorktree = (dir: string) => !samePath(inMain(dir), dir);
 
-// Where cell worktrees live by default: a sibling of the main checkout, <repo>-cells/<cell>.
+// Where cell worktrees live (<dir>/<cell>): bedrock guards.json `worktrees.home`, relative to the main checkout, or by
+// default its sibling <repo>-cells/. Never inside it (#26): location is ownership, and the main checkout is root's.
 export function cellsCheckoutDir(mainRoot: string): string {
   const m = resolve(mainRoot);
-  return join(dirname(m), `${basename(m)}-cells`);
+  const config = loadConfig(configPath(m));
+  if (config.error) throw new WorktreeError(config.error);
+  return config.home ? resolve(m, config.home) : join(dirname(m), `${basename(m)}-cells`);
 }
+
+// `path` is the main checkout or lies inside it.
+export function insideMain(mainRoot: string, path: string): boolean {
+  const rel = relative(norm(mainRoot), norm(path));
+  return !rel.startsWith('..') && !isAbsolute(rel);
+}
+const norm = (p: string) => { let r = resolve(p); try { r = realpathSync.native(r); } catch { /* not on disk yet */ } return process.platform === 'win32' ? r.toLowerCase() : r; };
 
 export const currentBranch = (dir: string) => git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], false).trim();
 
 // The folder of cell `name`'s worktree (the checkout of branch cell/<name>), or null if it has none.
 export function cellWorktree(root: string, name: string): string | null {
-  if (!gitCommonDir(root)) return null;
-  let path: string | null = null;
-  for (const line of git(root, ['worktree', 'list', '--porcelain'], false).split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim();
-    // a worktree folder deleted without `git worktree remove` is still listed (prunable): it is no worktree
-    else if (line.trim() === `branch refs/heads/${cellBranch(name)}` && path) return existsSync(path) ? resolve(path) : null;
-  }
-  return null;
+  const w = worktrees(root).find((x) => x.branch === cellBranch(name));
+  // a worktree folder deleted without `git worktree remove` is still listed (prunable): it is no worktree
+  return w && existsSync(w.path) ? w.path : null;
 }
+
+// Every checkout git knows of: its folder, branch (null if detached) and whether it is locked. [] outside git.
+export function worktrees(root: string): { path: string; branch: string | null; locked: boolean }[] {
+  if (!gitCommonDir(root)) return [];
+  return git(root, ['worktree', 'list', '--porcelain'], false).split(/\r?\n\r?\n/).flatMap((block) => {
+    const path = /^worktree (.+)$/m.exec(block)?.[1].trim();
+    if (!path) return [];
+    return [{ path: resolve(path), branch: /^branch refs\/heads\/(.+)$/m.exec(block)?.[1].trim() ?? null, locked: /^locked(\s|$)/m.test(block) }];
+  });
+}
+
+// The folder git still holds branch `branch` checked out in, if that folder is gone (a by-hand delete of a locked worktree).
+const registered = (main: string, branch: string) => worktrees(main).find((w) => w.branch === branch && !existsSync(w.path))?.path ?? null;
 
 // ── cell checkout ────────────────────────────────────────────────────────────────
 // Give cell `name` its own worktree on branch cell/<name>, made from HEAD (so the cell must be committed there).
@@ -92,10 +111,15 @@ export function cellCheckout(root: string, o: { name?: string; path?: string }):
   const existing = cellWorktree(main, name);
   if (existing) throw new WorktreeError(`cell ${name} already has a worktree at ${existing}`);
   const dest = o.path ? resolve(o.path) : join(cellsCheckoutDir(main), name);
+  if (insideMain(main, dest)) throw new WorktreeError(`${dest} is inside the main checkout: a cell's worktree lives outside it, or root's guards would judge it as root (#26). Set bedrock guards.json worktrees.home (e.g. "../.cells/<project>") or pass --path outside the repository`);
   if (existsSync(dest)) throw new WorktreeError(`${dest} already exists`);
   const branch = cellBranch(name);
-  if (git(main, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], false).trim()) git(main, ['worktree', 'add', dest, branch]);
-  else git(main, ['worktree', 'add', '-b', branch, dest, 'HEAD']);
+  const stale = registered(main, branch);
+  if (stale) throw new WorktreeError(`branch ${branch} is still registered to the worktree ${stale}, which is gone. If nothing there is needed: git worktree unlock "${stale}" && git worktree prune, then check out again`);
+  // locked (#22): a cell's worktree is kept, not throwaway; removing it takes git worktree remove -f -f
+  const lock = ['--lock', '--reason', `cell ${name}`];
+  if (git(main, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], false).trim()) git(main, ['worktree', 'add', ...lock, dest, branch]);
+  else git(main, ['worktree', 'add', ...lock, '-b', branch, dest, 'HEAD']);
   return dest;
 }
 

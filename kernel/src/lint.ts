@@ -1,6 +1,6 @@
 // Lint: the log is intact and every entry is valid. Mechanical governance — runs at every session start.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { claimRefError, entryHash, logDir, readLog, type Entry } from './log.ts';
 import { viewsDir } from './fold.ts';
 import { check } from './schemas.ts';
@@ -9,7 +9,7 @@ import { lintBinding, lintCells } from './cell.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
 import { spawnSync } from 'node:child_process';
-import { inMain } from './worktree.ts';
+import { inMain, insideMain, samePath, worktrees } from './worktree.ts';
 
 export interface LintResult { errors: string[]; warnings: string[]; entries: number }
 
@@ -68,6 +68,24 @@ export function lintNativeWorktrees(root: string): string[] {
   return out;
 }
 
+// Cells' worktrees (branch cell/<name>) are where the project says (#26), and locked (#22). Inside the main checkout is
+// an error: root's guards would judge the cell's files as root's. Root's lint only, like the native ones.
+export function lintCellWorktrees(root: string): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [], warnings: string[] = [];
+  if (existsSync(join(root, 'binding.json'))) return { errors, warnings };
+  const main = inMain(root);
+  const config = loadConfig(configPath(main));
+  const home = config.home ? resolve(main, config.home) : null;
+  for (const w of worktrees(main)) {
+    const name = w.branch?.startsWith('cell/') ? w.branch.slice(5) : null;
+    if (!name || !existsSync(w.path)) continue;
+    if (insideMain(main, w.path)) errors.push(`cell ${name}'s worktree ${w.path} is inside the main checkout, so root's guards judge its files as root's (#26). Move it outside: git worktree unlock "${w.path}"; git worktree move "${w.path}" <dest>; git worktree lock --reason "cell ${name}" <dest> (with no session open in it)`);
+    else if (home && !samePath(w.path, join(home, name))) warnings.push(`cell ${name}'s worktree ${w.path} is not at ${join(home, name)} (guards.json worktrees.home): move it there (git worktree move), or leave it if the operator placed it`);
+    if (!w.locked) warnings.push(`cell ${name}'s worktree ${w.path} is not locked: git worktree lock --reason "cell ${name}" "${w.path}"`);
+  }
+  return { errors, warnings };
+}
+
 export function lint(cellDir: string): LintResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -114,6 +132,9 @@ export function lint(cellDir: string): LintResult {
     const stale = handoverAge(cellDir);
     if (stale !== null && stale >= HANDOVER_STALE) warnings.push(`docs/ROOT.md last changed ${stale} commits ago: are its routines and lessons still true?`);
     warnings.push(...lintNativeWorktrees(cellDir));
+    const w = lintCellWorktrees(cellDir);
+    errors.push(...w.errors);
+    warnings.push(...w.warnings);
   }
 
   const summaryPath = join(viewsDir(cellDir), 'summary.json');

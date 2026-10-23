@@ -6,8 +6,12 @@
 //     "protected":     [ { "path": "docs/portfolio/", "by": "portfolio/src/pm.ts" } ],          written only by that script
 //     "cells":         { "game": { "owns": ["game/**", "sim/**"] } },                          paths a cell owns beyond its folder
 //     "mail":          { "log": "hash" },                                                      mail bodies kept out of the logs
-//     "unreadable":    [ { "path": "OTHER_PROJECT/vault/", "why": "…" } ]                      no session reads these
+//     "unreadable":    [ { "path": "OTHER_PROJECT/vault/", "why": "…" } ],                     no session reads these
+//     "worktrees":     { "home": "../.cells/myproject" }                                       where cell checkout puts cells
 //   }
+// worktrees.home: the folder holding the project's cell worktrees (<home>/<cell>), relative to the main checkout and
+// outside it (#26: under the main checkout is root's, so a cell nested there would be judged as root). Default: the
+// sibling <repo>-cells/. Relative, never by drive, so the project opens the same from Windows and WSL.
 // unreadable: on top of the kit's defaults (keys, .env, credentials; secrets.ts), matched by folder name anywhere on the
 // disk; a trailing / is a folder, * matches within one name. Read by the Read/Grep hook and the shell guard.
 // mail.log: "body" (default) logs each message whole, so the log is the record of what was asked and answered; "hash"
@@ -34,13 +38,14 @@ export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
 export type MailLog = 'body' | 'hash';
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; error?: string }
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; error?: string }
 interface Raw {
   operator_only?: { command?: string; pattern?: string; message?: string }[];
   protected?: { path?: string; by?: string }[];
   cells?: Record<string, { owns?: string[] }>;
   mail?: { log?: string };
   unreadable?: { path?: string; why?: string }[];
+  worktrees?: { home?: string };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -61,7 +66,19 @@ export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees)`);
+  if (raw.worktrees !== undefined) {
+    if (!raw.worktrees || typeof raw.worktrees !== 'object' || Array.isArray(raw.worktrees)) out.push('worktrees must be an object ({ "home": "../.cells/<project>" })');
+    else {
+      for (const k of Object.keys(raw.worktrees)) if (k !== 'home') out.push(`worktrees: unknown key "${k}" (home)`);
+      const h = raw.worktrees.home;
+      if (h !== undefined) {
+        if (typeof h !== 'string' || !h.trim()) out.push('worktrees.home must be a folder (e.g. "../.cells/<project>")');
+        else if (/^[a-zA-Z]:|^[\\/]|^~/.test(h)) out.push(`worktrees.home "${h}": relative to the main checkout (e.g. "../.cells/<project>"), never by drive`);
+        else if (!/^\.\.([\\/]|$)/.test(h.replace(/^(\.[\\/])+/, ''))) out.push(`worktrees.home "${h}": inside the repository; cells live outside it (e.g. "../.cells/<project>")`);
+      }
+    }
+  }
   if (raw.unreadable !== undefined && !Array.isArray(raw.unreadable)) out.push('unreadable must be a list of { "path": "…", "why": "…" }');
   for (const [i, u] of (Array.isArray(raw.unreadable) ? raw.unreadable : []).entries()) {
     if (!u || typeof u.path !== 'string' || !u.path.trim()) out.push(`unreadable[${i}] needs "path"`);
@@ -123,6 +140,7 @@ export function loadConfig(path = configPath()): Config {
     owns: Object.fromEntries(Object.entries(raw.cells ?? {}).map(([n, c]) => [n, c.owns ?? []])),
     mailLog: raw.mail?.log === 'hash' ? 'hash' : 'body',
     unreadable: (raw.unreadable ?? []).map((u) => ({ path: u.path!, why: u.why ?? `unreadable (bedrock guards.json: ${u.path})` })),
+    home: raw.worktrees?.home,
   };
 }
 
