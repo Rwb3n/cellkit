@@ -18,7 +18,8 @@ The projects are the field; the kit is what they share. Root here:
 
 | What | Where | How |
 |---|---|---|
-| The backlog | GitHub issues on `Rwb3n/cellkit`, ranked on the [cellkit board](https://github.com/users/Rwb3n/projects/9) (Status: Intake · Next · In Progress · Later · Watching · Done) | `gh issue list --repo Rwb3n/cellkit`, the board for the order. Labels: `from:<project>` the source, `bug`/`enhancement`/`documentation` the class, `decision` waits on the operator |
+| The direction and the operator's priorities | the pinned **Roadmap** issue, #52: the body is the direction, each comment one operator decision, dated, in their words | `gh issue view 52 --repo Rwb3n/cellkit --comments` |
+| The backlog | GitHub issues on `Rwb3n/cellkit`, ranked on the [cellkit board](https://github.com/users/Rwb3n/projects/9) (Status only: Intake · Next · In Progress · Later · Watching · Done) | `gh issue list --repo Rwb3n/cellkit`, the board for the order. Labels: `area:<part>` (one per issue: guards · mail · land · worktree · log · cellrun · docs · direction), `from:<project>` the source, `bug`/`enhancement`/`documentation` the class, `decision` waits on the operator. Milestones are releases (`v0.5` …), set when an issue moves to Next |
 | New lessons from the projects | issues labelled `intake` | `gh issue list --repo Rwb3n/cellkit --label intake`; stragglers as `FROM-*.txt` in the repo root (`ls FROM-*`) |
 | The evidence behind the issues | [`maintainer/notes/`](notes/) | dated notes and surveys; an issue's **Source** names the file and item |
 | What shipped | [`CHANGELOG.md`](../CHANGELOG.md), git tags (`v0.3.0`…) | `git log --oneline -20`, `git tag` |
@@ -29,9 +30,9 @@ The projects are the field; the kit is what they share. Root here:
 ## Open a session
 
 1. SessionStart ran `cell sync` and `lint` (no cells here; expect 0 entries).
-2. Read `AGENTS.md`, then this file.
-3. Triage intake: check each `intake` issue against the code first (some are already done), then add its `from:<project>` and class labels, drop `intake`, add it to the board with a Status (or close it: done, duplicate, worked as designed, saying why). A `FROM-*.txt` straggler: move it to `maintainer/notes/<date>-<project>.txt` and file its items as issues.
-4. Brief the operator: the board's Next, new intake, unreleased commits since the last tag (`git log --oneline $(git describe --tags --abbrev=0)..`), and what you'd do next. Then wait.
+2. Read `AGENTS.md`, then this file, then the Roadmap issue (#52) and its latest comments.
+3. Triage intake: check each `intake` issue against the code first (some are already done), then add its `area:`, `from:<project>` and class labels, drop `intake`, add it to the board with a Status (`node maintainer/tools/file.ts --board <n> --status <s>`) (or close it: done, duplicate, worked as designed, saying why). A `FROM-*.txt` straggler: move it to `maintainer/notes/<date>-<project>.txt` and file its items as issues.
+4. Brief the operator: the board's Next and the v0.x milestone, new intake, unreleased commits since the last tag (`git log --oneline $(git describe --tags --abbrev=0)..`), and what you'd do next. Then wait.
 
 ## Take an issue
 
@@ -39,7 +40,14 @@ The projects are the field; the kit is what they share. Root here:
 2. Build it, with a test. **A test must fail with the fix taken out**: copy the file aside, revert the line, run the test, restore. Twice this session a test passed against the bug.
 3. Concurrency: stress it (8 processes, a start barrier so they collide), run the full suite several times under load.
 4. Before calling it done, ask for a review (the advisor caught a wrong-reply bug and doc claims the code didn't back).
-5. Set it In Progress on the board when you start. Commit with the message in a file (`git commit -F`) ending `Fixes #n`; update README (the guarantee and its test) and CHANGELOG (Unreleased, naming `#n`). What's not done becomes a new issue, linked from the closed one.
+5. Set it In Progress on the board when you start. Commit with the message in a file (`git commit -F`) ending `Fixes #n`; work with no code (a spike, research, a review) is closed by hand with an outcome comment, the report itself on the issue or in a note it names; update README (the guarantee and its test) and CHANGELOG (Unreleased, naming `#n`). What's not done becomes a new issue, linked from the closed one.
+
+## Issues
+
+- **File only through `node maintainer/tools/file.ts`** (`--title`, `--body-file`, `--label area:<part>` and the others, `--status`, `--milestone`): it creates the issue, adds it to the board with its Status and pauses for GitHub's burst limit. AI-MMO's board missed two weeks of hand-filed issues; this is why.
+- **The body:** what and why · **Outcome** (what done looks like; for a spike, "a negative result is a result") · **After:** #n (ordering) · **Refs:** related issues · **Source:** the note and item, or the operator's words.
+- **The operator's priority calls** go on the Roadmap issue (#52) as a comment, dated and quoted, not only in a session.
+- No title prefixes, no board fields beyond Status, no gate milestones: AI-MMO's decayed within a week (survey 2026-10-23).
 
 ## Survey the projects
 
@@ -64,7 +72,7 @@ Fan out read-only investigators, one per project (or per group of small ones), e
 - **Verify a claim before it goes in a doc or a CHANGELOG, especially one repeated from a project's note**: two this session were wrong (processkit's `git clean -fdx` deletes nested worktrees: only `-ffdx` does; `grep -f .env` listed as newly refused: it already was). A throwaway repo in the scratchpad settles most in a minute.
 - **Probe Claude Code's own behaviour with a subagent or `claude -p`** in a throwaway repo, with markers (which `CLAUDE.md` loaded, whose hooks judged): cheaper and surer than reading the docs alone. Results so far: `maintainer/notes/2026-10-22-native-agents.md`.
 - **Files here flow into every project on merge.** Don't add kit-private files outside `maintainer/`. That includes `.github/`: an issue form there would become every project's own. The field-note format lives in `templates/ROOT.md` instead.
-- **GitHub refuses fast bursts of issue creation** (it stopped at the 27th of 46): pause a few seconds between creates. The board's item list lags behind adds; check from the issue side (`projectItems` in `gh api graphql`). A push that closes an issue (`Fixes #n`) doesn't move it to Done on the board: set the Status by hand.
+- **GitHub refuses fast bursts of issue creation** (it stopped at the 27th of 46): pause a few seconds between creates. The board's item list lags behind adds; check from the issue side (`projectItems` in `gh api graphql`). A push that closes an issue (`Fixes #n`) moves it to Done only if the board's built-in "Item closed" workflow is on (the operator's switch, board settings → Workflows); until it is, set the Status by hand and check from the issue side.
 
 ## The operator
 
