@@ -1,0 +1,2 @@
+
+2026-10-22 (evening): after `cell land` + `fold --cell cells/prospecting`, `lint --all` still warns "prospecting: views are stale" — summary.json head (sha256:979685…) equals fold's output head, yet lint's computed prev differs. Lint from inside the worktree is clean. Unresolved; reproduce with the prospecting cell at log 000011.
