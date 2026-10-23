@@ -5,16 +5,18 @@
 //   the project's own (bedrock guards.json "unreadable"): [{ "path": "SOME_PROJECT/vault/", "why": "…" }, …], matched
 //     by folder name anywhere on the disk, never by drive, so a clone or a worktree is covered too; a trailing / is a
 //     folder, * matches within one name. Case-insensitive.
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { posix } from 'node:path';
 import { CD, expandEnv, parts, PATTERNED, segments, simpleCommands, verbOf } from './shell.ts';
 
 export interface Hit { path: string; why: string }
 export interface Unreadable { path: string; why: string }
 
+// .env, .env.local, and <name>.env (callsheet's vein.env, #5); never *.env.example
+const ENV = { re: /(^|\/)[^/]*\.env(\.(?!example$)[^/]+)?$/i, why: 'environment secrets (.env)' };
 const ANYWHERE: { re: RegExp; why: string }[] = [
   { re: /(^|\/)\.ssh(\/|$)/i, why: 'SSH keys' },
-  { re: /(^|\/)\.env(\.(?!example$)[^/]+)?$/i, why: 'environment secrets (.env)' },
+  ENV,
   { re: /\.(pem|key|p12|pfx)$/i, why: 'a key or certificate' },
   { re: /(^|\/)id_(rsa|ed25519|ecdsa|dsa)$/i, why: 'a private SSH key' },
   { re: /(^|\/)\.[\w.-]*keys?$/i, why: 'a hidden key file' },
@@ -55,7 +57,11 @@ export function treeHolds(dir: string, cwd = '', own: Unreadable[] = []): Hit | 
   const abs = absPath(dir, cwd);
   const self = denied(abs, '', own);
   if (self) return self;
-  for (const n of ['.env', '.env.local', '.ssh']) if (existsSync(`${abs}/${n}`)) return { path: `${abs}/${n}`, why: n === '.ssh' ? 'SSH keys' : 'environment secrets (.env)' };
+  if (existsSync(`${abs}/.ssh`)) return { path: `${abs}/.ssh`, why: 'SSH keys' };
+  let names: string[] = [];
+  try { names = readdirSync(abs); } catch { /* not a folder */ }
+  const env = names.find((n) => ENV.re.test(n));                       // .env, .env.local, <name>.env (#5)
+  if (env) return { path: `${abs}/${env}`, why: ENV.why };
   const segs = abs.toLowerCase().split('/');
   for (const u of own) {
     // the entry's literal folders: all of it, or up to the folder holding its first wildcard (a glob in it may match)

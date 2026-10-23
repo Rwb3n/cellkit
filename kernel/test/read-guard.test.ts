@@ -54,6 +54,23 @@ test('read guard: the kit\'s defaults and the project\'s unreadable paths, by fo
   assert.equal(treeHolds(`${r}/APP/kernel`, '', UNREADABLE), null);
 });
 
+test('read guard: <name>.env is a .env file, <name>.env.example is not (#5)', () => {
+  // callsheet's instrument kept its key in vein.env; the defaults matched only .env and .env.*
+  const { root: r, cfg } = world();
+  for (const p of ['TOOLS/vein.env', 'TOOLS/vein.env.local', 'TOOLS/PROD.ENV'])
+    assert.ok(denied(`${r}/${p}`), p);
+  for (const p of ['TOOLS/vein.env.example', 'TOOLS/environment.md', 'TOOLS/envoy.ts', 'TOOLS/env', 'TOOLS/.envrc.md', 'TOOLS/dotenv.ts'])
+    assert.equal(denied(`${r}/${p}`), null, p);
+  mkdirSync(`${r}/TOOLS`, { recursive: true });
+  writeFileSync(`${r}/TOOLS/vein.env`, 'KEY=x');
+  assert.ok(treeHolds(`${r}/TOOLS`));                                           // a search over the folder must be narrowed
+  const sh = (command: string) => run('hook-bash.ts', { cwd: `${r}/TOOLS`, tool_input: { command } }, cfg);
+  assert.equal(sh('cat vein.env'), 2);
+  assert.equal(sh('grep -r KEY .'), 2);
+  assert.equal(sh('node -e "console.log(process.env.HOME)"'), 0);              // process.env is code, not a file
+  assert.equal(sh('grep -rn "process.env" src/'), 0);
+});
+
 test('read guard: guards.json "unreadable" is checked like the rest of the guards', () => {
   assert.deepEqual(checkGuards({ unreadable: UNREADABLE }), []);
   assert.match(checkGuards({ unreadable: [{ why: 'x' }] }).join(), /needs "path"/);

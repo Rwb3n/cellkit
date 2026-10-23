@@ -3,6 +3,7 @@
 ## Unreleased
 
 **Fixes**
+- **`<name>.env` is a secret** (#5; callsheet). The read guard's defaults matched `.env` and `.env.*` only: callsheet's instrument kept its key in `vein.env` and renamed it to be covered. Now `<name>.env` and `<name>.env.<x>` are denied too, never `*.env.example`, and a search over a folder holding one must be narrowed. `process.env` in code is not a file.
 - **Lint's approval hint is the command that works** (#4; callsheet). `init` registers the starter ontology as a draft; an amend on top leaves two proposals pending, and lint's hint (`approve --doc ontology`) was then refused for want of `--proposal`: callsheet's operator ran it twice. With several pending, lint now lists them and names the newest (`approve --doc <doc> --proposal <newest>`; approving it drops the older ones, the starter included), and approve's refusal ends with the same command. A doc with one proposal pending on top of an approved version now gets the hint too.
 - **git's deletes are writes** (#3; AI-MMO, processkit). Tested in a throwaway repo:
   - `git reset --hard`, `--keep` or `--merge` to an earlier commit deleted the log entry committed since;
