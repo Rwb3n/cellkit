@@ -1,7 +1,7 @@
 // The read guard: what no session reads, root's included. The kit guards writes everywhere; reads only here, for the
 // Read and Grep tools (hook-read.ts) and the shell (hook-bash.ts). A floor, not a boundary: a script a command runs can
 // still read anything its user can (an OS sandbox is the boundary; README "Limits"). Ported from SF-DEV (secrets.ts).
-//   kit defaults (ANYWHERE): key material, .env files (not .env.example), credential files and folders, shell histories
+//   kit defaults (ANYWHERE): key material, .env files (.env, <name>.env; not *.env.example), credential files and folders, shell histories
 //   the project's own (bedrock guards.json "unreadable"): [{ "path": "SOME_PROJECT/vault/", "why": "…" }, …], matched
 //     by folder name anywhere on the disk, never by drive, so a clone or a worktree is covered too; a trailing / is a
 //     folder, * matches within one name. Case-insensitive.
