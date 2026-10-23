@@ -197,16 +197,19 @@ export function writeTargets(command: string): WriteTarget[] {
       const flags = gargs.filter((a) => /^-[^-]/.test(a)).join('');
       if (/^clean$/i.test(sub) && (/f/.test(flags) || gargs.includes('--force')) && !/n/.test(flags) && !gargs.includes('--dry-run') && !(/X/.test(flags) && !/x/.test(flags)))
         for (const p of pathspecs(gargs, ['-e', '--exclude'])) for (const t of at(p)) out.push({ target: t, git: true, removes: true });
-      // stash that takes untracked files away (-u, -a): its pathspecs (after --), else the whole checkout
+      // stash (push, save): it takes away what isn't committed, a staged new entry or an approved bedrock doc too, and
+      // with -u/-a an untracked entry: its pathspecs (after --), else the whole checkout
       const stashArgs = /^stash$/i.test(sub) && /^(push|save)?$/i.test(gargs[0]?.startsWith('-') ? '' : gargs[0] ?? '') ? gargs.filter((a) => !/^(push|save)$/i.test(a)) : null;
-      if (stashArgs && stashArgs.some((a) => /^(-[a-zA-Z]*[ua][a-zA-Z]*|--include-untracked|--all)$/.test(a) && !/^-[a-zA-Z]*m/.test(a)))
+      if (stashArgs)
         for (const p of stashArgs.includes('--') ? stashArgs.slice(stashArgs.indexOf('--') + 1) : ['.']) for (const t of at(p)) out.push({ target: t, git: true, removes: true });
-      // reset that moves the checkout back (--hard, --keep, --merge to a commit other than HEAD): the commits since go,
-      // and the log entries in them (AI-MMO lost 10 after a landing that way)
+      // reset --hard discards every uncommitted change (an approved bedrock doc not yet committed); --hard, --keep or
+      // --merge to a commit other than HEAD moves the checkout back, and the log entries committed since go with it
+      // (AI-MMO lost 10 after a landing that way). --keep/--merge to HEAD keep local changes.
       const mode = gargs.find((a) => /^--(hard|keep|merge)$/.test(a));
       const commit = gargs.slice(0, gargs.includes('--') ? gargs.indexOf('--') : undefined).find((a) => !a.startsWith('-'));
-      if (/^reset$/i.test(sub) && mode && commit && !/^(HEAD|@)$/i.test(commit))
-        for (const t of at('.')) out.push({ target: t, git: true, reset: `${mode} ${commit}` });
+      const back = !!commit && !/^(HEAD|@)$/i.test(commit);
+      if (/^reset$/i.test(sub) && mode && (back || mode === '--hard'))
+        for (const t of at('.')) out.push({ target: t, git: true, reset: back ? `${mode} ${commit}` : mode });
     }
     else if (LAST.test(verb) && plain.length) {
       out.push({ target: plain.at(-1)! });

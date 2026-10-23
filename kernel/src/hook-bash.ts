@@ -172,7 +172,9 @@ for (const t of [...writeTargets(command), ...codeTargets(act)]) {
   const p = process.platform === 'win32' ? joined.replace(/^\/([a-zA-Z])(\/|$)/, '$1:/') : joined;
   // a reset moves the whole checkout, wherever in it it runs: refused unless it runs in another repository (#3)
   if (t.reset && (!/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) || roots.some((r) => norm(p) === r || norm(p).startsWith(`${r}/`))))
-    block(`git reset ${t.reset} moves this checkout back: the commits after ${t.reset.split(' ')[1]} leave the branch, and the log entries in them with it (AI-MMO lost 10 that way). Undo a commit with git revert (a landing: git revert -m 1 <merge>); if the operator wants the reset, they run it from their prompt with "!".`);
+    block(t.reset.includes(' ')
+      ? `git reset ${t.reset} moves this checkout back: the commits after ${t.reset.split(' ')[1]} leave the branch, and the log entries in them with it (AI-MMO lost 10 that way). Undo a commit with git revert (a landing: git revert -m 1 <merge>); if the operator wants the reset, they run it from their prompt with "!".`
+      : `git reset --hard discards every uncommitted change in this checkout, kernel-owned ones included (an approved bedrock doc not yet committed, a staged log entry). Restore the files you mean by name (git checkout -- <file>); if the operator wants the reset, they run it from their prompt with "!".`);
   if (t.reset) continue;
   const owned = t.git ? kernelOwned(p) || holdsOwned(p) : (kernelOwned(p) || kernelOwned(`${p}/`) || (t.removes && removesOwned(p))) && !viaKernel.test(command);
   if (owned)
