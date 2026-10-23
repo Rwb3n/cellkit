@@ -61,7 +61,7 @@ Fan out read-only investigators, one per project (or per group of small ones), e
 
 ## Lessons (keep them)
 
-- **This repo runs its own hooks.** A broken `kernel/src/hook-bash.ts` refuses every shell command of this session (it fails closed). Fix it with the Edit tool, which goes through `hook-guard`, not the shell.
+- **This repo runs its own hooks, and every guard fails closed, even one that can't load (#38).** A broken `hook-bash.ts` refuses every shell command: fix it with the Edit tool (judged by `hook-guard`). A broken `hook-guard.ts` refuses every Edit/Write: fix it from the shell (judged by `hook-bash`). A broken `hook-read.ts` refuses Read/Grep: use the shell. If both `hook-guard` and `hook-bash` are broken, no session here can fix them: the operator edits the file outside Claude Code.
 - **The guards are mention-strict for some rules.** A heredoc or commit message that names a kernel-owned path, `taskkill /IM`, or `cat .env` is refused. Commit messages via a file; tests that contain guarded text via the Write/Edit tools; edit scripts as files in the scratchpad, run with `python <file>`.
 - **No backslash-bearing text through a shell heredoc** (regexes): write the file, then run it.
 - **Test fixtures vanish:** `world()` temp repos are removed after each test; to debug, print from inside the test.

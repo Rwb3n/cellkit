@@ -254,7 +254,7 @@ test('boundary: a cell may write the temp folder (outside the repo) from Write/E
 // #38: a guard that can't load (a syntax error, a broken import, no node) exits 1, which Claude Code doesn't treat as a
 // block. The hook commands, root's (the template every project copies) and every cell's, turn that into a refusal.
 test('guards: a hook that can\'t load refuses; one that loads allows and blocks as it says (#38)', async () => {
-  const { cellNew } = await import('../src/cell.ts');
+  const { cellNew, cellRefresh } = await import('../src/cell.ts');
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const bash = process.platform === 'win32'                                // Git Bash, as Claude Code runs hooks (not WSL's)
     ? join(spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim(), '..', '..', '..', 'usr', 'bin', 'bash.exe') : 'bash';
@@ -271,6 +271,12 @@ test('guards: a hook that can\'t load refuses; one that loads allows and blocks 
     for (const h of ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts']) writeFileSync(`${project}/kernel/src/${h}`, body);
     return spawnSync(bash, ['-c', cmd], { input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: dir }, encoding: 'utf8' }).status;
   };
+  // an existing cell gets it from `cell refresh` (the upgrade note's step)
+  const cellSettings = `${project}/cells/c1/.claude/settings.json`;
+  writeFileSync(cellSettings, readFileSync(cellSettings, 'utf8').replaceAll(' || exit 2', ''));
+  assert.equal(commands(cellSettings).some((c) => c.endsWith('|| exit 2')), false);
+  cellRefresh(project, { name: 'c1' });
+  assert.equal(commands(cellSettings).every((c) => c.endsWith('|| exit 2')), true);
   for (const { dir, cmds } of sets) for (const cmd of cmds) {
     assert.equal(status(dir, cmd, 'this is not ( javascript\n'), 2, `${cmd}: a syntax error`);
     assert.equal(status(dir, cmd, "import './missing.ts';\n"), 2, `${cmd}: a broken import`);
