@@ -1,24 +1,4 @@
-// cellkit kernel CLI.  node kernel/src/cli.ts <command> [--cell <dir>]
-//   init                                  first run: create state/, copy templates/ontology.md into bedrock, register it as a draft, fold
-//   append     --kind observation|claim --body <file.json|-> [--causes 000001,000002]
-//   assume     [--id A1] --voice claude|operator|probe --statement "…" [--test "…"] [--evidence "…"] [--source "…"]
-//   evidence   --id A1 --status guess|some|evidence|refuted --note "…" [--voice …] [--source "…"]
-//   constraint --slug scope --text "…" [--voice …] [--source "…"]
-//   stage      --doc ontology            copy the live doc to state/bedrock/proposed/ to edit (amend refuses it if the live doc moves)
-//   amend      --doc ontology --layer shape|kinds|rules|binding|meta --reason "…" [--evidence A1,000140]
-//                (stage the new text first at state/bedrock/proposed/<doc>.md)
-//   approve    --doc ontology [--proposal <entry>]   OPERATOR ONLY — run from your own prompt with "!"; names one if several are pending
-//   register   --doc <doc> --layer meta  (a doc that predates the guard)
-//   cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script
-//   cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes
-//   cell rebind --name <name> [--binding <file.json>]   → change its binding (root only), logged on the cell's log
-//   cell sync [--name <name>]          → root records each cell's head + published numbers; lint cross-checks
-//   cell checkout --name <name> [--path <dir>]          → its locked git worktree on branch cell/<name> (<repo>-cells/<name>, or guards.json worktrees.home/<name>)
-//   cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/
-//   cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]
-//                                                       → root's loop in one: commit, merge main in, audit, check, merge, sync (land.ts)
-//   review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (OPERATOR ONLY)
-//   fold · lint
+// cellkit kernel CLI.  node kernel/src/cli.ts <command> [--cell <dir>]   (the commands: USAGE below, or <command> --help)
 // Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
 // Every write refolds (refold.ts): state/views/* and docs/assumptions.md (generated; hook-blocked).
 // Run from a cell's worktree, every command that writes root's log writes the main checkout's (worktree.ts), so root's
@@ -56,6 +36,35 @@ if ([...WRITES, 'fold', 'lint'].includes(cmd) && isCell(local) && !samePath(logH
 }
 const isRoot = cell === repoRoot || cell === inMain(repoRoot);
 
+// Every command: its usage and the flags it needs ("--yes|--no": one of them). `<command> --help` prints it; a command
+// missing flags is refused naming all of them, before it writes anything (#6: apify-actor-dev learnt the flags by
+// grepping this file for opt(), one refusal at a time). Every command also takes --cell <dir>.
+const USAGE: Record<string, { use: string; needs?: string[] }> = {
+  'init': { use: 'init                                  first run: create state/, copy templates/ontology.md into bedrock, register it as a draft, fold' },
+  'append': { use: 'append     --kind observation|claim --body <file.json|-> [--causes 000001,000002]', needs: ['--kind', '--body'] },
+  'assume': { use: 'assume     --statement "…" [--id A1] [--voice claude|operator|probe] [--test "…"] [--evidence "…"] [--source "…"]   (no --id: the next free one)', needs: ['--statement'] },
+  'evidence': { use: 'evidence   --id A1 --status guess|some|evidence|refuted --note "…" [--voice …] [--source "…"]', needs: ['--id', '--status', '--note'] },
+  'constraint': { use: 'constraint --slug scope --text "…" [--voice …] [--source "…"]', needs: ['--slug', '--text'] },
+  'stage': { use: 'stage      --doc ontology            copy the live doc to state/bedrock/proposed/ to edit (amend refuses it if the live doc moves)', needs: ['--doc'] },
+  'amend': { use: 'amend      --doc ontology --layer shape|kinds|rules|binding|meta --reason "…" [--evidence A1,000140]   (the new text staged at state/bedrock/proposed/<doc>.md)', needs: ['--doc', '--layer', '--reason'] },
+  'approve': { use: 'approve    --doc ontology [--proposal <entry>]   OPERATOR ONLY: from their own prompt with "!"; --proposal names one if several are pending', needs: ['--doc'] },
+  'register': { use: 'register   --doc <doc> --layer meta  (a doc that predates the guard)', needs: ['--doc'] },
+  'cell new': { use: 'cell new   --name <name> [--binding <file.json>]   → cells/<name>/ born by script', needs: ['--name'] },
+  'cell refresh': { use: 'cell refresh --name <name>                          → regenerate its brief, hooks and mailboxes', needs: ['--name'] },
+  'cell rebind': { use: 'cell rebind --name <name> [--binding <file.json>]   → change its binding (root only), logged on the cell\'s log', needs: ['--name'] },
+  'cell sync': { use: 'cell sync [--name <name>]                           → root records each cell\'s head + published numbers; lint cross-checks' },
+  'cell checkout': { use: 'cell checkout --name <name> [--path <dir>]          → its locked git worktree on branch cell/<name> (<repo>-cells/<name>, or guards.json worktrees.home/<name>)', needs: ['--name'] },
+  'cell audit': { use: 'cell audit --name <name> [--except <glob>]…         → every changed path must lie inside cells/<name>/', needs: ['--name'] },
+  'cell land': { use: 'cell land --name <name> [--message "…"] [--check "<cmd>"] [--into <branch>] [--dry-run]   → root\'s loop in one: commit, merge main in, audit, check, merge, sync', needs: ['--name'] },
+  'review raise': { use: 'review raise --file r.json                          (or the JSON on stdin)' },
+  'review list': { use: 'review list [--all] [--decided]' },
+  'review decide': { use: 'review decide --id R-0001 --yes|--no [--note "…"]   OPERATOR ONLY', needs: ['--id', '--yes|--no'] },
+  'fold': { use: 'fold                                  rebuild the views (and docs/assumptions.md at root) from the log' },
+  'lint': { use: 'lint [--all]                          the log, bedrock, cells; --all: root and every cell' },
+};
+const usage = (keys: string[]) => keys.map((k) => `  ${USAGE[k].use}`).join('\n');
+const group = (c: string) => Object.keys(USAGE).filter((k) => k === c || k.startsWith(`${c} `));
+
 function refold(): number {
   console.log(JSON.stringify(refoldLog(cell, isRoot ? { docs: repoRoot } : {}).summary));
   return 0;
@@ -68,6 +77,15 @@ function write(run: () => string[]): number {
 }
 
 function main(): number {
+  const key = (cmd === 'cell' || cmd === 'review') && rest[0] && !rest[0].startsWith('-') ? `${cmd} ${rest[0]}` : cmd ?? '';
+  const these = USAGE[key] ? [key] : group(key).length ? group(key) : Object.keys(USAGE);
+  if (rest.includes('--help') || rest.includes('-h') || ['help', '--help', '-h'].includes(cmd ?? '')) {
+    console.log(`node kernel/src/cli.ts <command> [--cell <dir>]\n${usage(these)}`);
+    return 0;
+  }
+  if (!USAGE[key]) { console.error(`usage: node kernel/src/cli.ts <command> [--cell <dir>]\n${usage(these)}`); return 2; }
+  const missing = (USAGE[key].needs ?? []).filter((f) => !f.split('|').some((x) => rest.includes(x)));
+  if (missing.length) { console.error(`${key} needs ${missing.join(', ')}\n  usage: node kernel/src/cli.ts ${USAGE[key].use.replace(/\s{2,}/g, ' ')}`); return 2; }
   switch (cmd) {
     case 'init': {
       // first run: create state/, copy the starter ontology from templates/ (bedrock is only ever written by the kernel)
@@ -131,7 +149,7 @@ function main(): number {
       }
       if (rest[0] === 'rebind') return write(() => cellRebind(cell, { name: opt('name'), binding: opt('binding') }));
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }
-      if (rest[0] !== 'new') { console.error('usage: cell new --name <name> [--binding <file.json>] · cell refresh --name <name> · cell rebind --name <name> [--binding <file.json>] · cell sync · cell checkout --name <name> [--path <dir>] · cell audit --name <name> [--except <glob>]… · cell land --name <name> [--message …] [--check <cmd>] [--into <branch>] [--dry-run]'); return 2; }
+      if (rest[0] !== 'new') { console.error(usage(group('cell'))); return 2; }
       return write(() => cellNew(cell, { name: opt('name'), binding: opt('binding') }));
     case 'review': {
       const name = (d: string) => (!isCell(d) ? 'root' : d.replaceAll('\\', '/').split('/').at(-1)!);
@@ -155,7 +173,7 @@ function main(): number {
         if (!n) console.log('(no open reviews)');
         return 0;
       }
-      console.error('usage: review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (operator only)');
+      console.error(usage(group('review')));
       return 2;
     }
     case 'fold':
@@ -178,7 +196,7 @@ function main(): number {
       return errors ? 1 : 0;
     }
     default:
-      console.error('usage: cli.ts <init|append|assume|evidence|constraint|amend|approve|register|cell|fold|lint> [--cell dir]');
+      console.error(usage(Object.keys(USAGE)));
       return 2;
   }
 }

@@ -202,6 +202,34 @@ test('bedrock: with a draft and an amend on top, lint\'s hint is the command tha
   assert.deepEqual(lintBedrock(cell, readLog(cell)).warnings, []);
 });
 
+test('cli: <cmd> --help prints its usage; a command missing flags names every one, and writes nothing (#6)', () => {
+  // apify-actor-dev learnt the flags by grepping cli.ts for opt(): `assume` said "needs --statement", then the next.
+  const cell = freshCell();
+  const cli = (...a: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), ...a, '--cell', cell], { encoding: 'utf8' });
+  let r = cli('evidence', '--help');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /evidence\s+--id A1 --status guess\|some\|evidence\|refuted --note/);
+  r = cli('cell', 'land', '--help');
+  assert.match(r.stdout, /cell land\s+--name <name>.*--check/);
+  assert.doesNotMatch(r.stdout, /cell new/);                                 // only the one asked for
+  r = cli('--help');
+  assert.equal(r.status, 0);
+  for (const c of ['init', 'append', 'assume', 'evidence', 'constraint', 'stage', 'amend', 'register', 'cell new', 'cell land', 'review raise', 'fold', 'lint'])
+    assert.match(r.stdout, new RegExp(`^  ${c}\\b`, 'm'), c);
+  r = cli('evidence');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /evidence needs --id, --status, --note/);          // all at once
+  assert.match(r.stderr, /usage: node kernel\/src\/cli\.ts evidence --id A1/);
+  r = cli('amend', '--doc', 'ontology');
+  assert.match(r.stderr, /amend needs --layer, --reason/);
+  r = cli('review', 'decide', '--id', 'R-0001');
+  assert.match(r.stderr, /review decide needs --yes\|--no/);
+  r = cli('cell', 'nope');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /cell new\s+--name/);                               // an unknown subcommand: the group's usage
+  assert.equal(existsSync(join(cell, 'state', 'log')), false);               // nothing written by any of them
+});
+
 test('cell new: born by script with brief, hooks, mailboxes, first entries, and a record in the parent', async () => {
   const { cellNew } = await import('../src/cell.ts');
   const root = freshCell();

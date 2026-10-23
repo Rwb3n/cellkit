@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Commands**
+- **`cli.ts <command> --help`, and a refusal names every missing flag** (#6; apify-actor-dev). Flags were learnt by grepping `cli.ts` for `opt(`: `assume` said "needs --statement", then the next run named the next flag. One table in `cli.ts` now holds every command's usage and the flags it needs: `--help` prints a command's (`cell land --help`) or all of them (`--help`), and a command missing flags is refused naming all of them with its usage line, before it writes anything. An unknown command or subcommand prints the usage of its group.
+
 **Fixes**
 - **`<name>.env` is a secret** (#5; callsheet). The read guard's defaults matched `.env` and `.env.*` only: callsheet's instrument kept its key in `vein.env` and renamed it to be covered. Now `<name>.env` and `<name>.env.<x>` are denied too, never `*.env.example`, and a search over a folder holding one must be narrowed. `process.env` in code is not a file.
 - **Lint's approval hint is the command that works** (#4; callsheet). `init` registers the starter ontology as a draft; an amend on top leaves two proposals pending, and lint's hint (`approve --doc ontology`) was then refused for want of `--proposal`: callsheet's operator ran it twice. With several pending, lint now lists them and names the newest (`approve --doc <doc> --proposal <newest>`; approving it drops the older ones, the starter included), and approve's refusal ends with the same command. A doc with one proposal pending on top of an approved version now gets the hint too.
