@@ -95,8 +95,8 @@ export function worktrees(root: string): { path: string; branch: string | null; 
   });
 }
 
-// The folder git still holds branch `branch` checked out in, if that folder is gone (a by-hand delete of a locked worktree).
-const registered = (main: string, branch: string) => worktrees(main).find((w) => w.branch === branch && !existsSync(w.path))?.path ?? null;
+// The worktree git still holds branch `branch` checked out in, if its folder is gone (deleted by hand; prune leaves a locked one).
+const registered = (main: string, branch: string) => worktrees(main).find((w) => w.branch === branch && !existsSync(w.path)) ?? null;
 
 // ── cell checkout ────────────────────────────────────────────────────────────────
 // Give cell `name` its own worktree on branch cell/<name>, made from HEAD (so the cell must be committed there).
@@ -115,7 +115,7 @@ export function cellCheckout(root: string, o: { name?: string; path?: string }):
   if (existsSync(dest)) throw new WorktreeError(`${dest} already exists`);
   const branch = cellBranch(name);
   const stale = registered(main, branch);
-  if (stale) throw new WorktreeError(`branch ${branch} is still registered to the worktree ${stale}, which is gone. If nothing there is needed: git worktree unlock "${stale}" && git worktree prune, then check out again`);
+  if (stale) throw new WorktreeError(`branch ${branch} is still registered to the worktree ${stale.path}, which is gone. If nothing there is needed: ${stale.locked ? `git worktree unlock "${stale.path}" && ` : ''}git worktree prune, then check out again`);
   // locked (#22): a cell's worktree is kept, not throwaway; removing it takes git worktree remove -f -f
   const lock = ['--lock', '--reason', `cell ${name}`];
   if (git(main, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], false).trim()) git(main, ['worktree', 'add', ...lock, dest, branch]);

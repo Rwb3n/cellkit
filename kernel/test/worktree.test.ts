@@ -71,6 +71,11 @@ test('worktree: cell checkout makes a worktree on branch cell/<name> beside the 
   git(main, 'worktree', 'unlock', gone);
   git(main, 'worktree', 'prune');
   assert.ok(samePath(cellCheckout(main, { name: 'other' }), gone));
+  git(main, 'worktree', 'unlock', gone);                                     // an unlocked one (checked out before #22), not yet pruned
+  rmSync(gone, { recursive: true, force: true });
+  assert.throws(() => cellCheckout(main, { name: 'other' }), (e: Error) => /: git worktree prune/.test(e.message) && !/unlock/.test(e.message));
+  git(main, 'worktree', 'prune');
+  assert.ok(samePath(cellCheckout(main, { name: 'other' }), gone));
   assert.ok(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8').includes('branch `cell/demo`'));   // the brief says so
   // node_modules is git-ignored, so the worktree has none: its kernel copy (the cell's hooks) loads the main checkout's
   assert.equal(existsSync(join(wt, 'kernel', 'node_modules')), false);
