@@ -27,6 +27,7 @@ import { alive, append } from './log.ts';
 import { sha256 } from './canon.ts';
 import { configPath, loadConfig } from './config.ts';
 import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
+import { refold } from './refold.ts';
 
 export type MailKind = 'task' | 'reply' | 'blocked' | 'question' | 'done';
 export interface Message { id: string; kind: MailKind; from: string; to: string; at: string; body: string; reply_to?: string }
@@ -99,6 +100,8 @@ function logMail(root: string, dir: string, m: Message): void {
     try {
       append(dir, { kind: 'observation', body: { source: { adapter: 'kernel', provider: 'mail', capability: 'mail' }, observed_at: m.at, reliability: [], licence: { store: 'full' },
         payload: { id: m.id, kind: m.kind, from: m.from, to: m.to, ...(m.reply_to ? { reply_to: m.reply_to } : {}), ...body } } });
+      // every write refolds (#7); views are disposable, so a failed refold never fails the mail (lint will say)
+      try { refold(dir); } catch { /* lint: views are stale */ }
       return;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= 5) throw e;

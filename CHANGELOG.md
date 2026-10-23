@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**Fixes**
+- **A cell's views no longer show stale after every land** (#7; callsheet). Mail appended the task and its reply to the cell's log and to root's without refolding, so root's `lint --all` warned "views are stale" after every task; and `fold --cell cells/<x>` run from main folded the main checkout's copy (a snapshot from the last land), not the live log in the cell's worktree that lint reads, so the warning stayed. Now every write refolds the log it wrote, mail included (`refold.ts`, under the log's lock), and `fold` and `lint` of a cell with a worktree go to its log there, as writes already did (the CLI prints a note). Not a line-ending problem, as first guessed on the issue.
+
+**Upgrading a project:** nothing to run. `lint --cell cells/<x>` from main now lints the cell's worktree copy when it has one: the live log, the one `lint --all` already read.
+
 ## v0.4 — guards by act, cells outside the repo (2026-10-23)
 
 What the projects filed since v0.3, now GitHub issues on `Rwb3n/cellkit` (`maintainer/notes/`).

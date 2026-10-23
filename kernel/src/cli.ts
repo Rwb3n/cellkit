@@ -20,20 +20,19 @@
 //   review raise --file r.json [--cell dir] · review list [--all] [--decided] · review decide (OPERATOR ONLY)
 //   fold · lint
 // Mail between cells has its own CLI: node kernel/src/mail.ts send --to <name> · watch [--as root] · status
-// Every write refolds: state/views/* and docs/assumptions.md (generated; hook-blocked).
+// Every write refolds (refold.ts): state/views/* and docs/assumptions.md (generated; hook-blocked).
 // Run from a cell's worktree, every command that writes root's log writes the main checkout's (worktree.ts), so root's
-// hash chain never forks; fold and lint stay local. A write to a cell's log (--cell <cell>) lands in that cell's worktree
-// when it has one, wherever it is run from.
+// hash chain never forks; fold and lint of root stay local. A write, fold or lint of a cell's log (--cell <cell>) goes to
+// that cell's worktree when it has one, wherever it is run from.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { append, AppendError, readLog } from './log.ts';
-import { fold, writeViews } from './fold.ts';
+import { refold as refoldLog } from './refold.ts';
 import { lint } from './lint.ts';
-import { writeDocs } from './render.ts';
 import { assume, constraint, evidence } from './generators.ts';
 import { amend, approve, bedrockDir, foldBedrock, register, stage } from './bedrock.ts';
-import { cellNew, cellRebind, cellRefresh, cellSync, foldCells } from './cell.ts';
+import { cellNew, cellRebind, cellRefresh, cellSync } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
 import { cellAudit, cellBranch, cellCheckout, inMain, samePath, WorktreeError } from './worktree.ts';
@@ -48,21 +47,17 @@ const WRITES = ['init', 'append', 'assume', 'evidence', 'constraint', 'stage', '
 const local = resolve(opt('cell') ?? repoRoot);
 let cell = WRITES.includes(cmd) && !isCell(local) ? inMain(local) : local;
 // A cell with its own worktree keeps its log there (it travels on its branch): a write aimed at another copy of it (the
-// main checkout's, e.g. `review decide --cell cells/<x>` from root) goes to the worktree's, as mail does, so its chain never forks.
-if (WRITES.includes(cmd) && isCell(local) && !samePath(logHome(rootOf(local), nameOf(local)), local)) {
+// main checkout's, e.g. `review decide --cell cells/<x>` from root) goes to the worktree's, as mail does, so its chain
+// never forks. fold and lint follow it too: the main checkout's copy is a snapshot from the last land (#7: `fold --cell
+// cells/<x>` from main folded the snapshot, and lint --all, reading the live log, still found its views stale).
+if ([...WRITES, 'fold', 'lint'].includes(cmd) && isCell(local) && !samePath(logHome(rootOf(local), nameOf(local)), local)) {
   cell = logHome(rootOf(local), nameOf(local));
-  console.error(`note: cells/${nameOf(local)} has its own worktree; writing its log there (${cell})`);
+  console.error(`note: cells/${nameOf(local)} has its own worktree; its log is there (${cell})`);
 }
 const isRoot = cell === repoRoot || cell === inMain(repoRoot);
 
 function refold(): number {
-  const log = readLog(cell);
-  const p = fold(log);
-  writeViews(cell, p);
-  for (const [name, v] of Object.entries({ bedrock: foldBedrock(log), reviews: foldReviews(log), cells: foldCells(log) }))
-    writeFileSync(join(cell, 'state', 'views', `${name}.json`), JSON.stringify(v, null, 2) + '\n', 'utf8');
-  if (isRoot) { mkdirSync(join(repoRoot, 'docs'), { recursive: true }); writeDocs(repoRoot, p); }
-  console.log(JSON.stringify(p.summary));
+  console.log(JSON.stringify(refoldLog(cell, isRoot ? { docs: repoRoot } : {}).summary));
   return 0;
 }
 

@@ -140,6 +140,22 @@ test('worktree: guards.json worktrees.home puts cells in one folder outside the 
   assert.match(checkGuards({ worktrees: { root: 'x' } }).join(), /worktrees: unknown key "root"/);
 });
 
+test('views: mail written to a log refolds its views, so root\'s lint --all is clean after a task and its reply (#7)', (t) => {
+  const { main, cellWt, cellMain } = world(t);
+  for (const d of [main, cellWt, join(main, 'cells', 'other')]) assert.equal(run('cli.ts', ['fold', '--cell', d]).status, 0);
+  const clean = () => { const l = run('cli.ts', ['lint', '--all', '--cell', main]); assert.equal(l.status, 0, l.stderr); assert.doesNotMatch(l.stderr, /views are stale|views missing/); };
+  send(main, 'demo', 'a task');
+  const m = takeNext(cellWt)!;                                              // handed over: on the cell's log, in its worktree
+  send(cellWt, 'root', 'the answer', 'reply', m.id);                       // filed: on both logs
+  clean();
+  // fold aimed at the main checkout's copy (a snapshot from the last land) folds the cell's live log, in its worktree
+  rmSync(join(cellWt, 'state', 'views'), { recursive: true, force: true });
+  const f = run('cli.ts', ['fold', '--cell', cellMain]);
+  assert.equal(f.status, 0, f.stderr);
+  assert.match(f.stderr, /has its own worktree; its log is there/);
+  clean();
+});
+
 test('worktree: root and the cell\'s worktree share one mailbox outside both checkouts; each log records mail in one place', (t) => {
   const { main, wt, cellWt, cellMain } = world(t);
   assert.equal(mailbox(cellMain), mailbox(cellWt));
@@ -174,10 +190,10 @@ test('worktree: a write to a cell log from the main checkout lands in the cell w
   const before = { main: readLog(cellMain).length, wt: readLog(cellWt).length };
   const r = run('cli.ts', ['assume', '--cell', cellMain, '--id', 'A1', '--voice', 'claude', '--statement', 's', '--test', 't']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /has its own worktree; writing its log there/);
+  assert.match(r.stderr, /has its own worktree; its log is there/);
   assert.equal(readLog(cellMain).length, before.main);                       // the main checkout's copy is untouched
   assert.equal(readLog(cellWt).length, before.wt + 2);
-  assert.equal(run('cli.ts', ['lint', '--cell', cellMain]).status, 0);       // reads stay local
+  assert.equal(run('cli.ts', ['lint', '--cell', cellMain]).status, 0);       // lint follows it there too (#7)
 });
 
 test('worktree: a session opened in the main checkout is refused — no writes, no new mail — and told where to reopen', (t) => {
@@ -498,6 +514,7 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.equal(clean(main), '');                                             // nothing left uncommitted in root
   assert.equal(clean(wt), '');
   assert.equal(run('cli.ts', ['lint', '--cell', main]).status, 0);
+  assert.doesNotMatch(run('cli.ts', ['lint', '--all', '--cell', main]).stderr, /(root|demo): views (are stale|missing)/);   // #7
   assert.match(land().stdout, /nothing to land/);
 });
 
