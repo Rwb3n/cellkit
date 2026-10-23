@@ -39,6 +39,9 @@ export function simpleCommands(command: string): string[][] {
 const LAST = /^(cp|mv|copy|move|cpi|mi|copy-item|move-item|ln)$/i;
 const ALL = /^(rm|rmdir|touch|mkdir|tee|truncate|del|erase|rd|ri|remove-item|ni|new-item|sc|set-content|ac|add-content|clear-content|out-file|ren|rename|rename-item|unlink)$/i;
 export const CD = /^(cd|set-location|sl|chdir|pushd)$/i;
+// Of those, the verbs that delete or move their paths away: a folder they name goes, with whatever it holds (#49).
+const REMOVES = /^(rm|rmdir|del|erase|rd|ri|remove-item|ren|rename|rename-item|unlink)$/i;
+const MOVES = /^(mv|move|mi|move-item)$/i;
 
 // $X, ${X}, %X%, $env:X from the environment (an unset one stays as written, so it still reads as unjudgeable)
 export const expandEnv = (s: string) => s.replace(/\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%/gi, (m, a, b, c, d) => process.env[a ?? b ?? c ?? d] ?? m);
@@ -147,7 +150,7 @@ export function parts(command: string): { text: string; shell: string[]; code: s
 }
 
 // Writes in program code (SF-DEV): a quoted string or heredoc that holds one counts.
-export const writePrimitive = /writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|WriteAllText|WriteAllLines|AppendAllText|write_text|write_bytes|\bopen\([^)]*,\s*['"][wax]|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b/i;
+export const writePrimitive = /writeFileSync|appendFileSync|unlinkSync|rmSync|rmdirSync|renameSync|\bshutil\.(rmtree|move)\b|\bos\.(remove|unlink|rmdir)\b|WriteAllText|WriteAllLines|AppendAllText|write_text|write_bytes|\bopen\([^)]*,\s*['"][wax]|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Remove|Copy|Move|New|Rename)-Item\b/i;
 
 // The command as acts, for the text checks: quoted text blanked unless it holds a write primitive (code for a runner
 // parts() doesn't know: `deno eval "…"`) or substitutes a command; data heredocs dropped; what runs (shell strings, code
@@ -162,10 +165,11 @@ export function acts(command: string, depth = 0): string {
 }
 
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
-// git's checkout, restore, rm or mv writes, already joined to the folder git's own options name. Data heredocs are text
-// (#2); what runs in a shell string or a shell-fed heredoc counts.
-export function writeTargets(command: string): { cd?: string; target?: string; git?: boolean }[] {
-  const out: { cd?: string; target?: string; git?: boolean }[] = [];
+// git's checkout, restore, rm or mv writes, already joined to the folder git's own options name; `removes` one deleted
+// or moved away (rm, mv's sources). Data heredocs are text (#2); what runs in a shell string or a shell-fed heredoc counts.
+export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean }
+export function writeTargets(command: string): WriteTarget[] {
+  const out: WriteTarget[] = [];
   for (const words of commandsRun(command)) {
     for (let i = 0; i < words.length; i++) if (/^(\d|&)?>>?$/.test(words[i]) && words[i + 1]) out.push({ target: words[i + 1] });
     const ws = words.filter((w, i) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(words[i - 1] ?? ''));
@@ -182,14 +186,24 @@ export function writeTargets(command: string): { cd?: string; target?: string; g
         for (const p of gargs.filter((a) => !a.startsWith('-')))
           for (const b of bases) out.push({ target: b ? posix.normalize(/^([a-zA-Z]:)?\//.test(p.replaceAll('\\', '/')) ? p : `${b}/${p}`) : p, git: true });
     }
-    else if (LAST.test(verb) && plain.length) out.push({ target: plain.at(-1)! });
-    else if (ALL.test(verb)) for (const a of plain) out.push({ target: a });
+    else if (LAST.test(verb) && plain.length) {
+      out.push({ target: plain.at(-1)! });
+      if (MOVES.test(verb)) for (const a of plain.slice(0, -1)) out.push({ target: a, removes: true });   // mv's sources go
+    }
+    else if (ALL.test(verb)) for (const a of plain) out.push({ target: a, ...(REMOVES.test(verb) ? { removes: true } : {}) });
     else if (verb === 'sed' && args.some((a) => /^-i/.test(a)) && plain.length) out.push({ target: plain.at(-1)! });
   }
   return out;
 }
 
 // The simple commands a command runs (words, quotes taken off): its own, less data heredocs, then what runs inside it.
+// The paths a script's file calls name, in code a command runs (acts): `rmSync('state/views', …)`, `shutil.rmtree('state')`.
+// Deletes, renames and removing moves mark `removes` (the path goes, with what it holds); a write names only its file (#49).
+const CODE_CALL = /\b(rmSync|rmdirSync|unlinkSync|renameSync|writeFileSync|appendFileSync|rmtree|remove|unlink|rmdir|move|rm)\s*\(\s*(['"])([^'"\n]+)\2/g;
+export function codeTargets(code: string): WriteTarget[] {
+  return [...code.matchAll(CODE_CALL)].map((m) => ({ target: m[3], ...(/^(writeFileSync|appendFileSync)$/.test(m[1]) ? {} : { removes: true }) }));
+}
+
 export function commandsRun(command: string, depth = 0): string[][] {
   const p = parts(command);
   return [...simpleCommands(p.text), ...(depth < 4 ? p.shell.flatMap((s) => commandsRun(s, depth + 1)) : [])];

@@ -22,7 +22,7 @@ import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
 import { basename, posix, resolve } from 'node:path';
-import { acts, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
+import { acts, codeTargets, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
 
 let raw = '';
@@ -144,11 +144,35 @@ for (const words of commandsRun(command)) {
   const side = /^(merge|pull|cherry-pick|rebase|reset)$/i.test(sub) && args.find((a) => !a.startsWith('-') && /(^|[/.])worktree-[\w.-]/i.test(a));
   if (side) block(`${side} is a branch of Claude Code's own worktree (.claude/worktrees/): its work reaches main only through cell land or root's own commits, never a merge of the branch. Turn the change into a cell task, or redo it as a commit on main. If the operator wants this merge, they run it from their prompt.`);
 }
-// Every write target, quoted or not (#2: the text check above no longer sees inside quotes): `cp a "state/log/x"`.
-for (const t of writeTargets(command)) {
-  if (/state[\\/]bedrock[\\/]proposed[\\/]/i.test(t.target ?? '') || !t.target) continue;
-  if (t.git ? kernelOwned(t.target) || holdsOwned(t.target) : kernelOwned(t.target) && !viaKernel.test(command))
-    block(`that command writes ${t.target}${t.git ? ' (git restores or removes it)' : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it${t.git ? ', or name the files you mean' : ''}.`);
+// A path deleted or moved away by the shell or a script (rm, mv's sources, rmSync, rmtree) holds a kernel-owned one (#49):
+// as holdsOwned, but a glob in its last name matches names, not the whole folder (`rm *.tmp` is fine, `rm -rf *` takes
+// state/). git's pathspecs keep holdsOwned: `*.md` there matches at any depth, docs/assumptions.md included.
+function removesOwned(target: string): boolean {
+  const p = target.replaceAll('\\', '/').replace(/\/+$/, '');
+  const i = p.lastIndexOf('/'), dir = i < 0 ? '.' : p.slice(0, i) || '/', last = p.slice(i + 1);
+  if (!/[*?[]/.test(last) || /[*?[]/.test(dir)) return holdsOwned(target);
+  if (holdsOwned(dir) && /(^|\/)cells$/i.test(posix.normalize(dir))) return true;                  // cells/*: some cell
+  const re = new RegExp(`^${last.replace(/[.+^${}()|\\]/g, '\\$&').replaceAll('*', '[^/]*').replaceAll('?', '[^/]')}$`, 'i');
+  return ['state', 'docs', 'cells', 'log', 'views', 'bedrock', 'assumptions.md'].some((n) => re.test(n) && (holdsOwned(`${dir}/${n}`) || !!kernelOwned(`${dir}/${n}/`) || !!kernelOwned(`${dir}/${n}`)));
+}
+// Every write target, quoted or not (#2: the text check above no longer sees inside quotes): `cp a "state/log/x"`, and
+// every path a script's file call names; each joined to the folder a `cd` before it named. A kernel-owned folder is
+// kernel-owned without its slash too (`rm -rf state/log`, `rmSync('state/views')`: #49), and a path removed or moved away
+// may not hold one (`rm -rf docs`, `rm -rf *`), as git's may not (#1).
+let base = '';
+for (const t of [...writeTargets(command), ...codeTargets(act)]) {
+  if (t.cd !== undefined) {
+    const d = t.cd.replaceAll('\\', '/');
+    base = /^([a-zA-Z]:)?\//.test(d) ? d : /^[\w.\/-]+$/.test(d) ? posix.join(base || '.', d) : '';   // $x, ~, -: as before
+    continue;
+  }
+  if (!t.target || /state[\\/]bedrock[\\/]proposed([\\/]|$)/i.test(t.target)) continue;   // staging a proposal is anyone's
+  const joined = t.git || !base || /^([a-zA-Z]:)?[\\/]/.test(t.target) ? t.target : posix.join(base, t.target.replaceAll('\\', '/'));
+  // Git Bash's /d/x is D:/x on Windows (as the read guard reads it): `cd /d/PROJECTS/x && rm -rf state/views` passed
+  const p = process.platform === 'win32' ? joined.replace(/^\/([a-zA-Z])(\/|$)/, '$1:/') : joined;
+  const owned = t.git ? kernelOwned(p) || holdsOwned(p) : (kernelOwned(p) || kernelOwned(`${p}/`) || (t.removes && removesOwned(p))) && !viaKernel.test(command);
+  if (owned)
+    block(`that command ${t.removes ? 'removes' : 'writes'} ${p}${t.git ? ' (git restores or removes it)' : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
 }
 } catch (e) {
   block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);

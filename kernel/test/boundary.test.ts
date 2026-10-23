@@ -154,6 +154,27 @@ test('shell guard: it matches what a command does, not text it carries (#2)', ()
     assert.equal(tryShell(c), 2, c);
 });
 
+test('shell guard: a kernel-owned folder named without its slash, or a folder holding one removed, is refused (#49)', () => {
+  // Before #49 only `state/log/` (with the slash) matched: `rm -rf state/log` and `rmSync('state/views')` passed.
+  for (const c of ['rm -rf state/log', 'rm -r state/views', 'rmdir state/bedrock', 'mv state/bedrock old/', 'mv x.json state/log',
+    'rm -rf cells/demo/state/log', 'Remove-Item -Recurse state\\views', 'rm -rf "state/log"',
+    'rm -rf docs', 'rm -rf state', 'rm -rf .', 'rm -rf *', 'rm -rf ./*', 'rm -rf cells/demo', 'rm -rf cells/*', 'mv docs old-docs',
+    'cd state && rm -rf log', 'cd cells/demo && rm -rf state', 'cd cells && rm -rf demo/state/views',
+    "node - <<'EOF'\nrequire('fs').rmSync('state/views', { recursive: true })\nEOF", 'node -e "require(\'fs\').rmSync(\'docs\', { recursive: true })"',
+    "python - <<'EOF'\nimport shutil\nshutil.rmtree('state')\nEOF", 'node -e "require(\'fs\').renameSync(\'state/log\', \'old\')"'])
+    assert.equal(tryShell(c), 2, c);
+  // the repo by its absolute path, and on Windows by Git Bash's /d/x for D:/x (root's own session ran `cd /d/… && rm -rf state/views`)
+  const here = process.cwd().replaceAll('\\', '/');
+  const bashForm = process.platform === 'win32' ? `/${here[0].toLowerCase()}${here.slice(2)}` : here;
+  for (const r of [here, bashForm])
+    for (const c of [`cd ${r} && rm -rf state/views`, `rm -rf ${r}/state/log`, `echo x > ${r}/state/log/000009.claim.json`, `cd ${r}/cells && rm -rf demo`])
+      assert.equal(tryShell(c), 2, c);
+  for (const c of ['mkdir -p test/fixtures/x/state/views', 'rm -rf test/fixtures/x/state', 'rm *.tmp', 'rm -rf build node_modules',
+    'cp notes.md docs/', 'mv draft.md docs/guide.md', 'cd docs && rm old.md', 'rm -rf cells/demo/exit', 'rm -rf state/out',
+    'mkdir -p state/bedrock/proposed', 'node -e "require(\'fs\').rmSync(\'build\', { recursive: true })"', 'cd /tmp && rm -rf state'])
+    assert.equal(tryShell(c), 0, c);
+});
+
 test('shell guard: git checkout, restore, rm and mv write their paths, read through git\'s own options (#1)', () => {
   // Before #1 the bare `git checkout -- docs/assumptions.md` passed (no write verb in the text), and every form behind
   // git's options (-C <dir>, --work-tree, --git-dir, -c, --no-pager) did too. AI-MMO 1e39484 (test_hooks.py).
