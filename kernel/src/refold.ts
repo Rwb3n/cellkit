@@ -1,6 +1,7 @@
 // Every write refolds: a log's views (state/views/*) are fold(log), rebuilt by whoever appends, so lint never finds
 // them behind their log (#7: mail appended a task and its reply to a cell's log and root's without refolding, and every
-// land then showed both stale). Under the log's lock, so two writers never leave the older picture behind.
+// land then showed both stale). Under the log's lock, so two writers never leave the older picture behind: insurance,
+// untested; 8 processes mailing one log, 5 rounds, kept the views current with the lock taken out too (2026-10-23).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLog, withLock } from './log.ts';

@@ -154,6 +154,11 @@ test('views: mail written to a log refolds its views, so root\'s lint --all is c
   assert.equal(f.status, 0, f.stderr);
   assert.match(f.stderr, /has its own worktree; its log is there/);
   clean();
+  // a summary caught half-written (another process refolding) is a warning, never a crash of the session-start lint
+  writeFileSync(join(main, 'state', 'views', 'summary.json'), '{"head": "sha');
+  const torn = run('cli.ts', ['lint', '--cell', main]);
+  assert.equal(torn.status, 0, torn.stderr);
+  assert.match(torn.stderr, /views unreadable — run fold/);
 });
 
 test('worktree: root and the cell\'s worktree share one mailbox outside both checkouts; each log records mail in one place', (t) => {

@@ -140,8 +140,11 @@ export function lint(cellDir: string): LintResult {
   const summaryPath = join(viewsDir(cellDir), 'summary.json');
   if (files.length && !existsSync(summaryPath)) warnings.push('views missing — run fold');
   else if (existsSync(summaryPath)) {
-    const head = JSON.parse(readFileSync(summaryPath, 'utf8')).head;
-    if (head !== prev) warnings.push('views are stale (built from an older log head) — run fold');
+    // another process may be refolding this log right now (a cell's mail refolds root's): a torn file is a warning
+    let head: unknown;
+    try { head = JSON.parse(readFileSync(summaryPath, 'utf8')).head; } catch { head = undefined; }
+    if (head === undefined) warnings.push('views unreadable — run fold');
+    else if (head !== prev) warnings.push('views are stale (built from an older log head) — run fold');
   }
   return { errors, warnings, entries: files.length };
 }
