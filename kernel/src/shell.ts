@@ -119,7 +119,8 @@ export function piped(s: string): { seg: string; up: string[] }[] {
     const c = s[i];
     if (q) { cur += c; if (c === q) q = ''; continue; }
     if (c === '"' || c === "'") { q = c; cur += c; continue; }
-    if ((c === '\\' || c === '`') && /^\r?\n/.test(s.slice(i + 1, i + 3))) { cur += ' '; i += s[i + 1] === '\r' ? 2 : 1; continue; }   // a continued line
+    // a continued line: ` \` (bash) or `` ` `` (PowerShell) after a space; a path's own trailing \ is no continuation (`cd src\`)
+    if ((c === '\\' || c === '`') && /\s$/.test(cur) && /^\r?\n/.test(s.slice(i + 1, i + 3))) { cur += ' '; i += s[i + 1] === '\r' ? 2 : 1; continue; }
     if (c === '\n' && pipe && !cur.trim()) continue;                       // `a |` then the next command on the next line
     if (c === ';' || c === '\n' || c === '|' || (c === '&' && s[i - 1] !== '>' && s[i + 1] !== '>')) {
       push();

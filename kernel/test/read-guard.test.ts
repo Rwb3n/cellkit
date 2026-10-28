@@ -157,10 +157,12 @@ test('read guard: prose in a script\'s strings is text; Select-String reads its 
     '(cat .env)', '(cd /tmp) && cat .env',                                   // a subshell's cd ends at its close
     // second review: a wrapped listing, a glob, a pattern that isn't `*.<ext>`, an abbreviated parameter, a pipe over lines
     '@(gci -r) | Select-String KEY', '(gci -r) | Select-String KEY', '& { gci -r } | Select-String KEY', 'gci -r * | Select-String KEY',
-    'gci -r -Filter *env* | Select-String KEY', 'gci -r -Include *.* | Select-String KEY', 'gci -r -Fil * | Select-String KEY', 'gci -r |\n Select-String KEY'])
+    'gci -r -Filter *env* | Select-String KEY', 'gci -r -Include *.* | Select-String KEY', 'gci -r -Fil * | Select-String KEY', 'gci -r |\n Select-String KEY',
+    'cd src\\\nGet-Content ..\\.env', 'dir src\\\ncat .env'])                    // a path's trailing \ continues no line (third review)
     assert.equal(sh(c), 2, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
-  for (const c of ['gci -r -Include *.ts,*.md | Select-String KEY', 'gci -r -Fil *.ts | Select-String KEY', 'Get-Process | Select-String node', 'git log |\n  Select-String fix'])
+  for (const c of ['gci -r -Include *.ts,*.md | Select-String KEY', 'gci -r -Fil *.ts | Select-String KEY', 'Get-Process | Select-String node', 'git log |\n  Select-String fix',
+    'npm ls | Select-String react', 'gci -r -Filter *.test.ts | Select-String describe', 'gci -r -Filter package.json | Select-String version'])
     assert.equal(sh(c), 0, c);
 });
 

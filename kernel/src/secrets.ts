@@ -181,7 +181,8 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
     const LISTING = /^[@$&({.\s]*(Get-ChildItem|gci|ls|dir|Get-Item|gi|Resolve-Path|rvpa)[)}]*$/i;
     const param = (a: string, ...names: string[]) => { const n = a.slice(1).toLowerCase(); return a.startsWith('-') && n.length > 1 && names.some((x) => x.startsWith(n)); };
     for (const u of up) {
-      const w = simpleCommands(u).filter((x) => !isMark(x)).flat();
+      // where a command starts, past wrappers (`& { gci }`, `. gci`): `npm ls`, `echo dir` list no files
+      const w = simpleCommands(u).filter((x) => !isMark(x)).find((c) => LISTING.test(c.find((x) => !/^[{.&]$/.test(x)) ?? '')) ?? [];
       const at = w.findIndex((x) => LISTING.test(x));
       if (at < 0) continue;
       const args = w.slice(at + 1).map((a) => a.replace(/[)}]+$/, '')).filter(Boolean), pats: string[] = [], ops: string[] = [];
@@ -196,11 +197,14 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
         const d = denied(t, cwd, own);
         if (d) return `that command reads ${d.path} (${d.why}) through its pipeline: no session reads it. ${how}`;
       }
-      if (pats.length && pats.every((x) => /^\*\.[A-Za-z0-9]+$/.test(x))) continue;
+      // a pattern narrows when it is a literal name, or one after a leading *, that no secret's name can match
+      // (`*.test.ts`, `package.json`); `*`, `*.*`, `.e*`, `*env*` don't
+      const narrows = (x: string) => /^\*?[^*?[\]]+$/.test(x) && !['x', '.', '.x', ''].some((pre) => denied(x.replace(/^\*/, pre), cwd, own));
+      if (pats.length && pats.every(narrows)) continue;
       const dirs = ops.length ? ops.map((t) => /[*?[]/.test(t) ? absPath(t.replace(/[\\/]?[^\\/]*[*?[].*$/, '') || '.', cwd) : absPath(t, cwd)).filter(isDir) : [cwd];
       for (const dir of dirs) {
         const h = treeHolds(dir, '', own);
-        if (h) return `a search of what ${w[at]} lists in ${dir} would read ${h.path} (${h.why}). List a subfolder, or narrow it (-Filter *.<ext>).`;
+        if (h) return `a search of what ${w[at]} lists in ${dir} would read ${h.path} (${h.why}). List a subfolder, or narrow it (-Filter *.ts).`;
       }
     }
     return null;
