@@ -167,7 +167,9 @@ function removesOwned(target: string): boolean {
 // kernel-owned without its slash too (`rm -rf state/log`, `rmSync('state/views')`: #49), and a path removed or moved away
 // may not hold one (`rm -rf docs`, `rm -rf *`), as git's may not (#1).
 let base = '';
+const saved: string[] = [];
 for (const t of [...writeTargets(command), ...codeTargets(act)]) {
+  if (t.sub) { if (t.sub === 'open') saved.push(base); else base = saved.pop() ?? base; continue; }   // a subshell's cd ends at its close
   if (t.cd !== undefined) {
     const d = t.cd.replaceAll('\\', '/');
     base = /^([a-zA-Z]:)?\//.test(d) ? d : /^[\w.\/-]+$/.test(d) ? posix.join(base || '.', d) : '';   // $x, ~, -: as before

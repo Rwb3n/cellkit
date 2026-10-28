@@ -161,7 +161,11 @@ test('shell guard: a kernel-owned path and a write are one act only in one comma
     assert.equal(tryShell(c), 0, c);
   // a variable in a write: the whole command is the act
   for (const c of ['git add docs/assumptions.md; echo x > docs/assumptions.md', 'f=state/log/x.json; echo y > $f', "$p = 'state/log/x.json'; [IO.File]::WriteAllText($p, 'x')",
-    "python - <<'EOF'\np = 'state/log/x.json'\nopen(p, 'w').write('x')\nEOF", 'cp a.md state/bedrock/proposed/ontology.md; cp b.md state/bedrock/ontology.md'])
+    "python - <<'EOF'\np = 'state/log/x.json'\nopen(p, 'w').write('x')\nEOF", 'cp a.md state/bedrock/proposed/ontology.md; cp b.md state/bedrock/ontology.md',
+    // a pipeline is one act: the path one command prints is what the next writes (review of #81)
+    'echo state/log/x.md | xargs rm', "sh -c 'echo state/log/x.md' | xargs rm", 'ls state/views/* | xargs -I{} cp /tmp/a {}',
+    'Get-Item state/log/x.md | Remove-Item', "'state/log/x.md' | Remove-Item", '"docs/assumptions.md" | Clear-Content',
+    'Get-Item docs/assumptions.md | Set-Content -Value x'])
     assert.equal(tryShell(c), 2, c);
 });
 
@@ -176,6 +180,11 @@ test('shell guard: parens end a word, so a subshell\'s redirect to the null devi
   assert.equal(shellIn(cell, '(cd .. && echo x > y.txt)'), 2);        // the subshell's cd is followed
   assert.equal(shellIn(cell, "Set-Content -Path (Join-Path ../.. 'docs/x.md') -Value 1"), 2);   // an argument's parens are no subshell
   assert.equal(tryShell('Remove-Item -Recurse (Join-Path . state)'), 2);
+  // a subshell's cd ends at its close (review of #75: `(cd /tmp) && rm -rf state/log` passed)
+  for (const c of ['(cd /tmp) && rm -rf state/log', '(cd /tmp); rm -rf docs', '(cd /tmp) && git checkout -- docs/assumptions.md', '(ls && cd /tmp) && rm -rf state'])
+    assert.equal(tryShell(c), 2, c);
+  assert.equal(shellIn(cell, `(cd ${tmpdir().replaceAll('\\', '/')}) && echo x > ../../docs/x.md`), 2);
+  assert.equal(shellIn(cell, `(cd ${tmpdir().replaceAll('\\', '/')} && echo x > scratch.txt)`), 0);   // inside it, it holds
 });
 
 test('shell guard: a kernel-owned folder named without its slash, or a folder holding one removed, is refused (#49)', () => {

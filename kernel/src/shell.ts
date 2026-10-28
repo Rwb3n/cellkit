@@ -4,6 +4,12 @@
 import { tmpdir } from 'node:os';
 import { posix } from 'node:path';
 
+// A subshell opens and closes: marker commands simpleCommands puts where its parens stand.
+export const OPEN = '\u0000(', CLOSE = '\u0000)';
+export const isMark = (words: string[]) => words.length === 1 && (words[0] === OPEN || words[0] === CLOSE);
+// The first command of a segment that is not a subshell's marker.
+export const firstCommand = (s: string): string[] => simpleCommands(s).find((w) => !isMark(w)) ?? [];
+
 // split into simple commands (; && || | newline, a subshell's parens) and words, honouring quotes
 export function simpleCommands(command: string): string[][] {
   const out: string[][] = [[]];
@@ -17,9 +23,10 @@ export function simpleCommands(command: string): string[][] {
     if (/\s/.test(c) && c !== '\n') { end(); continue; }
     // A subshell's parens, where a command starts, end a word and a command (#75: `(ls 2>/dev/null)` read the target as
     // `/dev/null)`). Any other paren stays in its word, as before: PowerShell's `-Path (Join-Path . state)` is an argument.
-    if (c === '(' && !had && !out.at(-1)!.length) { parens.push(true); continue; }
+    // Each is marked by a command of its own (OPEN, CLOSE), so a cd inside is undone at its close (`(cd /tmp) && rm x`).
+    if (c === '(' && !had && !out.at(-1)!.length) { parens.push(true); out.at(-1)!.push(OPEN); out.push([]); continue; }
     if (c === '(') parens.push(false);
-    if (c === ')' && parens.pop()) { end(); if (out.at(-1)!.length) out.push([]); continue; }
+    if (c === ')' && parens.pop()) { end(); if (out.at(-1)!.length) out.push([]); out.at(-1)!.push(CLOSE); out.push([]); continue; }
     if (c === ';' || c === '\n' || c === '|' || c === '&') {
       end();
       if ((c === '&' && command[i - 1] === '>') || (c === '&' && command[i + 1] === '>')) { word = '&'; had = true; continue; }
@@ -101,11 +108,11 @@ export function verbOf(words: string[]): { verb: string; i: number } {
 export function segments(s: string): string[] {
   return piped(s).map((x) => x.seg);
 }
-// The same, each marked `from` the segment a single | feeds into it ('' when none).
-export function piped(s: string): { seg: string; from: string }[] {
-  const out: { seg: string; from: string }[] = [];
-  let cur = '', q = '', pipe = false, prev = '';
-  const push = () => { const t = cur.trim(); if (t) { out.push({ seg: t, from: pipe ? prev : '' }); prev = t; } cur = ''; };
+// The same, each with `up`: the segments a single | feeds into it, first to last (none: []).
+export function piped(s: string): { seg: string; up: string[] }[] {
+  const out: { seg: string; up: string[] }[] = [];
+  let cur = '', q = '', pipe = false;
+  const push = () => { const t = cur.trim(); if (t) { const prev = out.at(-1); out.push({ seg: t, up: pipe && prev ? [...prev.up, prev.seg] : [] }); } cur = ''; };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (q) { cur += c; if (c === q) q = ''; continue; }
@@ -124,7 +131,7 @@ export function piped(s: string): { seg: string; from: string }[] {
 
 // How the command before a heredoc reads its body: as shell commands, as program code, or (null) as data.
 function reader(head: string): 'shell' | 'code' | null {
-  const words = simpleCommands(segments(head).at(-1) ?? '')[0] ?? [];
+  const words = firstCommand(segments(head).at(-1) ?? '');
   const { verb, i } = verbOf(words);
   const args = words.slice(i + 1).filter((w, j, a) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(a[j - 1] ?? ''));
   const script = args.find((w) => !w.startsWith('-'));
@@ -147,7 +154,7 @@ export function parts(command: string): { text: string; shell: string[]; code: s
   const unsingle = text.replace(/'[^']*'/g, (q) => ' '.repeat(q.length));
   for (const m of unsingle.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) shell.push(m[1] ?? m[2]);
   for (const seg of segments(text)) {
-    const words = simpleCommands(seg)[0] ?? [];
+    const words = firstCommand(seg);
     const { verb, i } = verbOf(words);
     if (/^eval$/i.test(verb)) { shell.push(words.slice(i + 1).join(' ')); continue; }
     if (SHELLS.test(verb)) {
@@ -176,17 +183,19 @@ export function acts(command: string, depth = 0): string {
   const p = parts(command);
   return [kept(p.text), ...(depth < 4 ? p.shell.map((s) => acts(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))].join('\n');
 }
-// The same acts, one unit per simple command (#81: a path one command names and a write in another are not one act),
-// but program code whole: its path and its write call may stand on different lines.
+// The same acts, one unit per pipeline (#81: a path one command names and a write in another are not one act; but
+// `echo state/log/x | xargs rm` is one), and program code whole: its path and its write call may stand on different lines.
 export function actUnits(command: string, depth = 0): string[] {
   const p = parts(command);
-  return [...segments(kept(p.text)), ...(depth < 4 ? p.shell.flatMap((s) => actUnits(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))];
+  // each pipeline with what it runs (`sh -c 'echo state/log/x' | xargs rm`): its acts, whole
+  const pipelines = piped(p.text).reduce<string[]>((a, { seg, up }) => (up.length && a.length ? [...a.slice(0, -1), `${a.at(-1)} | ${seg}`] : [...a, seg]), []);
+  return [...pipelines.map((pl) => acts(pl, depth)), ...(depth < 4 ? p.shell.flatMap((s) => actUnits(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))];
 }
 
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
 // git's checkout, restore, rm or mv writes, already joined to the folder git's own options name; `removes` one deleted
 // or moved away (rm, mv's sources). Data heredocs are text (#2); what runs in a shell string or a shell-fed heredoc counts.
-export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string }
+export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string; sub?: 'open' | 'close' }
 // A git command's pathspecs: its arguments that aren't options (nor the value of one in `valued`), or all after `--`;
 // none means the whole checkout ('.').
 function pathspecs(args: string[], valued: string[]): string[] {
@@ -197,6 +206,7 @@ function pathspecs(args: string[], valued: string[]): string[] {
 export function writeTargets(command: string): WriteTarget[] {
   const out: WriteTarget[] = [];
   for (const words of commandsRun(command)) {
+    if (isMark(words)) { out.push({ sub: words[0] === OPEN ? 'open' : 'close' }); continue; }   // a subshell: its cd is undone at the close
     for (let i = 0; i < words.length; i++) if (/^(\d|&)?>>?$/.test(words[i]) && words[i + 1]) out.push({ target: words[i + 1] });
     const ws = words.filter((w, i) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(words[i - 1] ?? ''));
     const [verb, ...args] = ws;
@@ -269,7 +279,9 @@ export function outside(command: string, cwd: string, dir: string, owned: RegExp
   const under = (p: string, d: string) => p === d || p.startsWith(d + '/');
   let here = norm(cwd);
   const resolveIn = (p: string) => { const n = norm(p); return isAbs(n) ? n : norm(`${here}/${n}`); };
-  for (const { cd, target } of writeTargets(command)) {
+  const saved: string[] = [];
+  for (const { cd, target, sub } of writeTargets(command)) {
+    if (sub) { if (sub === 'open') saved.push(here); else here = saved.pop() ?? here; continue; }
     if (cd) { if (!/[$%~`]/.test(cd)) here = resolveIn(cd); continue; }
     const t = target!;
     if (/[$%~`]/.test(t) || t.startsWith('&') || /^(\/dev\/(null|stdout|stderr)|nul|\$null)$/i.test(t)) continue;

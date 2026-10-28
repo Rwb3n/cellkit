@@ -149,8 +149,14 @@ test('read guard: prose in a script\'s strings is text; Select-String reads its 
     assert.equal(sh(c), 0, c);
   for (const c of ['Get-ChildItem -Recurse | Select-String KEY', 'gci | Select-String KEY', 'ls -r . | Select-String KEY',
     "python - <<'EOF'\nimport os\nprint(open(f\"{os.getcwd()}/.env\").read())\nEOF", "python - <<'EOF'\np = '.env'\nprint(open(p).read())\nEOF",
-    "node - <<'EOF'\nconst p = `${process.cwd()}/.env`; require('fs').readFileSync(p)\nEOF"])
+    "node - <<'EOF'\nconst p = `${process.cwd()}/.env`; require('fs').readFileSync(p)\nEOF",
+    // review of #60: a listing that selects the secret, a pass-through between, a file operand, a stray quote
+    'gci -r -Filter .env -Force | Select-String KEY', 'Get-ChildItem -Recurse -Include *.env | Select-String KEY', 'gci -r | Get-Content | Select-String KEY',
+    'gci -r | Where-Object { $_.Length -gt 0 } | Select-String KEY', 'Get-Item .env | Select-String KEY', 'gci -r -Exclude *.ts | Select-String KEY',
+    'gci -r | sls KEY', "node -e \"const q=/'/; console.log(require('fs').readFileSync('.env','utf8'))\"",
+    '(cat .env)', '(cd /tmp) && cat .env'])                                  // a subshell's cd ends at its close
     assert.equal(sh(c), 2, c);
+  assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
 });
 
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
