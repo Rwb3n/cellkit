@@ -220,7 +220,16 @@ Until then, kit improvements are copied between projects by hand. Keep `kernel/`
 
 How the projects that use it do it:
 
-- Rename this README to `KIT.md` (your project gets its own `README.md`). Add cellkit as a fetch-only remote: `git remote add cellkit <path-or-url>`, then `git fetch cellkit && git merge cellkit/main` to take kit updates.
+- Rename this README to `KIT.md` (your project gets its own `README.md`). Add cellkit as a fetch-only remote: `git remote add cellkit <path-or-url>`.
+- **Take a kit update in a scratch clone, never in the main checkout** (#63). The guards run from `kernel/`: a merge that stops with conflict markers in a hook breaks it, every guard fails closed (#38), and the session can't run even `git merge --abort` (portofolio-manager's did, at v0.5.0; only the operator's `! git merge --abort` got it back). So:
+  ```
+  git clone <project> ../<project>-kitmerge && cd ../<project>-kitmerge
+  git remote add cellkit <path-or-url> && git fetch cellkit && git merge cellkit/main
+  # resolve any conflicts, then: cd kernel && npm ci && npm test && npx tsc --noEmit
+  git commit                                        # if the merge stopped
+  cd <project> && git pull --ff-only ../<project>-kitmerge main
+  ```
+  The pull only fast-forwards: it can't stop half-done (if main moved since the clone, it refuses: `git pull <project> main` in the clone, test, try again). Then follow the release's **Upgrading a project** notes (CHANGELOG), and delete the clone. If a merge in the main checkout did stop with conflicts in `kernel/`, ask the operator to run `! git merge --abort`.
 - Your guards, kinds and ownership live in bedrock (`guards.json`, `kinds.json`) and your code lives outside `kernel/`. Then a kit merge never conflicts with your project.
 - A kit fix found in a project goes back to cellkit as its own commit, never mixed with the project's log or domain code.
 - Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover. Set `origin` to a private backup and push after committing: the log is the record, so don't let it live on one disk.

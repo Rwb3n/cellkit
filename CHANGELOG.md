@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Docs**
+- **Take a kit update in a scratch clone** (#63; portofolio-manager). A `git merge cellkit/main` that stopped with conflict markers in `hook-bash.ts` and `hook-guard.ts` locked the session out: every guard failed closed, and only the operator's `! git merge --abort` recovered it. README ("Using it in a project") now gives the procedure that worked there: merge, resolve and test in a clone, then `git pull --ff-only` from it, which can't stop half-done. Still open (#83): a guard that spots conflict markers and says so in one line instead of a stack trace, or a `kit update` command that does all this.
+
 **Fixes**
 - **A kernel-owned path and a write are one act only in one command** (#81; COCKPIT). The text check refused a command that named a kernel-owned path anywhere and wrote anywhere: `git add docs/assumptions.md && printf … > /tmp/msg.txt` was refused as writing `docs/assumptions.md`. Now the path and the write must stand in the same simple command, or the same piece of program code (a heredoc's path and its `open(…, 'w')` may be lines apart). A write to a target built from a variable (`f=state/log/x; echo y > $f`), or one that names a variable (`$p = 'state/log/x'; [IO.File]::WriteAllText($p, …)`), can't be judged, so with a kernel-owned path named anywhere the whole command still counts. Still refused, as before: a read of a kernel-owned file redirected elsewhere in one command (`cat state/log/x.json > out.json`).
 - **The read guard reads a script's paths, not its prose, and a pipeline isn't a folder** (#60; ecom-lab, COCKPIT). Two refusals of commands that read no secret:
