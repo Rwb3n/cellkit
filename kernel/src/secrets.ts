@@ -138,6 +138,13 @@ function withoutPattern(seg: string): string {
   return out;
 }
 
+// Commands whose output is text, never files: what may feed a Select-String or Get-Content with no path.
+const TEXT_PRODUCERS = /^(git|gh|npm|npx|pnpm|yarn|node|deno|bun|python[\d.]*|py|pip|dotnet|cargo|go|docker|kubectl|claude|schtasks|tasklist|netstat|ipconfig|whoami|hostname|systeminfo|where|where\.exe|echo|Write-Output|Get-Process|gps|ps|Get-Service|gsv|Get-Date|Get-Command|gcm|Get-Module|Get-Content|gc|cat|type|Select-String|sls|Select-Object|select|Sort-Object|sort|head|tail|wc|uniq|cut|tr|grep|rg|findstr|sed|awk|jq|curl|wget)(\.exe)?$/i;
+const textOnly = (u: string) => {
+  const w = firstCommand(u);
+  return TEXT_PRODUCERS.test(w[0] ?? '') && !/[$@({`]/.test(u.replace(quoted, '""')) && simpleCommands(u).filter((c) => !isMark(c)).length === 1;
+};
+
 // A `cd` moves the folder later segments are judged from (#1: `cd <another repo> && grep -r …` was judged against this
 // project). One it can't judge ($x, %x%, ~, `…`) goes back to the session's folder, as before.
 export function shellRefusal(command: string, session: string, own: Unreadable[] = [], depth = 0): string | null {
@@ -160,9 +167,15 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
       const d = denied(t, cwd, own);
       if (d) return `that command reads ${d.path} (${d.why}): no session reads it. ${how}`;
     }
-    // Select-String or Get-Content with no path reads its input (#60, ecom-lab: `schtasks … | Select-String "TaskName"`):
-    // files only when a listing feeds it, anywhere up the pipeline (`gci -r | Where-Object … | Select-String KEY`)
-    if (/^\s*(Select-String|sls|Get-Content|gc)(?=\s|$)/i.test(unquoted) && tokens.length < 2) return up.length ? listed(up) : null;
+    // Select-String or Get-Content with no path reads what feeds it: text, or files when what feeds it lists them (#60,
+    // ecom-lab: `schtasks … | Select-String "TaskName"` was refused). Text only when every command up the pipeline is a
+    // known text producer with no expression in it (`echo (gci -r)` passes files); anything else, as before: a search
+    // of the current folder. An allowlist on purpose: four reviews found ways around reading which commands list files.
+    if (/^\s*(Select-String|sls|Get-Content|gc)(?=\s|$)/i.test(unquoted) && tokens.length < 2) {
+      if (up.length && up.every(textOnly)) return null;
+      const h = treeHolds(cwd, '', own);
+      return h ? `${words[0]} with no path reads what feeds it; unless that is text, it is a search of ${cwd}, which would read ${h.path} (${h.why}). Give it the files (-Path), or search a subfolder.` : null;
+    }
     if (searchVerb.test(unquoted) && !narrowedSearch.test(unquoted)) {
       const operands = tokens.slice(1);                                     // files or folders; none: the current folder
       for (const dir of operands.length ? operands.map((t) => absPath(t, cwd)).filter(isDir) : [cwd]) {
@@ -174,41 +187,6 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
   };
   // A listing's files: each path or glob it names, each -Filter/-Include pattern (`-Filter .env` selects the secret
   // itself), and, unless a pattern narrows it to other names, every folder it lists (none named: the current one).
-  // Strict on purpose (two reviews found ways around a finer reading): a listing named anywhere upstream, however
-  // wrapped (`@(gci -r)`, `& { gci }`), lists files. A -Filter/-Include narrows it only as plain `*.<ext>` patterns;
-  // a glob operand is its folder; a parameter may be abbreviated (`-Fil`).
-  const listed = (up: string[]): string | null => {
-    const LISTING = /^[@$&({.\s]*(Get-ChildItem|gci|ls|dir|Get-Item|gi|Resolve-Path|rvpa)[)}]*$/i;
-    const param = (a: string, ...names: string[]) => { const n = a.slice(1).toLowerCase(); return a.startsWith('-') && n.length > 1 && names.some((x) => x.startsWith(n)); };
-    for (const u of up) {
-      // where a command starts, past wrappers (`& { gci }`, `. gci`): `npm ls`, `echo dir` list no files
-      const w = simpleCommands(u).filter((x) => !isMark(x)).find((c) => LISTING.test(c.find((x) => !/^[{.&]$/.test(x)) ?? '')) ?? [];
-      const at = w.findIndex((x) => LISTING.test(x));
-      if (at < 0) continue;
-      const args = w.slice(at + 1).map((a) => a.replace(/[)}]+$/, '')).filter(Boolean), pats: string[] = [], ops: string[] = [];
-      for (let j = 0; j < args.length; j++) {
-        const a = args[j];
-        if (param(a, 'filter', 'include')) { if (args[j + 1]) pats.push(...args[++j].split(',')); continue; }
-        if (param(a, 'exclude', 'depth', 'attributes')) { j++; continue; }
-        if (param(a, 'path', 'literalpath')) { if (args[j + 1]) ops.push(...args[++j].split(',')); continue; }
-        if (!a.startsWith('-')) ops.push(a);
-      }
-      for (const t of [...ops, ...pats]) {
-        const d = denied(t, cwd, own);
-        if (d) return `that command reads ${d.path} (${d.why}) through its pipeline: no session reads it. ${how}`;
-      }
-      // a pattern narrows when it is a literal name, or one after a leading *, that no secret's name can match
-      // (`*.test.ts`, `package.json`); `*`, `*.*`, `.e*`, `*env*` don't
-      const narrows = (x: string) => /^\*?[^*?[\]]+$/.test(x) && !['x', '.', '.x', ''].some((pre) => denied(x.replace(/^\*/, pre), cwd, own));
-      if (pats.length && pats.every(narrows)) continue;
-      const dirs = ops.length ? ops.map((t) => /[*?[]/.test(t) ? absPath(t.replace(/[\\/]?[^\\/]*[*?[].*$/, '') || '.', cwd) : absPath(t, cwd)).filter(isDir) : [cwd];
-      for (const dir of dirs) {
-        const h = treeHolds(dir, '', own);
-        if (h) return `a search of what ${w[at]} lists in ${dir} would read ${h.path} (${h.why}). List a subfolder, or narrow it (-Filter *.ts).`;
-      }
-    }
-    return null;
-  };
   for (const { seg, up } of piped(p.text)) {
     const cmds = simpleCommands(seg);
     let k = 0;

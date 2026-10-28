@@ -111,7 +111,9 @@ export function segments(s: string): string[] {
   return piped(s).map((x) => x.seg);
 }
 // The same, each with `up`: the segments a single | feeds into it, first to last (none: []).
-export function piped(s: string): { seg: string; up: string[] }[] {
+// `join`: a line continued with ` \` or `` ` `` is one line: the write guard's choice (more in one act is stricter);
+// the read guard's is to judge each line (in PowerShell `cd src \` then a read are two commands).
+export function piped(s: string, join = false): { seg: string; up: string[] }[] {
   const out: { seg: string; up: string[] }[] = [];
   let cur = '', q = '', pipe = false;
   const push = () => { const t = cur.trim(); if (t) { const prev = out.at(-1); out.push({ seg: t, up: pipe && prev ? [...prev.up, prev.seg] : [] }); } cur = ''; };
@@ -120,7 +122,7 @@ export function piped(s: string): { seg: string; up: string[] }[] {
     if (q) { cur += c; if (c === q) q = ''; continue; }
     if (c === '"' || c === "'") { q = c; cur += c; continue; }
     // a continued line: ` \` (bash) or `` ` `` (PowerShell) after a space; a path's own trailing \ is no continuation (`cd src\`)
-    if ((c === '\\' || c === '`') && /\s$/.test(cur) && /^\r?\n/.test(s.slice(i + 1, i + 3))) { cur += ' '; i += s[i + 1] === '\r' ? 2 : 1; continue; }
+    if (join && (c === '\\' || c === '`') && /\s$/.test(cur) && /^\r?\n/.test(s.slice(i + 1, i + 3))) { cur += ' '; i += s[i + 1] === '\r' ? 2 : 1; continue; }
     if (c === '\n' && pipe && !cur.trim()) continue;                       // `a |` then the next command on the next line
     if (c === ';' || c === '\n' || c === '|' || (c === '&' && s[i - 1] !== '>' && s[i + 1] !== '>')) {
       push();
@@ -194,7 +196,7 @@ export function acts(command: string, depth = 0): string {
 export function actUnits(command: string, depth = 0): string[] {
   const p = parts(command);
   // each pipeline with what it runs (`sh -c 'echo state/log/x' | xargs rm`): its acts, whole
-  const pipelines = piped(p.text).reduce<string[]>((a, { seg, up }) => (up.length && a.length ? [...a.slice(0, -1), `${a.at(-1)} | ${seg}`] : [...a, seg]), []);
+  const pipelines = piped(p.text, true).reduce<string[]>((a, { seg, up }) => (up.length && a.length ? [...a.slice(0, -1), `${a.at(-1)} | ${seg}`] : [...a, seg]), []);
   return [...pipelines.map((pl) => acts(pl, depth)), ...(depth < 4 ? p.shell.flatMap((s) => actUnits(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))];
 }
 

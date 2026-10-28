@@ -139,13 +139,13 @@ test('read guard: a pattern, a message or a heredoc written to a file is text, n
     assert.equal(sh(c), 2, c);
 });
 
-test('read guard: prose in a script\'s strings is text; Select-String reads its pipeline, files only from a listing (#60)', () => {
+test('read guard: prose in a script\'s strings is text; Select-String reads text only from known text producers (#60)', () => {
   // ecom-lab: a script editing a doc with "this project's `.env`" in a string, and `schtasks … | Select-String`, were refused
   const { root: r, cfg } = world();
   const sh = (command: string, cwd = `${r}/APP`) => run('hook-bash.ts', { cwd, tool_input: { command } }, cfg);
   for (const c of ["python - <<'EOF'\ns = open('docs/HANDOVER.md').read().replace('x', \"keys live in this project's `.env`\")\nopen('docs/HANDOVER.md', 'w').write(s)\nEOF",
-    'schtasks /Query /FO LIST | Select-String "TaskName|Status"', 'git log | Select-String KEY', 'Get-ChildItem -Recurse -Filter *.ts | Select-String KEY',
-    `Get-ChildItem -Recurse ${r}/CASTLE/docs/decisions | Select-String KEY`])
+    'schtasks /Query /FO LIST | Select-String "TaskName|Status"', 'git log | Select-String KEY', 'Get-Process | Select-String node',
+    'git log |\n  Select-String fix', 'npm ls | Select-String react', 'npm run build 2>&1 | Select-String error'])
     assert.equal(sh(c), 0, c);
   for (const c of ['Get-ChildItem -Recurse | Select-String KEY', 'gci | Select-String KEY', 'ls -r . | Select-String KEY',
     "python - <<'EOF'\nimport os\nprint(open(f\"{os.getcwd()}/.env\").read())\nEOF", "python - <<'EOF'\np = '.env'\nprint(open(p).read())\nEOF",
@@ -158,12 +158,15 @@ test('read guard: prose in a script\'s strings is text; Select-String reads its 
     // second review: a wrapped listing, a glob, a pattern that isn't `*.<ext>`, an abbreviated parameter, a pipe over lines
     '@(gci -r) | Select-String KEY', '(gci -r) | Select-String KEY', '& { gci -r } | Select-String KEY', 'gci -r * | Select-String KEY',
     'gci -r -Filter *env* | Select-String KEY', 'gci -r -Include *.* | Select-String KEY', 'gci -r -Fil * | Select-String KEY', 'gci -r |\n Select-String KEY',
-    'cd src\\\nGet-Content ..\\.env', 'dir src\\\ncat .env'])                    // a path's trailing \ continues no line (third review)
+    'cd src\\\nGet-Content ..\\.env', 'dir src\\\ncat .env', 'cd src \\\ncat ../.env',         // in PowerShell, two commands (third, fourth review)
+    // fourth review: a listing behind a call or a variable, a pattern that still selects a secret
+    'Invoke-Command { gci -r } | Select-String KEY', "iex 'gci -r' | Select-String KEY", '$f = gci -r; $f | Select-String KEY',
+    'Microsoft.PowerShell.Management\\Get-ChildItem -r | Select-String KEY', 'gci -r -Filter *v | Select-String KEY', 'echo (gci -r) | Select-String KEY',
+    // strict on purpose: a listing feeds files, narrowed or not; give Select-String the files with -Path instead
+    'gci -r -Filter *.ts | Select-String KEY'])
     assert.equal(sh(c), 2, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
-  for (const c of ['gci -r -Include *.ts,*.md | Select-String KEY', 'gci -r -Fil *.ts | Select-String KEY', 'Get-Process | Select-String node', 'git log |\n  Select-String fix',
-    'npm ls | Select-String react', 'gci -r -Filter *.test.ts | Select-String describe', 'gci -r -Filter package.json | Select-String version'])
-    assert.equal(sh(c), 0, c);
+  assert.equal(sh('Select-String -Path src/*.ts -Pattern KEY'), 0);
 });
 
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
