@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.6 — guards that judge acts, landings that check first (2026-10-28)
+
+The v0.6 milestone: #55, #60, #63, #67, #71, #73, #75, #76, #81, from COCKPIT, ecom-lab, portofolio-manager and modelkit. The guard changes (#60, #75, #81) had five rounds of adversarial review before release, each fixing what the last found; the gaps v0.5 had too are #84.
 
 **Docs**
 - **Kernel commands run from the repo root** (#67; COCKPIT). An operator who ran `! node kernel/src/cli.ts …` from a subfolder got Node's bare MODULE_NOT_FOUND. README (Quick start, Traps) and the `AGENTS.md` template now say so. Still open: a wrapper that finds the root itself.
@@ -19,6 +21,19 @@
   - Newly refused: `(cat .env)` and `gci -r | sls KEY` passed v0.5 (a leading paren, and the `sls` alias). The read guard judges each line on its own: in PowerShell, `cd src \` and a read on the next line are two commands.
 - **A new test file can't be weaker** (#71; ecom-lab). `cell land` refused a cell whose brand-new `test_colleague.py` held four `pytest.approx` float assertions, as "loosened": the check counted the new file's lines like any diff. A file the branch creates now reports nothing. A test moved out of an old file still shows there as fewer cases, and a tolerance added to an existing file is still loosening. Still open: a new `approx` assertion added to an existing file counts as loosening, whatever the old line was.
 - **A subshell's parens end a word** (#75; COCKPIT). `(ls x 2>/dev/null)` read the redirect's target as `/dev/null)`, and a cell was refused writing outside itself. A subshell's parens (where a command starts, and their match) now end a word and a command, so the null device is the null device, and a `cd` inside a subshell is followed until the subshell closes, by the write guard, the cell boundary and the read guard: `(cd .. && echo x > y.txt)` in a cell passed before, and is now refused; `(cd /tmp) && rm -rf state/log` is judged from the repo, as the shell runs it. A `case` pattern's `)` closes no subshell. An argument's parens stay in its word (PowerShell's `-Path (Join-Path . state)`).
+
+
+**Upgrading a project to v0.6**
+- **Take the update in a scratch clone** (README, "Using it in a project"): merge, resolve, run the tests there, then `git pull --ff-only` from it. A merge that conflicts in a guard hook locks the session out (#63).
+- **Before pushing the merge, check what its messages close** (#55): `git log <your previous kit tag>..v0.6.0 --format=%B | grep -iE "(fix|close|resolve)[a-z]* #[0-9]+"`. This range holds bare `Fixes #60`, `#63`, `#71`, `#75`, `#81`, which GitHub applies to *your* numbers. Reopen what they close, or push the merge where no issues share those numbers.
+- No settings, `.gitignore` or cell changes. `cell refresh` is not needed.
+- Newly refused for sessions:
+  - `gci -r | sls KEY` (v0.5 didn't know the alias), and a `Select-String` or `Get-Content` with no path fed by a listing through any wrapper or pass-through, in a folder that holds a secret;
+  - `(cat .env)`;
+  - a pipeline that names a kernel-owned path and writes;
+  - in a cell, a write after a `cd` inside a subshell that leaves the cell: `(cd .. && echo x > y.txt)`.
+- Newly allowed: a kernel-owned path named in one command and a write in another (`git add docs/assumptions.md && printf … > /tmp/msg`); a subshell's redirect to the null device; a `Select-String` reading a known text producer's output (`schtasks … | Select-String`, `npm run build | Select-String error`); a new test file's tolerances.
+- `cell land --dry-run` now **runs** `--check`, in the cell's worktree. A check with side effects has them on a dry run too.
 
 ## v0.5 — guards that hold (2026-10-23)
 
