@@ -99,21 +99,27 @@ export function verbOf(words: string[]): { verb: string; i: number } {
 
 // Simple commands as written (quotes kept), split at ; & | and newlines outside quotes.
 export function segments(s: string): string[] {
-  const out: string[] = [];
-  let cur = '', q = '';
+  return piped(s).map((x) => x.seg);
+}
+// The same, each marked `from` the segment a single | feeds into it ('' when none).
+export function piped(s: string): { seg: string; from: string }[] {
+  const out: { seg: string; from: string }[] = [];
+  let cur = '', q = '', pipe = false, prev = '';
+  const push = () => { const t = cur.trim(); if (t) { out.push({ seg: t, from: pipe ? prev : '' }); prev = t; } cur = ''; };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (q) { cur += c; if (c === q) q = ''; continue; }
     if (c === '"' || c === "'") { q = c; cur += c; continue; }
     if (c === ';' || c === '\n' || c === '|' || (c === '&' && s[i - 1] !== '>' && s[i + 1] !== '>')) {
-      out.push(cur); cur = '';
+      push();
+      pipe = c === '|' && s[i + 1] !== '|';
       if (s[i + 1] === c) i++;
       continue;
     }
     cur += c;
   }
-  out.push(cur);
-  return out.map((x) => x.trim()).filter(Boolean);
+  push();
+  return out;
 }
 
 // How the command before a heredoc reads its body: as shell commands, as program code, or (null) as data.

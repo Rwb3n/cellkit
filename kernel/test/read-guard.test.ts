@@ -139,6 +139,20 @@ test('read guard: a pattern, a message or a heredoc written to a file is text, n
     assert.equal(sh(c), 2, c);
 });
 
+test('read guard: prose in a script\'s strings is text; Select-String reads its pipeline, files only from a listing (#60)', () => {
+  // ecom-lab: a script editing a doc with "this project's `.env`" in a string, and `schtasks … | Select-String`, were refused
+  const { root: r, cfg } = world();
+  const sh = (command: string, cwd = `${r}/APP`) => run('hook-bash.ts', { cwd, tool_input: { command } }, cfg);
+  for (const c of ["python - <<'EOF'\ns = open('docs/HANDOVER.md').read().replace('x', \"keys live in this project's `.env`\")\nopen('docs/HANDOVER.md', 'w').write(s)\nEOF",
+    'schtasks /Query /FO LIST | Select-String "TaskName|Status"', 'git log | Select-String KEY', 'Get-ChildItem -Recurse -Filter *.ts | Select-String KEY',
+    `Get-ChildItem -Recurse ${r}/CASTLE/docs/decisions | Select-String KEY`])
+    assert.equal(sh(c), 0, c);
+  for (const c of ['Get-ChildItem -Recurse | Select-String KEY', 'gci | Select-String KEY', 'ls -r . | Select-String KEY',
+    "python - <<'EOF'\nimport os\nprint(open(f\"{os.getcwd()}/.env\").read())\nEOF", "python - <<'EOF'\np = '.env'\nprint(open(p).read())\nEOF",
+    "node - <<'EOF'\nconst p = `${process.cwd()}/.env`; require('fs').readFileSync(p)\nEOF"])
+    assert.equal(sh(c), 2, c);
+});
+
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
   // apify-actor-dev and callsheet: `cd <another repo> && grep -r …` was judged against this project's .env, and
   // /d/PROJECTS/x was read as relative to the project.
