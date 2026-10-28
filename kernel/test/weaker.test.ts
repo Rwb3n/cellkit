@@ -43,6 +43,25 @@ test('weaker: fewer cases or assertions, skips, loosening and deleted test files
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('weaker: a new test file can\'t be weaker; a tolerance added to an old one still is (#71)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cellkit-weaker-new-'));
+  git(dir, 'init', '-q', '-b', 'main');
+  mkdirSync(join(dir, 'tests'));
+  writeFileSync(join(dir, 'tests', 'test_old.py'), 'def test_a():\n    assert f(1) == 2\n');
+  git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
+  git(dir, 'checkout', '-qb', 'cell/x');
+  // ecom-lab: float assertions in a brand-new file read as "loosened"
+  writeFileSync(join(dir, 'tests', 'test_colleague.py'), 'import pytest\n\ndef test_days():\n    assert days(20.0) == pytest.approx(30 + 20)\n    assert m["premium"] == pytest.approx(49.80 / 15.99 - 1)\n');
+  git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'new tests');
+  assert.deepEqual(weakerTests(dir, 'main...HEAD'), []);
+  writeFileSync(join(dir, 'tests', 'test_old.py'), 'def test_a():\n    assert f(1) == pytest.approx(2, abs=1)\n');
+  git(dir, 'commit', '-qam', 'loosen the old one');
+  const found = weakerTests(dir, 'main...HEAD');
+  assert.ok(found.some((f) => /test_old\.py: loosened/.test(f)), found.join('\n'));
+  assert.ok(!found.some((f) => /test_colleague/.test(f)), found.join('\n'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('weaker: accepting weaker tests is the operator\'s (hook)', () => {
   const hook = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'hook-bash.ts');
   const run = (command: string) => spawnSync(process.execPath, [hook], { input: JSON.stringify({ tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '' }, encoding: 'utf8' }).status;
