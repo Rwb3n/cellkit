@@ -40,7 +40,7 @@ The projects are the field; the kit is what they share. Root here:
 2. Build it, with a test. **A test must fail with the fix taken out**: copy the file aside, revert the line, run the test, restore. Twice this session a test passed against the bug.
 3. Concurrency: stress it (8 processes, a start barrier so they collide), run the full suite several times under load.
 4. Before calling it done, ask for a review (the advisor caught a wrong-reply bug and doc claims the code didn't back).
-5. Set it In Progress on the board when you start. Commit with the message in a file (`git commit -F`) ending `Fixes #n`; work with no code (a spike, research, a review) is closed by hand with an outcome comment, the report itself on the issue or in a note it names; update README (the guarantee and its test) and CHANGELOG (Unreleased, naming `#n`). What's not done becomes a new issue, linked from the closed one.
+5. Set it In Progress on the board when you start. Commit with the message in a file (`git commit -F`) ending `Fixes Rwb3n/cellkit#n`, never a bare `Fixes #n`: projects merge this history, and GitHub applies a bare number to *their* issues and PRs (#55: modelkit's open PR #1 closed on merging v0.4.0); work with no code (a spike, research, a review) is closed by hand with an outcome comment, the report itself on the issue or in a note it names; update README (the guarantee and its test) and CHANGELOG (Unreleased, naming `#n`). What's not done becomes a new issue, linked from the closed one.
 
 ## Issues
 

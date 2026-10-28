@@ -3,6 +3,7 @@
 ## Unreleased
 
 **Docs**
+- **Kit commits close only the kit's issues** (#55; modelkit). Merging v0.4.0 closed modelkit's own open PR #1 and issue #2: GitHub applied the kit's `Fixes #1`, `Fixes #2` to modelkit's numbers. Kit commits now write `Fixes Rwb3n/cellkit#N`. Earlier ones can't be rewritten: this range still holds bare `Fixes #60`, `#63`, `#71`, `#75`, `#81`. README ("Using it in a project") gives the check to run before pushing a kit merge.
 - **Take a kit update in a scratch clone** (#63; portofolio-manager). A `git merge cellkit/main` that stopped with conflict markers in `hook-bash.ts` and `hook-guard.ts` locked the session out: every guard failed closed, and only the operator's `! git merge --abort` recovered it. README ("Using it in a project") now gives the procedure that worked there: merge, resolve and test in a clone, then `git pull --ff-only` from it, which can't stop half-done. Still open (#83): a guard that spots conflict markers and says so in one line instead of a stack trace, or a `kit update` command that does all this.
 
 **Fixes**

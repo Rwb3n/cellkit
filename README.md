@@ -231,6 +231,7 @@ How the projects that use it do it:
   ```
   The pull only fast-forwards: it can't stop half-done (if main moved since the clone, it refuses: `git pull <project> main` in the clone, test, try again). Then follow the release's **Upgrading a project** notes (CHANGELOG), and delete the clone. If a merge in the main checkout did stop with conflicts in `kernel/`, ask the operator to run `! git merge --abort`.
 - Your guards, kinds and ownership live in bedrock (`guards.json`, `kinds.json`) and your code lives outside `kernel/`. Then a kit merge never conflicts with your project.
+- **Before pushing a kit merge, check what its messages close** (#55): kit commits up to v0.5 (and a few after) say `Fixes #N`, and GitHub applies that to *your* issue and PR numbers once the merge reaches your default branch. `git log <old>..<new> --format=%B | grep -iE "(fix|close|resolve)[a-z]* #[0-9]+"` lists them; reopen what they closed. Kit commits now write `Fixes Rwb3n/cellkit#N`, which closes only the kit's issue.
 - A kit fix found in a project goes back to cellkit as its own commit, never mixed with the project's log or domain code.
 - Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover. Set `origin` to a private backup and push after committing: the log is the record, so don't let it live on one disk.
 - Set `core.autocrlf=false` (see Traps).
