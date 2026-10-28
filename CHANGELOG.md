@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Fixes**
+- **A kernel-owned path and a write are one act only in one command** (#81; COCKPIT). The text check refused a command that named a kernel-owned path anywhere and wrote anywhere: `git add docs/assumptions.md && printf … > /tmp/msg.txt` was refused as writing `docs/assumptions.md`. Now the path and the write must stand in the same simple command, or the same piece of program code (a heredoc's path and its `open(…, 'w')` may be lines apart). A write to a target built from a variable (`f=state/log/x; echo y > $f`), or one that names a variable (`$p = 'state/log/x'; [IO.File]::WriteAllText($p, …)`), can't be judged, so with a kernel-owned path named anywhere the whole command still counts. Still refused, as before: a read of a kernel-owned file redirected elsewhere in one command (`cat state/log/x.json > out.json`).
+- **A subshell's parens end a word** (#75; COCKPIT). `(ls x 2>/dev/null)` read the redirect's target as `/dev/null)`, and a cell was refused writing outside itself. Parens now end a word and a command, so the null device is the null device, and a `cd` inside a subshell is followed: `(cd .. && echo x > y.txt)` in a cell passed before, and is now refused.
+
 ## v0.5 — guards that hold (2026-10-23)
 
 The v0.5 milestone: #3, #4, #5, #6, #7, #38, #49, from callsheet, AI-MMO, processkit and apify-actor-dev.

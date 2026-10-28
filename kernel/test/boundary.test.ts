@@ -154,6 +154,30 @@ test('shell guard: it matches what a command does, not text it carries (#2)', ()
     assert.equal(tryShell(c), 2, c);
 });
 
+test('shell guard: a kernel-owned path and a write are one act only in one command, or one piece of code (#81)', () => {
+  // COCKPIT: staging the kernel's output and writing a message file in one call was refused as writing the kernel's file.
+  for (const c of ['git add docs/assumptions.md && printf x > /tmp/msg.txt', 'git add state/log/000001.claim.json; echo x > out.txt',
+    'cp a.md state/bedrock/proposed/ontology.md && echo x > out.txt', 'git add docs/assumptions.md; npm test > $null'])
+    assert.equal(tryShell(c), 0, c);
+  // a variable in a write: the whole command is the act
+  for (const c of ['git add docs/assumptions.md; echo x > docs/assumptions.md', 'f=state/log/x.json; echo y > $f', "$p = 'state/log/x.json'; [IO.File]::WriteAllText($p, 'x')",
+    "python - <<'EOF'\np = 'state/log/x.json'\nopen(p, 'w').write('x')\nEOF", 'cp a.md state/bedrock/proposed/ontology.md; cp b.md state/bedrock/ontology.md'])
+    assert.equal(tryShell(c), 2, c);
+});
+
+test('shell guard: parens end a word, so a subshell\'s redirect to the null device is no write (#75)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-paren-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  assert.equal(shellIn(cell, '(ls x 2>/dev/null) && echo ok'), 0);   // COCKPIT: read as `/dev/null)`, outside the cell
+  assert.equal(shellIn(cell, '(cd exit && ls 2>/dev/null)'), 0);
+  assert.equal(shellIn(cell, '(echo x > ../../docs/x.md)'), 2);
+  assert.equal(shellIn(cell, '(cd .. && echo x > y.txt)'), 2);        // the subshell's cd is followed
+  assert.equal(shellIn(cell, "Set-Content -Path (Join-Path ../.. 'docs/x.md') -Value 1"), 2);   // an argument's parens are no subshell
+  assert.equal(tryShell('Remove-Item -Recurse (Join-Path . state)'), 2);
+});
+
 test('shell guard: a kernel-owned folder named without its slash, or a folder holding one removed, is refused (#49)', () => {
   // Before #49 only `state/log/` (with the slash) matched: `rm -rf state/log` and `rmSync('state/views')` passed.
   for (const c of ['rm -rf state/log', 'rm -r state/views', 'rmdir state/bedrock', 'mv state/bedrock old/', 'mv x.json state/log',

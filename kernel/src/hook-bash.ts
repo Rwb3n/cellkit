@@ -22,7 +22,7 @@ import { inMain } from './worktree.ts';
 import { misplaced } from './worktree.ts';
 import { loadConfig, ownedRes } from './config.ts';
 import { basename, posix, resolve } from 'node:path';
-import { acts, codeTargets, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
+import { acts, actUnits, codeTargets, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
 
 let raw = '';
@@ -119,10 +119,17 @@ const guarded = config.protected.find((g) => hits(g.re));
 if (guarded && !config.writers.some((w) => w.test(command)))
   block(`that command writes ${guarded.path}, which only ${guarded.by ? `"node ${guarded.by}"` : 'the operator'} writes (bedrock guards.json).`);
 
-const owned = kernelOwned(act);
-if (owned && writes.test(act) && !viaKernel.test(command)) {
-  const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(act) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(act)
-    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(act.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
+// A kernel-owned path named and written in one act: one simple command, or one piece of program code (#81: `git add
+// docs/assumptions.md && printf … > /tmp/x` is two, and wrote only /tmp/x). A write to a target built from a variable
+// can't be judged, nor a write that names a variable (`$p = 'state/log/x'; [IO.File]::WriteAllText($p, …)`), so with a
+// kernel-owned path named anywhere the whole command is the act (`f=state/log/x; echo > $f`). The null device is no write.
+const split = actUnits(command), variable = /\$(?!null\b)[\w{(:]|%\w+%|`/i;
+const units = targets.some((t) => variable.test(t) || /^~/.test(t)) || split.some((u) => writes.test(u) && variable.test(u.replace(/>\s*\$null\b/gi, ''))) ? [act] : split;
+for (const u of viaKernel.test(command) ? [] : units) {
+  const owned = kernelOwned(u);
+  if (!owned || !writes.test(u)) continue;
+  const proposedOnly = /state[\\/]bedrock[\\/]proposed[\\/]/.test(u) && !/state[\\/](log|views)[\\/]|docs[\\/]assumptions\.md/.test(u)
+    && !/state[\\/]bedrock[\\/][a-z0-9-]+\.(md|json|base)/.test(u.replace(/state[\\/]bedrock[\\/]proposed[\\/][a-z0-9-]+\.(md|json|base)/g, ''));
   if (!proposedOnly) block(`that command writes ${owned}, which is kernel-owned (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it.`);
 }
 // git's checkout, restore, rm and mv write their paths, read through git's own options (-C, --work-tree, --git-dir: #1).

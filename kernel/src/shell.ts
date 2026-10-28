@@ -4,16 +4,22 @@
 import { tmpdir } from 'node:os';
 import { posix } from 'node:path';
 
-// split into simple commands (; && || | newline) and words, honouring quotes
+// split into simple commands (; && || | newline, a subshell's parens) and words, honouring quotes
 export function simpleCommands(command: string): string[][] {
   const out: string[][] = [[]];
   let word = '', quote = '', had = false;
+  const parens: boolean[] = [];   // open parens: true for a subshell's
   const end = () => { if (had) out.at(-1)!.push(word); word = ''; had = false; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (quote) { if (c === quote) quote = ''; else word += c; continue; }
     if (c === '"' || c === "'") { quote = c; had = true; continue; }
     if (/\s/.test(c) && c !== '\n') { end(); continue; }
+    // A subshell's parens, where a command starts, end a word and a command (#75: `(ls 2>/dev/null)` read the target as
+    // `/dev/null)`). Any other paren stays in its word, as before: PowerShell's `-Path (Join-Path . state)` is an argument.
+    if (c === '(' && !had && !out.at(-1)!.length) { parens.push(true); continue; }
+    if (c === '(') parens.push(false);
+    if (c === ')' && parens.pop()) { end(); if (out.at(-1)!.length) out.push([]); continue; }
     if (c === ';' || c === '\n' || c === '|' || c === '&') {
       end();
       if ((c === '&' && command[i - 1] === '>') || (c === '&' && command[i + 1] === '>')) { word = '&'; had = true; continue; }
@@ -155,13 +161,20 @@ export const writePrimitive = /writeFileSync|appendFileSync|unlinkSync|rmSync|rm
 // The command as acts, for the text checks: quoted text blanked unless it holds a write primitive (code for a runner
 // parts() doesn't know: `deno eval "…"`) or substitutes a command; data heredocs dropped; what runs (shell strings, code
 // with a write primitive) appended, one per line. Write targets, quoted or not, are checked one by one (writeTargets).
+function kept(text: string): string {
+  const quoted = /"[^"]*"|'[^']*'/g;
+  const writesBare = writePrimitive.test(text.replace(quoted, '""'));
+  return text.replace(quoted, (q: string) => writesBare || writePrimitive.test(q) || (q[0] === '"' && /\$\(|`/.test(q)) ? q : '""');
+}
 export function acts(command: string, depth = 0): string {
   const p = parts(command);
-  const quoted = /"[^"]*"|'[^']*'/g;
-  const writesBare = writePrimitive.test(p.text.replace(quoted, '""'));
-  const kept = p.text.replace(quoted, (q: string) =>
-    writesBare || writePrimitive.test(q) || (q[0] === '"' && /\$\(|`/.test(q)) ? q : '""');
-  return [kept, ...(depth < 4 ? p.shell.map((s) => acts(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))].join('\n');
+  return [kept(p.text), ...(depth < 4 ? p.shell.map((s) => acts(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))].join('\n');
+}
+// The same acts, one unit per simple command (#81: a path one command names and a write in another are not one act),
+// but program code whole: its path and its write call may stand on different lines.
+export function actUnits(command: string, depth = 0): string[] {
+  const p = parts(command);
+  return [...segments(kept(p.text)), ...(depth < 4 ? p.shell.flatMap((s) => actUnits(s, depth + 1)) : p.shell), ...p.code.filter((c) => writePrimitive.test(c))];
 }
 
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
