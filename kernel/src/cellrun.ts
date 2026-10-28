@@ -1,7 +1,7 @@
 // Run a cell's session headless, in its own worktree, for the mail queued to it. The default way to run a cell;
 // an interactive terminal in the same folder is the fallback.
 //
-//   node kernel/src/cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]
+//   node kernel/src/cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--effort <level>] [--dry-run] [--root <repo>]
 //
 // Root sends a task with mail.ts as usual, then runs this (usually in the background). It starts
 //   claude -p "waiting for mail" --permission-mode bypassPermissions --output-format stream-json --verbose --strict-mcp-config
@@ -62,8 +62,8 @@ function which(name: string): string {
   return name;
 }
 
-export function command(model?: string, prompt = PROMPT): string[] {
-  return [process.env.CELLKIT_CLAUDE || which('claude'), '-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(model ? ['--model', model] : [])];
+export function command(model?: string, prompt = PROMPT, effort?: string): string[] {
+  return [process.env.CELLKIT_CLAUDE || which('claude'), '-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])];
 }
 
 // --resume's prompt. One line, no double quotes: a .cmd shim passes it through cmd.exe. The task itself is in a file.
@@ -204,10 +204,12 @@ const exitNote = (log: string, note: Record<string, unknown>) => { try { writeFi
 async function main(argv: string[]): Promise<number> {
   const opt = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : undefined; };
   const name = opt('cell'), resume = argv.includes('--resume');
-  if (!name) { console.error('usage: cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--dry-run] [--root <repo>]'); return 2; }
+  if (!name) { console.error('usage: cellrun.ts --cell <name> [--resume] [--wait 0] [--hold 14400] [--model <m>] [--effort <level>] [--dry-run] [--root <repo>]'); return 2; }
   const wait = Number(opt('wait') ?? 0), hold = Number(opt('hold') ?? HOLD_S);
   if (!Number.isFinite(wait) || wait < 0) { console.error('cellrun: --wait takes seconds (>= 0)'); return 2; }
   if (!Number.isFinite(hold) || hold < 0) { console.error('cellrun: --hold takes seconds (>= 0)'); return 2; }
+  const effort = opt('effort');
+  if (effort !== undefined && !/^(low|medium|high|xhigh|max)$/.test(effort)) { console.error('cellrun: --effort takes low, medium, high, xhigh or max'); return 2; }
   const root = inMain(resolve(opt('root') ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..')));
 
   const wt = cellWorktree(root, name);
@@ -226,7 +228,7 @@ async function main(argv: string[]): Promise<number> {
   const runs = join(mailbox(cellDir), 'runs');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const log = join(runs, `${stamp}.jsonl`), task = join(runs, `${stamp}.task.md`);
-  const cmd = command(opt('model'), resume ? resumePrompt(st.working_on!, task) : PROMPT);
+  const cmd = command(opt('model'), resume ? resumePrompt(st.working_on!, task) : PROMPT, effort);
   if (argv.includes('--dry-run')) {
     const why = room(freeMb(), liveRunners(root)), r = runnerOf(cellDir);
     console.log(`cwd ${cellDir}\nenv CELLKIT_MAIL_WAIT=${wait}\n${cmd.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\nlog ${log}\nlevel ${level(root, wt, true).say}\n` +
@@ -289,7 +291,8 @@ async function runSession(root: string, wt: string, cellDir: string, name: strin
   });
   for (const s of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) process.off(s, interrupted);
   closeSync(out);
-  exitNote(log, { code: r.code, signal: r.signal, ...(r.error ? { error: r.error.message } : {}) });
+  const flag = (f: string) => (cmd.includes(f) ? { [f.slice(2)]: cmd[cmd.indexOf(f) + 1] } : {});
+  exitNote(log, { code: r.code, signal: r.signal, ...flag('--model'), ...flag('--effort'), ...(r.error ? { error: r.error.message } : {}) });
   if (r.error) { console.error(`cellrun: could not start ${cmd[0]}: ${r.error.message}`); return 1; }
 
   let after = status(cellDir);

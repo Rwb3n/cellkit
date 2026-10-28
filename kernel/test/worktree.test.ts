@@ -278,6 +278,8 @@ test('cellrun: starts the cell headless in its own worktree, only with mail queu
   assert.ok(out.includes('env CELLKIT_MAIL_WAIT=5'), out);
   assert.ok(/claude(\.exe|\.cmd)?"? -p "waiting for mail" --permission-mode bypassPermissions --output-format stream-json --verbose/.test(out), out);
   assert.ok(out.includes(join(mailbox(cellWt), 'runs')), out);
+  assert.match(cellrun('--cell', 'demo', '--dry-run', '--model', 'claude-sonnet-5-5', '--effort', 'medium').out, /--model claude-sonnet-5-5 --effort medium/);   // #73
+  assert.equal(cellrun('--cell', 'demo', '--dry-run', '--effort', 'loud').code, 2);
   assert.equal(cellrun('--cell', 'other', '--dry-run').code, 2);            // no worktree: refused
   takeNext(cellWt);
   assert.equal(cellrun('--cell', 'demo', '--dry-run').code, 3);             // a session is already on a task
@@ -324,7 +326,7 @@ exec "${process.execPath}" "${fake}.mjs" "$@"
   assert.match(r1.body, /^finished: task one[\s\S]*recovered by cellrun/);
   assert.equal(current(cellWt), null);
 
-  const died = cellrun('die');                                               // takes t2, dies mid-task
+  const died = cellrun('die', '--effort', 'high');                                               // takes t2, dies mid-task
   assert.equal(died.status, 1, died.stdout + died.stderr);
   assert.match(died.stderr, /still in flight; told root/);
   assert.equal(current(cellWt), t2.id);                                      // the cell keeps the task
@@ -333,6 +335,7 @@ exec "${process.execPath}" "${fake}.mjs" "$@"
   assert.match(blocked.body, new RegExp(`working on ${t2.id}[\\s\\S]*--resume`));
   const [, log] = blocked.body.match(/Transcript: (.+\.jsonl)$/)!;
   assert.equal(JSON.parse(readFileSync(`${log}.exit`, 'utf8')).code, 1);     // how the run ended, beside its log
+  assert.equal(JSON.parse(readFileSync(`${log}.exit`, 'utf8')).effort, 'high');   // and what it was started with (#73)
   // no answer in its log, and t1's resume run is no source for t2: nothing is recovered, nothing is filed
   const nothing = run('cellrun.ts', ['--root', main, '--cell', 'demo', '--resume'], { CELLKIT_CLAUDE: join(tmpdir(), 'no-such-claude'), CELLKIT_MIN_FREE_MB: '0' });
   assert.equal(nothing.status, 1, nothing.stdout + nothing.stderr);          // tried a fresh session: no such claude
