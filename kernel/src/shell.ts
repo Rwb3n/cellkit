@@ -15,7 +15,8 @@ export function simpleCommands(command: string): string[][] {
   const out: string[][] = [[]];
   let word = '', quote = '', had = false;
   const parens: boolean[] = [];   // open parens: true for a subshell's
-  const end = () => { if (had) out.at(-1)!.push(word); word = ''; had = false; };
+  const cases: number[] = [];     // each open case … esac (its patterns end in `)`): the parens open at its start
+  const end = () => { if (had) { out.at(-1)!.push(word); if (!quote) { if (word === 'case') cases.push(parens.length); else if (word === 'esac') cases.pop(); } } word = ''; had = false; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (quote) { if (c === quote) quote = ''; else word += c; continue; }
@@ -24,8 +25,9 @@ export function simpleCommands(command: string): string[][] {
     // A subshell's parens, where a command starts, end a word and a command (#75: `(ls 2>/dev/null)` read the target as
     // `/dev/null)`). Any other paren stays in its word, as before: PowerShell's `-Path (Join-Path . state)` is an argument.
     // Each is marked by a command of its own (OPEN, CLOSE), so a cd inside is undone at its close (`(cd /tmp) && rm x`).
-    if (c === '(' && !had && !out.at(-1)!.length) { parens.push(true); out.at(-1)!.push(OPEN); out.push([]); continue; }
+    if (c === '(' && !had && !out.at(-1)!.length && !cases.length) { parens.push(true); out.at(-1)!.push(OPEN); out.push([]); continue; }
     if (c === '(') parens.push(false);
+    if (c === ')' && cases.length && parens.length === cases.at(-1)) { word += c; had = true; continue; }   // a case pattern's `a)`
     if (c === ')' && parens.pop()) { end(); if (out.at(-1)!.length) out.push([]); out.at(-1)!.push(CLOSE); out.push([]); continue; }
     if (c === ';' || c === '\n' || c === '|' || c === '&') {
       end();
@@ -117,10 +119,13 @@ export function piped(s: string): { seg: string; up: string[] }[] {
     const c = s[i];
     if (q) { cur += c; if (c === q) q = ''; continue; }
     if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    if ((c === '\\' || c === '`') && /^\r?\n/.test(s.slice(i + 1, i + 3))) { cur += ' '; i += s[i + 1] === '\r' ? 2 : 1; continue; }   // a continued line
+    if (c === '\n' && pipe && !cur.trim()) continue;                       // `a |` then the next command on the next line
     if (c === ';' || c === '\n' || c === '|' || (c === '&' && s[i - 1] !== '>' && s[i + 1] !== '>')) {
       push();
       pipe = c === '|' && s[i + 1] !== '|';
       if (s[i + 1] === c) i++;
+      else if (pipe && s[i + 1] === '&') i++;                                 // |& pipes stderr too
       continue;
     }
     cur += c;

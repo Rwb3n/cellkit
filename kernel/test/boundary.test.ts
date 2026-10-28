@@ -165,7 +165,8 @@ test('shell guard: a kernel-owned path and a write are one act only in one comma
     // a pipeline is one act: the path one command prints is what the next writes (review of #81)
     'echo state/log/x.md | xargs rm', "sh -c 'echo state/log/x.md' | xargs rm", 'ls state/views/* | xargs -I{} cp /tmp/a {}',
     'Get-Item state/log/x.md | Remove-Item', "'state/log/x.md' | Remove-Item", '"docs/assumptions.md" | Clear-Content',
-    'Get-Item docs/assumptions.md | Set-Content -Value x'])
+    'Get-Item docs/assumptions.md | Set-Content -Value x',
+    'echo state/log/x.md |\nxargs rm', 'echo state/log/x.md | \\\nxargs rm', 'echo state/log/x.md |& xargs rm', 'Get-Item state/log/x.md |\n  Remove-Item'])   // a pipe over lines
     assert.equal(tryShell(c), 2, c);
 });
 
@@ -181,7 +182,8 @@ test('shell guard: parens end a word, so a subshell\'s redirect to the null devi
   assert.equal(shellIn(cell, "Set-Content -Path (Join-Path ../.. 'docs/x.md') -Value 1"), 2);   // an argument's parens are no subshell
   assert.equal(tryShell('Remove-Item -Recurse (Join-Path . state)'), 2);
   // a subshell's cd ends at its close (review of #75: `(cd /tmp) && rm -rf state/log` passed)
-  for (const c of ['(cd /tmp) && rm -rf state/log', '(cd /tmp); rm -rf docs', '(cd /tmp) && git checkout -- docs/assumptions.md', '(ls && cd /tmp) && rm -rf state'])
+  for (const c of ['(cd /tmp) && rm -rf state/log', '(cd /tmp); rm -rf docs', '(cd /tmp) && git checkout -- docs/assumptions.md', '(ls && cd /tmp) && rm -rf state',
+    '(case a in a) cd /tmp;; esac); rm -rf state/log'])                     // a case pattern's ) closes no subshell
     assert.equal(tryShell(c), 2, c);
   assert.equal(shellIn(cell, `(cd ${tmpdir().replaceAll('\\', '/')}) && echo x > ../../docs/x.md`), 2);
   assert.equal(shellIn(cell, `(cd ${tmpdir().replaceAll('\\', '/')} && echo x > scratch.txt)`), 0);   // inside it, it holds

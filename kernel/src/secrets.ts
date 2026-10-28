@@ -174,25 +174,33 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
   };
   // A listing's files: each path or glob it names, each -Filter/-Include pattern (`-Filter .env` selects the secret
   // itself), and, unless a pattern narrows it to other names, every folder it lists (none named: the current one).
+  // Strict on purpose (two reviews found ways around a finer reading): a listing named anywhere upstream, however
+  // wrapped (`@(gci -r)`, `& { gci }`), lists files. A -Filter/-Include narrows it only as plain `*.<ext>` patterns;
+  // a glob operand is its folder; a parameter may be abbreviated (`-Fil`).
   const listed = (up: string[]): string | null => {
+    const LISTING = /^[@$&({.\s]*(Get-ChildItem|gci|ls|dir|Get-Item|gi|Resolve-Path|rvpa)[)}]*$/i;
+    const param = (a: string, ...names: string[]) => { const n = a.slice(1).toLowerCase(); return a.startsWith('-') && n.length > 1 && names.some((x) => x.startsWith(n)); };
     for (const u of up) {
-      const w = firstCommand(u), { verb, i } = verbOf(w);
-      if (!/^(Get-ChildItem|gci|ls|dir|Get-Item|gi|Resolve-Path|rvpa)$/i.test(verb)) continue;
-      const args = w.slice(i + 1), pats: string[] = [], ops: string[] = [];
+      const w = simpleCommands(u).filter((x) => !isMark(x)).flat();
+      const at = w.findIndex((x) => LISTING.test(x));
+      if (at < 0) continue;
+      const args = w.slice(at + 1).map((a) => a.replace(/[)}]+$/, '')).filter(Boolean), pats: string[] = [], ops: string[] = [];
       for (let j = 0; j < args.length; j++) {
-        if (/^-(Filter|Include)$/i.test(args[j])) { if (args[j + 1]) pats.push(args[++j]); continue; }
-        if (/^-(Exclude|Depth|Attributes)$/i.test(args[j])) { j++; continue; }
-        if (/^-(Path|LiteralPath)$/i.test(args[j])) { if (args[j + 1]) ops.push(args[++j]); continue; }
-        if (!args[j].startsWith('-')) ops.push(args[j]);
+        const a = args[j];
+        if (param(a, 'filter', 'include')) { if (args[j + 1]) pats.push(...args[++j].split(',')); continue; }
+        if (param(a, 'exclude', 'depth', 'attributes')) { j++; continue; }
+        if (param(a, 'path', 'literalpath')) { if (args[j + 1]) ops.push(...args[++j].split(',')); continue; }
+        if (!a.startsWith('-')) ops.push(a);
       }
       for (const t of [...ops, ...pats]) {
         const d = denied(t, cwd, own);
         if (d) return `that command reads ${d.path} (${d.why}) through its pipeline: no session reads it. ${how}`;
       }
-      if (pats.length) continue;
-      for (const dir of ops.length ? ops.map((t) => absPath(t, cwd)).filter(isDir) : [cwd]) {
+      if (pats.length && pats.every((x) => /^\*\.[A-Za-z0-9]+$/.test(x))) continue;
+      const dirs = ops.length ? ops.map((t) => /[*?[]/.test(t) ? absPath(t.replace(/[\\/]?[^\\/]*[*?[].*$/, '') || '.', cwd) : absPath(t, cwd)).filter(isDir) : [cwd];
+      for (const dir of dirs) {
         const h = treeHolds(dir, '', own);
-        if (h) return `a search of what ${verb} lists in ${dir} would read ${h.path} (${h.why}). List a subfolder, or narrow it (-Filter / -Include).`;
+        if (h) return `a search of what ${w[at]} lists in ${dir} would read ${h.path} (${h.why}). List a subfolder, or narrow it (-Filter *.<ext>).`;
       }
     }
     return null;

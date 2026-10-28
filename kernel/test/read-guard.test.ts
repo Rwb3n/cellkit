@@ -154,9 +154,14 @@ test('read guard: prose in a script\'s strings is text; Select-String reads its 
     'gci -r -Filter .env -Force | Select-String KEY', 'Get-ChildItem -Recurse -Include *.env | Select-String KEY', 'gci -r | Get-Content | Select-String KEY',
     'gci -r | Where-Object { $_.Length -gt 0 } | Select-String KEY', 'Get-Item .env | Select-String KEY', 'gci -r -Exclude *.ts | Select-String KEY',
     'gci -r | sls KEY', "node -e \"const q=/'/; console.log(require('fs').readFileSync('.env','utf8'))\"",
-    '(cat .env)', '(cd /tmp) && cat .env'])                                  // a subshell's cd ends at its close
+    '(cat .env)', '(cd /tmp) && cat .env',                                   // a subshell's cd ends at its close
+    // second review: a wrapped listing, a glob, a pattern that isn't `*.<ext>`, an abbreviated parameter, a pipe over lines
+    '@(gci -r) | Select-String KEY', '(gci -r) | Select-String KEY', '& { gci -r } | Select-String KEY', 'gci -r * | Select-String KEY',
+    'gci -r -Filter *env* | Select-String KEY', 'gci -r -Include *.* | Select-String KEY', 'gci -r -Fil * | Select-String KEY', 'gci -r |\n Select-String KEY'])
     assert.equal(sh(c), 2, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
+  for (const c of ['gci -r -Include *.ts,*.md | Select-String KEY', 'gci -r -Fil *.ts | Select-String KEY', 'Get-Process | Select-String node', 'git log |\n  Select-String fix'])
+    assert.equal(sh(c), 0, c);
 });
 
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
