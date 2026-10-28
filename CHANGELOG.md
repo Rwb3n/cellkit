@@ -8,6 +8,7 @@
 - **Take a kit update in a scratch clone** (#63; portofolio-manager). A `git merge cellkit/main` that stopped with conflict markers in `hook-bash.ts` and `hook-guard.ts` locked the session out: every guard failed closed, and only the operator's `! git merge --abort` recovered it. README ("Using it in a project") now gives the procedure that worked there: merge, resolve and test in a clone, then `git pull --ff-only` from it, which can't stop half-done. Still open (#83): a guard that spots conflict markers and says so in one line instead of a stack trace, or a `kit update` command that does all this.
 
 **Commands**
+- **`cell land --dry-run` runs the check** (#76; COCKPIT). The dry run only printed `--check`: COCKPIT's came back clean, then the real land refused 20 minutes later, because cmd.exe doesn't scope a `cd` inside `( … )`. Now the dry run runs the check in the worktree as it stands (before the merge; the real land runs it after), says whether it passes, with the last lines if not, and names the shell it runs under.
 - **`cellrun --effort <level>`** (#73; COCKPIT). A project's model policy sets a cell's model and effort; `cellrun` passed `--model` but had no way to pass `claude --effort`, so COCKPIT wrapped `claude` in a `.cmd`. Now `--effort` (low, medium, high, xhigh, max) goes on the command like `--model`, and the run's `.exit` note records both: the stream's init event shows the model but not the effort.
 
 **Fixes**

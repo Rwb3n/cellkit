@@ -513,6 +513,9 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);                // undone: the branch is where it was…
   assert.equal(readFileSync(join(cellWt, 'exit', 'report.md'), 'utf8'), 'done\n');   // …and the work is still there
   assert.ok(land('--dry-run').stdout.includes('would commit'));
+  // #76: the dry run runs the check too, and names the shell it runs under
+  assert.match(land('--dry-run', '--check', 'node -e "process.exit(4)"').stdout, /would stop: the check fails now, before the merge \(exit 4\)/);
+  assert.match(land('--dry-run', '--check', 'node -e "process.exit(0)"').stdout, /under \S+[\s\S]*the check passes now/);
   const r = land('--message', 'the report', '--check', 'node -e "process.exit(0)"');
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(readFileSync(join(main, 'cells', 'demo', 'exit', 'report.md'), 'utf8'), 'done\n');

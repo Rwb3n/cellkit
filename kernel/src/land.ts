@@ -18,6 +18,9 @@
 // agents), and the reason goes into the merge commit.
 // The CLI then syncs the cell and commits root's log (commitRootLog), so mail entries never sit uncommitted.
 import { spawnSync } from 'node:child_process';
+// --check runs through the system shell: cmd.exe on Windows (`(cd x && …)` doesn't scope the cd there), else /bin/sh
+const SHELL = process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : '/bin/sh';
+const runCheck = (check: string, cwd: string) => spawnSync(check, { cwd, shell: true, encoding: 'utf8' });
 import { join } from 'node:path';
 import { status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
@@ -64,7 +67,11 @@ export function cellLand(root: string, o: LandOptions): string[] {
   if (o.dryRun) return [
     pending.length ? `would commit ${pending.length} path(s) on ${branch}: "${message}"` : `nothing uncommitted on ${branch}`,
     ...((w) => (w.length ? [`would stop: ${weakerNote(w)}`] : []))(weakerTests(wt, git(wt, ['merge-base', into, 'HEAD']).out)),
-    `would merge ${into} into ${branch}${o.check ? `, then run in ${wt}: ${o.check}` : ''}`,
+    `would merge ${into} into ${branch}${o.check ? `, then run in ${wt} under ${SHELL}: ${o.check}` : ''}`,
+    // the check is the step most likely to fail (COCKPIT #76: a subshell cd that cmd.exe doesn't scope): run it now, on
+    // the worktree as it stands, before the merge
+    ...(o.check ? [((r) => r.status === 0 ? 'the check passes now, before the merge'
+      : `would stop: the check fails now, before the merge (exit ${r.status}):\n${(r.stdout + r.stderr).trim().split(/\r?\n/).slice(-15).join('\n')}`)(runCheck(o.check, wt))] : []),
     `would merge ${branch} into ${into} (--no-ff), sync the cell and commit root's log`,
   ];
 
@@ -96,7 +103,7 @@ export function cellLand(root: string, o: LandOptions): string[] {
   const after = cellAudit(main, name);
   if (after.length) undo(`after merging ${into}, cell ${name} differs outside its folder: ${after.join(', ')}`);
   if (o.check) {
-    const r = spawnSync(o.check, { cwd: wt, shell: true, encoding: 'utf8' });
+    const r = runCheck(o.check, wt);
     if (r.status !== 0) undo(`check failed in ${wt} (${o.check}, exit ${r.status}):\n${(r.stdout + r.stderr).trim().split(/\r?\n/).slice(-15).join('\n')}`);
     steps.push(`check passed: ${o.check}`);
   }

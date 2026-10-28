@@ -91,7 +91,7 @@ node kernel/src/cli.ts cell checkout --name lisbon                       # ../<r
 4. **Who may say what:** root → cell `task`; cell → root `reply` (by the hook) · `blocked` · `question` · `done`. Never cell → cell, and a cell can't give root tasks — no agent chatter.
 5. **Root's loop: `cell land`.** Read the reply, then:
    ```
-   node kernel/src/cli.ts cell land --name lisbon --message "what it did" --check "cd kernel && npm test"   # --dry-run to see the plan
+   node kernel/src/cli.ts cell land --name lisbon --message "what it did" --check "cd kernel && npm test"   # --dry-run to see the plan and run the check
    ```
    It refuses before changing anything if the cell is mid-task, if root has uncommitted work of its own, or if `cell audit` finds a change outside `cells/lisbon/`. The audit reads only the cell's branch (commits since it left main) and its worktree (uncommitted); root's log on a cell branch counts as a fork. Otherwise it:
    - commits the cell's work on `cell/lisbon`;
@@ -186,6 +186,7 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 
 ## Traps
 
+- **`--check` runs under cmd.exe on Windows** (#76), `/bin/sh` elsewhere: `(cd kernel && npm test) && …` doesn't scope the `cd` there, and the next command runs in the wrong folder. Use `npm --prefix kernel test`, or one `cd` per check. `cell land --dry-run` runs the check, before the merge, and names the shell.
 - **Kernel commands run from the repo root** (#67). `node kernel/src/…` is a path from the root: from a subfolder Node answers `Cannot find module '<subfolder>/kernel/src/cli.ts'` (MODULE_NOT_FOUND), nothing about cellkit. A `!` command runs in the session's current folder, so after a `cd` into a subfolder, the operator's `! node kernel/src/cli.ts approve …` fails that way: `cd` back to the root first, or give the root's path (`! node <root>/kernel/src/cli.ts …`).
 - **One task per mail.** A mail is one turn and one reply: bundle two tasks and the cell replies after the first, and the second is lost. Queue a second mail instead; the cell takes it next.
 - **A cell branch can be stale against main.** If main moved while the cell worked, its work is green on its branch but may fail once merged: `cell land --check` tests the merged result. Before a session starts, `cellrun` merges main into a clean worktree, so the task starts on main as it is (its kernel, hooks and brief). A worktree is clean only right after a land: each task leaves its own log entries uncommitted, so between lands a run says "not levelled" and only bedrock (read from main in any case) is current; kernel and hook changes reach the cell at the first run after its land. A conflict stops the run (exit 7). An interactive session isn't levelled: merge main into its worktree by hand between tasks, never over uncommitted work. Since cells' hooks check main's `guards.json` against main's folded views, a `guards.json` changed on main without a fold (a pull from elsewhere) makes every cell's hooks refuse too: run `node kernel/src/cli.ts fold` in the main checkout.
