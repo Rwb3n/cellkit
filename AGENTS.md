@@ -16,6 +16,7 @@ Start each session with `/session-open`, and end it with `/session-close`.
 
 ## Working rules
 
+- **Every `node kernel/src/…` command runs from the repo root**, the operator's `!` ones too: from a subfolder Node fails with MODULE_NOT_FOUND.
 - **Sketch → check → schema → code**, always against real data. Cheap text first.
 - **Every guess goes on the assumptions list, labelled as a guess:**
   `node kernel/src/cli.ts assume --voice claude --statement "…" --test "…"`  (takes the next free id; `--id A7` to choose)

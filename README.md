@@ -50,7 +50,7 @@ git clone <this template> my-project && cd my-project
 cd kernel && npm install && npm test && cd ..
 node kernel/src/cli.ts init                      # state/ + starter ontology, registered as a draft
 # edit templates → stage at state/bedrock/proposed/ontology.md → amend, then YOU approve:
-! node kernel/src/cli.ts approve --doc ontology   # from your own Claude Code prompt
+! node kernel/src/cli.ts approve --doc ontology   # from your own Claude Code prompt, at the repo root
 ```
 
 Then open Claude Code at the root. `AGENTS.md` is its brief; replace the placeholders with your project. Copy `templates/ROOT.md` to `docs/ROOT.md` for root's handover; the `/session-open` and `/session-close` skills (`.claude/skills/`) run its routines.
@@ -186,6 +186,7 @@ node kernel/src/cli.ts cell sync · review raise|list   (review decide: operator
 
 ## Traps
 
+- **Kernel commands run from the repo root** (#67). `node kernel/src/…` is a path from the root: from a subfolder Node answers `Cannot find module '<subfolder>/kernel/src/cli.ts'` (MODULE_NOT_FOUND), nothing about cellkit. A `!` command runs in the session's current folder, so after a `cd` into a subfolder, the operator's `! node kernel/src/cli.ts approve …` fails that way: `cd` back to the root first, or give the root's path (`! node <root>/kernel/src/cli.ts …`).
 - **One task per mail.** A mail is one turn and one reply: bundle two tasks and the cell replies after the first, and the second is lost. Queue a second mail instead; the cell takes it next.
 - **A cell branch can be stale against main.** If main moved while the cell worked, its work is green on its branch but may fail once merged: `cell land --check` tests the merged result. Before a session starts, `cellrun` merges main into a clean worktree, so the task starts on main as it is (its kernel, hooks and brief). A worktree is clean only right after a land: each task leaves its own log entries uncommitted, so between lands a run says "not levelled" and only bedrock (read from main in any case) is current; kernel and hook changes reach the cell at the first run after its land. A conflict stops the run (exit 7). An interactive session isn't levelled: merge main into its worktree by hand between tasks, never over uncommitted work. Since cells' hooks check main's `guards.json` against main's folded views, a `guards.json` changed on main without a fold (a pull from elsewhere) makes every cell's hooks refuse too: run `node kernel/src/cli.ts fold` in the main checkout.
 - **Never run a cell headless and interactively at once.** Both read one mailbox; `cellrun` refuses while a message is in flight, but an idle interactive session would still take the next one.
