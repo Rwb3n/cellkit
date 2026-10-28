@@ -139,7 +139,7 @@ function withoutPattern(seg: string): string {
 }
 
 // Commands whose output is text, never files: what may feed a Select-String or Get-Content with no path.
-const TEXT_PRODUCERS = /^(git|gh|npm|npx|pnpm|yarn|node|deno|bun|python[\d.]*|py|pip|dotnet|cargo|go|docker|kubectl|claude|schtasks|tasklist|netstat|ipconfig|whoami|hostname|systeminfo|where|where\.exe|echo|Write-Output|Get-Process|gps|ps|Get-Service|gsv|Get-Date|Get-Command|gcm|Get-Module|Get-Content|gc|cat|type|Select-String|sls|Select-Object|select|Sort-Object|sort|head|tail|wc|uniq|cut|tr|grep|rg|findstr|sed|awk|jq|curl|wget)(\.exe)?$/i;
+const TEXT_PRODUCERS = /^(git|gh|npm|npx|pnpm|yarn|node|deno|bun|python[\d.]*|py|pip|dotnet|cargo|go|docker|kubectl|claude|schtasks|tasklist|netstat|ipconfig|whoami|hostname|systeminfo|where|where\.exe|echo|Write-Output|Get-Process|gps|ps|Get-Service|gsv|Get-Date|Get-Content|gc|cat|type|Select-String|sls|sort|head|tail|wc|uniq|cut|tr|grep|rg|findstr|sed|awk|jq|curl|wget)(\.exe)?$/i;
 const textOnly = (u: string) => {
   const w = firstCommand(u);
   return TEXT_PRODUCERS.test(w[0] ?? '') && !/[$@({`]/.test(u.replace(quoted, '""')) && simpleCommands(u).filter((c) => !isMark(c)).length === 1;

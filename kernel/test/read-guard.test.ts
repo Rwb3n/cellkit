@@ -163,7 +163,8 @@ test('read guard: prose in a script\'s strings is text; Select-String reads text
     'Invoke-Command { gci -r } | Select-String KEY', "iex 'gci -r' | Select-String KEY", '$f = gci -r; $f | Select-String KEY',
     'Microsoft.PowerShell.Management\\Get-ChildItem -r | Select-String KEY', 'gci -r -Filter *v | Select-String KEY', 'echo (gci -r) | Select-String KEY',
     // strict on purpose: a listing feeds files, narrowed or not; give Select-String the files with -Path instead
-    'gci -r -Filter *.ts | Select-String KEY'])
+    'gci -r -Filter *.ts | Select-String KEY',
+    'Get-Command .\\.env | Get-Content', 'gcm ./.env | Select-Object Path | gc'])   // a command's object carries a Path (fifth review)
     assert.equal(sh(c), 2, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
   assert.equal(sh('Select-String -Path src/*.ts -Pattern KEY'), 0);
