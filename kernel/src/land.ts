@@ -149,7 +149,16 @@ export function cellLand(root: string, o: LandOptions): string[] {
   const into = o.into ?? currentBranch(main);
   if (currentBranch(main) !== into) throw new WorktreeError(`the main checkout is on ${currentBranch(main)}, not ${into}`);
   const mine = dirty(main).filter((p) => !ROOT_WRITTEN.some((r) => r.test(p)));
-  if (mine.length) throw new WorktreeError(`root has uncommitted work of its own: ${mine.join(', ')} (commit or stash it first)`);
+  if (mine.length) {
+    // #89 (ecom-lab: the operator's .vscode/settings.json stopped a verified landing). An untracked file still stops
+    // it: root's own new work looks the same, and nothing unaccounted for sits in root when a cell lands. But say the
+    // way out for a file that isn't the project's, which is neither committing nor deleting someone else's file.
+    // not git(): its trim() takes a leading space off the first name
+    const loose = new Set(spawnSync('git', ['-C', main, '-c', 'core.quotepath=off', 'ls-files', '-z', '-o', '--exclude-standard'], { encoding: 'utf8' }).stdout.split('\0').filter(Boolean));
+    const foreign = mine.filter((p) => loose.has(p));
+    throw new WorktreeError(`root has uncommitted work of its own: ${mine.join(', ')} (commit or stash it first${foreign.length
+      ? `; an untracked file that isn't the project's, such as editor settings, can be ignored on this machine instead: add its path to .git/info/exclude (untracked here: ${foreign.join(', ')})` : ''})`);
+  }
   const bad = cellAudit(main, name);
   if (bad.length) throw new WorktreeError(`cell ${name} changed paths outside cells/${name}/: ${bad.join(', ')}`);
   const left = leftovers(main, wt, name);

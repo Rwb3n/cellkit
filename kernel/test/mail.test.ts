@@ -2,12 +2,12 @@
 // Cells may write only to root, and only reply · blocked · question · done.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { send, receive, current, interim, HOLD_MAX, MailError } from '../src/mail.ts';
+import { spawn, spawnSync } from 'node:child_process';
+import { send, receive, current, interim, claimWatch, status, HOLD_MAX, MailError } from '../src/mail.ts';
 
 const hook = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'mail-hook.ts');
 const world = () => {
@@ -172,4 +172,91 @@ test('mail: the hook holds a progress note back (block, task stays current) up t
 test('mail: with no task in flight, a progress-sounding answer is not held', () => {
   const { c1 } = world();
   assert.equal(stop(c1, 'Waiting for mail.'), null);
+});
+
+// #90: `watch` marks mail read, so two watchers on one box race for it. One watcher per box.
+const mailCli = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'mail.ts');
+const asRoot = (c1: string) => ({ env: { ...process.env, CLAUDE_PROJECT_DIR: c1 }, encoding: 'utf8' as const });   // run from a cell, --as root: the temp root's box
+const watchRoot = (c1: string, ...args: string[]) => spawnSync(process.execPath, [mailCli, 'watch', '--as', 'root', ...args], asRoot(c1));
+
+test('mail: one watcher per box: a second is refused and takes nothing; a dead one counts for nothing; --steal takes over (#90)', () => {
+  const { root, c1 } = world();
+  const lock = join(root, 'inbox', 'watch.lock');
+  const first = claimWatch(root);                                   // a live watcher: this process
+  const q = send(c1, 'root', 'need a decision', 'question');
+  const second = watchRoot(c1);
+  assert.equal(second.status, 1);
+  assert.match(second.stderr, new RegExp(`refused: root's mail is already being watched \\(pid ${process.pid} since .*--steal`));
+  assert.equal(watchRoot(c1, '--for', 'x1').status, 1);             // one for a single message could take the same mail
+  const seen = status(root) as { unread: number; watched_by?: string };
+  assert.equal(seen.unread, 1);                                     // nothing was taken…
+  assert.match(seen.watched_by ?? '', new RegExp(`^pid ${process.pid} since `));
+  assert.deepEqual(first.take()!.map((m) => m.id), [q.id]);        // …so the first watcher gets it
+  first.release();
+  assert.ok(!existsSync(lock));
+  assert.ok(!('watched_by' in status(root)));
+
+  const dead = spawnSync(process.execPath, ['-e', '']).pid!;        // a watcher that was killed leaves its lock
+  writeFileSync(lock, JSON.stringify({ pid: dead, at: '2026-01-01T00:00:00.000Z' }));
+  send(c1, 'root', 'second question', 'question');
+  const third = watchRoot(c1);
+  assert.equal(third.status, 0, third.stderr);
+  assert.match(third.stdout, /second question/);
+  assert.ok(!existsSync(lock));                                     // released on the way out
+
+  const a = claimWatch(root, { forId: 'a1' });                      // watchers for different messages run side by side
+  assert.equal(watchRoot(c1, '--for', 'b2').status, 0);
+  assert.equal(watchRoot(c1, '--for', 'a1').status, 1);
+  assert.equal(watchRoot(c1).status, 1);                            // a watch of the whole box could take a1's reply
+  assert.match(watchRoot(c1, '--for', '../x').stderr, /--for takes a message id/);
+  send(c1, 'root', 'third question', 'question');
+  const thief = watchRoot(c1, '--steal');
+  assert.equal(thief.status, 0, thief.stderr);
+  assert.match(thief.stdout, /third question/);
+  assert.equal(a.take(), null);                                     // taken over: it takes nothing more
+  a.release();
+
+  // pids are reused: a killed watcher's lock can name a live process that is no watcher, or this very process
+  writeFileSync(lock, JSON.stringify({ pid: process.ppid, at: '2026-01-01T00:00:00.000Z' }));
+  assert.match(watchRoot(c1).stderr, /already being watched \(pid \d+ since 2026-01-01.*is not a mail watch.*--steal clears it/);
+  assert.equal(watchRoot(c1, '--for', 'a1', '--steal').status, 0);  // one for a single message takes over a whole-box lock
+  assert.ok(!existsSync(lock));
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, at: '2026-01-01T00:00:00.000Z' }));
+  claimWatch(root).release();                                       // our pid, not our lock: nobody's
+  writeFileSync(lock, JSON.stringify({ pid: 0, at: 'x' }));         // no process at all
+  assert.equal(watchRoot(c1).status, 0);
+  // a name that is no cell is nobody's box (its folder, once made, would read as root's)
+  const typo = spawnSync(process.execPath, [mailCli, 'watch', '--as', 'typo'], asRoot(c1));
+  assert.match(typo.stderr, /refused: no cell named typo/);
+  assert.ok(!existsSync(join(root, 'cells', 'typo')));
+  for (const bad of [['--for'], ['--for', '--steal']]) assert.match(watchRoot(c1, ...bad).stderr, /--for takes a message id/, bad.join(' '));
+  // the short claim lock stuck (a leftover naming a live process): one line, no stack
+  writeFileSync(join(root, 'inbox', 'watch.claim'), JSON.stringify({ pid: process.ppid, at: new Date().toISOString() }));
+  const stuck = watchRoot(c1);
+  assert.equal(stuck.status, 1);
+  assert.match(stuck.stderr, /^refused: the box's watch lock is busy: .*watch\.claim.*delete that file\s*$/);
+});
+
+test('mail: a waiting watcher that is taken over ends (exit 3) without taking the mail; of eight started at once, one watches (#90)', async () => {
+  const { root, c1 } = world();
+  const start = (...args: string[]) => new Promise<{ code: number | null; out: string; err: string }>((done) => {
+    const p = spawn(process.execPath, [mailCli, 'watch', '--as', 'root', ...args], asRoot(c1));
+    let out = '', err = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('exit', (code) => done({ code, out, err }));
+  });
+  const waiting = start('--wait', '60');
+  for (let i = 0; i < 400 && !existsSync(join(root, 'inbox', 'watch.lock')); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.match(watchRoot(c1, '--steal').stdout, /no unread mail/);  // takes over, finds nothing, leaves
+  send(c1, 'root', 'the reply', 'question');
+  const ended = await waiting;
+  assert.equal(ended.code, 3, ended.err);
+  assert.match(ended.err, /another watcher took this box over/);
+  assert.doesNotMatch(ended.out, /the reply/);
+  assert.equal(receive(root).length, 1);                            // still unread: nobody's output swallowed it
+
+  const eight = await Promise.all(Array.from({ length: 8 }, () => start('--wait', '6')));
+  assert.equal(eight.filter((r) => r.code === 0).length, 1, eight.map((r) => `${r.code} ${r.err}`).join('\n'));
+  assert.equal(eight.filter((r) => r.code === 1 && /already being watched/.test(r.err)).length, 7);
 });

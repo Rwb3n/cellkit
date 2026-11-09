@@ -12,7 +12,7 @@ The next root session (fresh, compacted, or another model) must be able to resum
 1. **Replies:** land every reply you have verified with `cell land`. Don't leave cell work sitting uncommitted in a worktree.
 2. **In flight:**
    - Every task still out is visible in `node kernel/src/mail.ts status --as <cell>` (`working_on`, or unread).
-   - If a background `mail.ts watch` is running, say so: the next session takes the reply with `mail.ts watch --as root`.
+   - If a background `mail.ts watch` is running, say so: the next session takes the reply with `mail.ts watch --as root` (with `--steal` if that watcher is still alive: `mail.ts status` shows `watched_by`).
 3. **Decisions and guesses from this session** must be on the log, not only in chat:
    - `constraint` for what the operator decided;
    - `assume` and `evidence` for guesses and what moved them.

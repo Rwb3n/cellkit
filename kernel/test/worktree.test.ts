@@ -503,7 +503,20 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   receive(main);
   writeFileSync(join(main, 'notes.md'), 'mine\n');
   assert.match(land().stderr, /root has uncommitted work of its own: notes\.md/);
+  // #89: an untracked file that isn't the project's still stops the land, and the refusal names the way out
+  assert.match(land().stderr, /\(commit or stash it first; an untracked file that isn't the project's.*\.git\/info\/exclude \(untracked here: notes\.md\)\)/);
+  writeFileSync(join(main, ' lead my.txt'), 'x');                            // a name git's -z list starts with, spaces and all
+  writeFileSync(join(main, 'kernel', '.gitkeep'), 'changed\n');             // with a tracked change: only the untracked are named
+  assert.match(land().stderr, /of its own: .*kernel\/\.gitkeep.*\(untracked here:  lead my\.txt, notes\.md\)\)/);
+  rmSync(join(main, ' lead my.txt'));
+  writeFileSync(join(main, 'kernel', '.gitkeep'), '');
+  writeFileSync(join(main, '.git', 'info', 'exclude'), 'notes.md\n');
+  assert.ok(land('--dry-run').stdout.includes('would commit'));             // ignored on this machine: no longer root's work
+  writeFileSync(join(main, '.git', 'info', 'exclude'), '');
   rmSync(join(main, 'notes.md'));
+  writeFileSync(join(main, 'kernel', '.gitkeep'), 'changed\n');             // a tracked file: nothing to ignore, no such advice
+  assert.match(land().stderr, /of its own: kernel\/\.gitkeep \(commit or stash it first\)/);
+  writeFileSync(join(main, 'kernel', '.gitkeep'), '');
   writeFileSync(join(wt, 'stray.md'), 'x\n');
   assert.match(land().stderr, /outside cells\/demo\/: stray\.md/);
   rmSync(join(wt, 'stray.md'));

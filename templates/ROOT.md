@@ -39,7 +39,7 @@ Root is the cell that contains the others. Its session is the operator's working
 
 1. Write the task to a file (the session scratchpad, not the repo). Say what and why, the boundary, the tests to run, and exactly what to reply with. Mention any work in flight on the same code.
 2. `node kernel/src/mail.ts send --to <cell> --file task.md`, then `node kernel/src/cellrun.ts --cell <cell>` in the background.
-3. `node kernel/src/mail.ts watch --as root --wait 3500` in the background. Never block the operator's turn. Only one watcher: `watch` marks mail read.
+3. `node kernel/src/mail.ts watch --as root --wait 3500` in the background. Never block the operator's turn. One watcher per box: `watch` marks mail read, so a second one is refused while the first lives (`mail.ts status` shows `watched_by`). To read the mail now instead, `watch --as root --steal`: the background one then ends without taking anything.
 
 ## When a cell replies
 

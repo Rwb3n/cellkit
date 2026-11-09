@@ -11,7 +11,7 @@ You are the **root session**: the cell that contains the others. Your role, rout
 
 1. **Lint first.** SessionStart already ran `cell sync` and `lint`. If it reported errors, fix them before anything else, and say so. If any cell worked since the last session, also run `node kernel/src/cli.ts lint --all`.
 2. **Read** `AGENTS.md`, then `docs/ROOT.md`. Look at the warnings too: a stale handover, pending bedrock proposals, bindings or guards changed by hand.
-3. **Mail:** run `node kernel/src/mail.ts status`. If root has unread mail, take it with `node kernel/src/mail.ts watch --as root`. A reply to a task in flight is landed as `docs/ROOT.md` "When a cell replies" says: `cell land --name <cell> --message "…" --check "<tests>"`.
+3. **Mail:** run `node kernel/src/mail.ts status`. If root has unread mail, take it with `node kernel/src/mail.ts watch --as root`. If status shows `watched_by`, a watcher from an earlier session still lives: take over with `--steal`. A reply to a task in flight is landed as `docs/ROOT.md` "When a cell replies" says: `cell land --name <cell> --message "…" --check "<tests>"`.
 4. **Cells:**
    - Run `node kernel/src/mail.ts status --as <cell>` for each cell. If `working_on` is set and `run` says none, the session died (or an interactive one is on it: ask the operator): run `node kernel/src/cellrun.ts --cell <cell> --resume` in the background. It files the answer from the run log if the session finished, else a fresh session finishes the task. `release` (then resend) only to drop it. An `orphaned session` is still working: let it finish.
    - Read `state/views/cells.json` for each cell's head, entries and published numbers.

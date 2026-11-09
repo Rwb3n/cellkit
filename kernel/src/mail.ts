@@ -16,14 +16,15 @@
 //
 //   node kernel/src/mail.ts send   --to <cell> --body "…" | --file f      (from root)
 //   node kernel/src/mail.ts send   --to root --kind blocked|question|done --body "…"   (from inside a cell)
-//   node kernel/src/mail.ts watch  [--as root] [--wait 600] [--for <id>]      → prints unread mail, marks it read
+//   node kernel/src/mail.ts watch  [--as root] [--wait 600] [--for <id>] [--steal]   → prints unread mail, marks it
+//                                  read; one watcher per box (exit 1 if another holds it, 3 if this one was taken over)
 //   node kernel/src/mail.ts status [--as <name>]
 //   node kernel/src/mail.ts release --as <cell> [--note "…"]   a session died mid-task: file a placeholder reply, free the cell
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { alive, append } from './log.ts';
+import { alive, append, AppendError, lockFile } from './log.ts';
 import { sha256 } from './canon.ts';
 import { configPath, loadConfig } from './config.ts';
 import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
@@ -116,6 +117,54 @@ export function receive(dir: string, forId?: string): Message[] {
   return got;
 }
 
+// One watcher per box (#90). `watch` marks what it prints as read, so of two watchers on one box whichever wakes first
+// takes the reply, and the other, the one someone is reading, never sees it (ecom-lab: a second `watch --as root` with
+// its output thrown away, started while a background one waited for a cell's reply). A watch holds
+// <box>/inbox/watch.lock for its life (watch-<id>.lock with --for <id>: it takes only replies to that message, so watchers
+// for different messages run side by side). A second one that could take the same mail is refused, naming the first;
+// --steal takes over, and the first then ends without taking anything. A lock whose process is gone counts for nothing.
+// Claims, and each take of mail by a watcher, are made under one short lock, so two claimers never both win and a
+// watcher that has just been taken over never takes mail. Pids are reused: a lock left by a killed watcher can come to
+// name a live process that is no watcher (the refusal says so, and --steal clears it), or this very process (a lock
+// with our pid that we didn't write is nobody's).
+export interface Watcher { pid: number; at: string; for?: string }
+const watchPath = (dir: string, forId?: string) => join(inbox(dir), forId ? `watch-${forId}.lock` : 'watch.lock');
+const claimLock = (dir: string) => join(inbox(dir), 'watch.claim');
+const claimed = new Set<string>();   // the lock files this process wrote
+export function watchers(dir: string): (Watcher & { path: string })[] {
+  const box = inbox(dir);
+  return (existsSync(box) ? readdirSync(box) : []).filter((f) => /^watch(-.+)?\.lock$/.test(f)).flatMap((f) => {
+    try {
+      const w = JSON.parse(readFileSync(join(box, f), 'utf8')) as Watcher, path = join(box, f);
+      const live = Number.isInteger(w.pid) && w.pid > 0 && (w.pid === process.pid ? claimed.has(path) : alive(w.pid));
+      return live ? [{ ...w, path }] : [];
+    }
+    catch { return []; }
+  });
+}
+export function claimWatch(dir: string, o: { forId?: string; steal?: boolean } = {}): { take: () => Message[] | null; release: () => void } {
+  if (o.forId !== undefined && !/^\w[\w-]*$/.test(o.forId)) throw new MailError(`--for takes a message id, not ${JSON.stringify(o.forId)}`);
+  ensure(dir);
+  const own = watchPath(dir, o.forId);
+  const mine = () => { try { return (JSON.parse(readFileSync(own, 'utf8')) as Watcher).pid === process.pid; } catch { return false; } };
+  lockFile(claimLock(dir), () => {
+    // who could take the same mail: anyone, for a watch of the whole box; else a whole-box watch or one for the same message
+    const rivals = watchers(dir).filter((w) => !o.forId || !w.for || w.for === o.forId);
+    if (rivals.length && !o.steal) {
+      const [w] = rivals;
+      throw new MailError(`${nameOf(dir)}'s mail is already being watched (pid ${w.pid} since ${w.at}${w.for ? `, for ${w.for}` : ''}): a second watcher could take the mail the first is waiting for. ` +
+        `Let it finish, or take over with --steal: the first then ends without taking anything. If pid ${w.pid} is not a mail watch (a killed watcher's lock, its pid since reused), --steal clears it too`);
+    }
+    for (const w of rivals) { rmSync(w.path, { force: true }); claimed.delete(w.path); }
+    claimed.add(own);
+    writeFileSync(own, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), ...(o.forId ? { for: o.forId } : {}) }));
+  });
+  return {
+    take: () => lockFile(claimLock(dir), () => (mine() ? receive(dir, o.forId) : null)),      // null: taken over
+    release: () => lockFile(claimLock(dir), () => { if (mine()) rmSync(own, { force: true }); claimed.delete(own); }),
+  };
+}
+
 // ── a cell session's side (used by mail-hook.ts) ────────────────────────────────
 const currentPath = (cell: string) => join(inbox(cell), '.current');
 export const current = (cell: string): string | null => (existsSync(currentPath(cell)) ? readFileSync(currentPath(cell), 'utf8').trim() || null : null);
@@ -193,8 +242,10 @@ export function release(cell: string, note = '(released: the session ended witho
 // working_on with no live run: a session that died mid-task (or an interactive one: only the operator knows).
 export const status = (dir: string) => {
   const working_on = current(dir), r = isCell(dir) ? runnerOf(dir) : null;
+  const w = watchers(dir);
   return { box: nameOf(dir), unread: unread(dir).length, working_on,
-    run: r ? (r.orphan ? `orphaned session ${r.session}` : `${r.state} (pid ${r.pid})`) : working_on ? 'none: died, or interactive (cellrun --resume)' : null };
+    run: r ? (r.orphan ? `orphaned session ${r.session}` : `${r.state} (pid ${r.pid})`) : working_on ? 'none: died, or interactive (cellrun --resume)' : null,
+    ...(w.length ? { watched_by: w.map((x) => `pid ${x.pid} since ${x.at}${x.for ? ` for ${x.for}` : ''}`).join(' · ') } : {}) };
 };
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────
@@ -204,7 +255,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const here = resolve(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const me = isCell(here) ? here : repo;                       // run from a cell → you are that cell; else root
-  const boxOf = (name?: string) => (name ? dirOf(rootOf(me), name) : me);
+  // a name that is no cell is nobody's box: its folder, once made, would read as root's (nameOf), and take root's mail
+  const boxOf = (name?: string) => {
+    if (name && name !== 'root' && !isCell(dirOf(rootOf(me), name))) throw new MailError(`no cell named ${name}`);
+    return name ? dirOf(rootOf(me), name) : me;
+  };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   try {
     if (cmd === 'send') {
@@ -214,10 +269,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(send(me, to, body, (opt('kind') as MailKind) ?? (nameOf(me) === 'root' ? 'task' : 'question')).id);
     } else if (cmd === 'watch' || cmd === 'recv') {
       const box = boxOf(opt('as')), until = Date.now() + Number(opt('wait') ?? 0) * 1000;
-      let got = receive(box, opt('for'));
-      while (!got.length && Date.now() < until) { await sleep(3000); got = receive(box, opt('for')); }
-      if (!got.length) console.log('(no unread mail)');
-      for (const m of got) console.log(`── ${m.kind} from ${m.from} · ${m.id}${m.reply_to ? ` · re ${m.reply_to}` : ''} · ${m.at}\n${m.body}\n`);
+      if (rest.includes('--for') && opt('for') === undefined) throw new MailError('--for takes a message id, not nothing');
+      const watch = claimWatch(box, { forId: opt('for'), steal: rest.includes('--steal') });
+      try {
+        let got = watch.take();
+        while (got && !got.length && Date.now() < until) { await sleep(3000); got = watch.take(); }
+        if (!got) { console.error('watch ended: another watcher took this box over (--steal); nothing was taken here'); process.exitCode = 3; }
+        else if (!got.length) console.log('(no unread mail)');
+        for (const m of got ?? []) console.log(`── ${m.kind} from ${m.from} · ${m.id}${m.reply_to ? ` · re ${m.reply_to}` : ''} · ${m.at}\n${m.body}\n`);
+      } finally { watch.release(); }
     } else if (cmd === 'release') {
       if (!opt('as') || opt('as') === 'root') throw new MailError('release needs --as <cell>');
       const m = release(boxOf(opt('as')), opt('note'));
@@ -229,6 +289,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   } catch (e) {
     if (e instanceof MailError) { console.error(`refused: ${e.message}`); process.exit(1); }
+    // the short lock around a claim, held too long: a process stuck in it, or a leftover whose pid was reused
+    if (e instanceof AppendError && /watch\.claim/.test(e.message)) { console.error(`refused: the box's watch lock is busy: ${e.message}. If that pid is not a mail watch, delete that file`); process.exit(1); }
     throw e;
   }
 }
