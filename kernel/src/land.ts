@@ -23,9 +23,9 @@ import { spawnSync } from 'node:child_process';
 // --check runs through the system shell: cmd.exe on Windows (`(cd x && …)` doesn't scope the cd there), else /bin/sh
 const SHELL = process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : '/bin/sh';
 const runCheck = (check: string, cwd: string) => spawnSync(check, { cwd, shell: true, encoding: 'utf8' });
-import { lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { status } from './mail.ts';
+import { delivered, status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
 import { weakerTests } from './weaker.ts';
@@ -138,9 +138,90 @@ function absent(main: string, wt: string): string | null {
   return lacks.length ? `the check ran without the main checkout's git-ignored paths: ${more(lacks.slice(0, SHOWN), lacks.length)} (the worktree holds no file there: a test that reads one passes here whatever it holds)` : null;
 }
 
+// A reply's "Decisions to confirm" (#74; apify-actor-dev: a cell's reply listed "Caption not read: the research didn't
+// use it" under that heading, root landed the work, nobody took the decision to the operator, and it shipped as a
+// product limit a buyer found a day later). The brief asks every reply to end with that section ("none" if none); a
+// land prints it, after everything else, for each reply it lands. The replies a land lands are the reply entries its
+// branch adds to the cell's log; a reply's text is read from root's mailbox (the log may hold only its hash), else
+// from the entry.
+// Reading the section errs towards printing: a first reading that judged where a section ends by any line that looked
+// like a heading printed nothing for grouped items, a sub-heading per decision or a second section (a review). So:
+// the heading is the brief's words only, at the start of a line, whatever marks surround them; every such section is
+// read; one under a # heading ends at the next # heading of its level or above, any other at the next # heading or
+// the end of the reply (a bold line ends nothing: "None" then "**Except:**" was silent while it did); code fences hide
+// nothing and end nothing; words in the heading's brackets are the section's first line. A section is
+// silent only when every line of it says none (a second review: "None." followed by "except: capped the run at 50" was
+// silent under a first-line rule); an empty one is said. What can't be told apart is printed.
+const PHRASE = /^[^A-Za-z]*decisions?\s+(?:for\s+(?:you|root|the\s+operator)\s+)?to\s+(?:be\s+)?confirm(?:ed)?(?![A-Za-z0-9])/i;
+const AFTER = /^[\s*_#.]*(?:\(([^)]*)\))?[\s*_#.]*(?:$|[:—–-]\s*(.*)$)/;      // alone on the line (a count or a note in brackets), or a colon or dash and the first item
+const NONE = /^[^\p{L}\p{N}]*(?:none|nothing|n\/a|no\s+decisions?)[^\p{L}\p{N}]*$/iu;   // the word alone: no letter of any script beside it
+const RECOVERED = /^\(recovered by cellrun from .*: the session finished but its reply was never filed\)$/;                         // cellrun's own line after a reply it filed from a run log
+const FENCE = /^\s*(?:```|~~~)/, HASHES = /^\s{0,3}(#{1,6})\s/;
+// printed to a terminal: no control characters (a reply could redraw the land's own lines), no endless line (and a cut
+// one says so: a paragraph of three decisions cut at the first is two decisions lost)
+const LINE_MAX = 1000;
+const printable = (l: string) => ((c) => (c.length > LINE_MAX ? `${c.slice(0, LINE_MAX)} … (line cut: read the reply)` : c))(l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ''));
+const sectionAt = (line: string): { first: string[] } | null => {
+  const m = PHRASE.exec(line), rest = m && AFTER.exec(line.slice(m[0].length));
+  if (!rest) return null;
+  const note = /\p{L}/u.test(rest[1] ?? '') ? [`(${rest[1].trim()})`] : [], item = (rest[2] ?? '').replace(/^[\s*_]+/, '').trim();
+  return { first: [...note, ...(item ? [item] : [])] };
+};
+// The sections' lines, [] if each says none, null if the reply has no such section.
+export function decisionsIn(reply: string): string[] | null {
+  const lines = reply.split(/\r?\n/).map(printable), out: string[] = [];
+  let found = false, fenced = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (FENCE.test(lines[i])) { fenced = !fenced; continue; }
+    const head = fenced ? null : sectionAt(lines[i]);
+    if (!head) continue;
+    found = true;
+    const level = HASHES.exec(lines[i])?.[1].length;
+    const body = [...head.first];
+    let j = i + 1;
+    for (let inFence = false; j < lines.length; j++) {
+      if (FENCE.test(lines[j])) inFence = !inFence;
+      else if (!inFence) {
+        const h = HASHES.exec(lines[j])?.[1].length;
+        if (sectionAt(lines[j]) || (h && (!level || h <= level))) break;
+      }
+      body.push(lines[j].trimEnd());
+    }
+    const kept = body.filter((l) => l.trim());
+    if (!kept.length) out.push('(this section is empty: read the reply)');
+    else if (!kept.every((l) => NONE.test(l) || RECOVERED.test(l))) out.push(...kept);
+    i = j - 1;
+  }
+  return found ? out : null;
+}
+function repliesLanding(main: string, wt: string, name: string, into: string, pending: string[]): { id: string; text: string }[] {
+  const log = `cells/${name}/state/log/`;
+  const added = git(wt, ['diff', '--name-only', '--diff-filter=A', `${into}...HEAD`, '--', log], false);
+  const files = [...new Set([...(added.ok ? added.out.split(/\r?\n/) : []), ...pending])].filter((p) => p.startsWith(log) && p.endsWith('.json')).sort();
+  return files.flatMap((f) => {
+    try {
+      const p = (JSON.parse(readFileSync(join(wt, f), 'utf8')) as { body?: { source?: { capability?: string }; payload?: { id?: string; kind?: string; body?: string } } }).body;
+      if (p?.source?.capability !== 'mail' || p.payload?.kind !== 'reply' || !p.payload.id) return [];
+      let text = p.payload.body;                                            // the log's copy, unless root's mailbox has one that reads
+      try { text = delivered(main, p.payload.id)?.body ?? text; } catch { /* a damaged mail file: the log's will do */ }
+      return [{ id: p.payload.id, text: text ?? '' }];
+    } catch { return []; }                                                  // not an entry: lint's business
+  });
+}
+const SECTION_MAX = 40;
+function decisionNotes(replies: { id: string; text: string }[]): string[] {
+  return replies.flatMap(({ id, text }) => {
+    const d = text ? decisionsIn(text) : null;
+    if (d === null) return [`the reply being landed (${id}) has no "Decisions to confirm" section${text ? '' : ' that can be read (its text is in neither root\'s mailbox nor the log)'}: read it for choices the cell made that nobody confirmed`];
+    return d.length ? [`DECISIONS TO CONFIRM, from the reply being landed (${id}). Take each to the operator, or log it (constraint if they decided, assume if not):\n${d.slice(0, SECTION_MAX).map((l) => `  ${l}`).join('\n')}${d.length > SECTION_MAX ? `\n  … and ${d.length - SECTION_MAX} more line(s): read the reply` : ''}`] : [];
+  });
+}
+
 export interface LandOptions { name?: string; message?: string; check?: string; into?: string; dryRun?: boolean; acceptWeaker?: string }
 
-export function cellLand(root: string, o: LandOptions): string[] {
+// The steps taken, and `after`: what root must still do (a reply's decisions to confirm), for the caller to print last.
+export type Landed = string[] & { after?: string[] };
+export function cellLand(root: string, o: LandOptions): Landed {
   const main = inMain(root), name = o.name ?? '';
   const wt = cellWorktree(main, name);
   if (!wt) throw new WorktreeError(`cell ${name} has no worktree (node kernel/src/cli.ts cell checkout --name ${name})`);
@@ -167,6 +248,7 @@ export function cellLand(root: string, o: LandOptions): string[] {
   const branch = cellBranch(name), message = o.message ?? `cell ${name}: work`;
   const pending = dirty(wt);
   const weakerNote = (w: string[]) => `the cell's tests got weaker:\n  ${w.join('\n  ')}\nLand it anyway only on the operator's word: ! node kernel/src/cli.ts cell land --name ${name} … --accept-weaker "<why>"`;
+  const decisions = decisionNotes(repliesLanding(main, wt, name, into, pending));
   const strayNote = (paths: string[]) => `the check left uncommitted paths in the worktree: ${more(paths.slice(0, SHOWN), paths.length)}`;
   if (o.dryRun) {
     const plan = [
@@ -186,10 +268,11 @@ export function cellLand(root: string, o: LandOptions): string[] {
       if (a) plan.push(a);
       if (stray.length) plan.push(strayNote(stray));
     } else if (left.note) plan.push(left.note);
-    return [...plan, `would merge ${branch} into ${into} (--no-ff), sync the cell and commit root's log`];
+    return [...plan, `would merge ${branch} into ${into} (--no-ff), sync the cell and commit root's log`, ...decisions];
   }
 
-  const steps: string[] = [];
+  const steps: Landed = [];
+  steps.after = decisions;
   const start = head(wt);
   if (pending.length) {
     // the cell's folder, and each path it owns that has changes (git refuses a pathspec matching nothing)

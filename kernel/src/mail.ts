@@ -217,6 +217,12 @@ export function message(dir: string, id: string): Message | null {
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
 }
 
+// A message in a box by id, taken (read/) or not yet: what land reads a reply's text from.
+export function delivered(dir: string, id: string): Message | null {
+  for (const p of [join(inbox(dir), 'read', `${id}.json`), join(inbox(dir), `${id}.json`)]) if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
+  return null;
+}
+
 // A headless run's lock, <mailbox>/runner.lock (cellrun.ts writes it): the runner's pid, and once started its session's.
 // The runner can die while its session works on (a kill aimed at another project's processes took every runner on
 // AI-MMO's machine): the session is then an orphan, and the lock stays live until it ends.

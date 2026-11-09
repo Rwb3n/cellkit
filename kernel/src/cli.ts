@@ -137,15 +137,19 @@ function main(): number {
       }
       if (rest[0] === 'land') {
         const name = opt('name');
-        let steps: string[];
+        let steps: ReturnType<typeof cellLand>;
         try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run'), acceptWeaker: opt('accept-weaker') }); }
         catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
         for (const s of steps) console.log(s);
         if (rest.includes('--dry-run')) return 0;
-        const code = write(() => cellSync(cell, { name }));
-        const logged = commitRootLog(cell, `Root log: cell ${name} landed (mail, sync)`);
-        if (logged) console.log(`committed root's log: ${logged}`);
-        return code;
+        // The work is on main now. Whatever the sync or root's log commit does (a commit hook that refuses), the reply's
+        // decisions are still printed, last: a second land would say "nothing to land" and never show them (#74).
+        try {
+          const code = write(() => cellSync(cell, { name }));
+          const logged = commitRootLog(cell, `Root log: cell ${name} landed (mail, sync)`);
+          if (logged) console.log(`committed root's log: ${logged}`);
+          return code;
+        } finally { for (const s of steps.after ?? []) console.log(s); }
       }
       if (rest[0] === 'rebind') return write(() => cellRebind(cell, { name: opt('name'), binding: opt('binding') }));
       if (rest[0] === 'refresh') { try { console.log(cellRefresh(cell, { name: opt('name') }).join('\n')); return 0; } catch (e) { console.error(`refused: ${(e as Error).message}`); return 1; } }

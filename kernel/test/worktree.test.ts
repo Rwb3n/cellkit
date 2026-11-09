@@ -669,6 +669,99 @@ test('cell land: git-ignored files in the worktree are listed; with land.ignored
   assert.match(checkGuards({ land: { allow: [] } }).join(), /land: unknown key "allow"/);
 });
 
+test('cell land: the last thing it prints is the "Decisions to confirm" of each reply it lands, or that a reply has none (#74)', async (t) => {
+  const { main, wt, cellWt } = world(t);
+  const { decisionsIn } = await import('../src/land.ts');
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const task = (ask: string, answer: string) => { send(main, 'demo', ask); takeNext(cellWt); stop(cellWt, answer); return receive(main)[0].id; };
+  // the brief's heading, whatever marks surround it
+  for (const h of ['## Decisions to confirm', '### Decisions to confirm', '**Decisions to Confirm**', '__Decisions to confirm__', '4. Decisions to confirm',
+    '## 4. Decisions to confirm', '- **Decisions to confirm:**', '> ## Decisions to confirm', '## Decisions to be confirmed', '# Decisions to confirm #',
+    '## Decisions to confirm.', '**Decisions to confirm** (2)', 'Decisions to confirm —', 'Decisions for the operator to confirm:  ', 'DECISIONS TO CONFIRM'])
+    assert.deepEqual(decisionsIn(`Done.\r\n\r\n${h}\r\n- x\r\n`), ['- x'], h);
+  assert.deepEqual(decisionsIn('Decisions to confirm (1): dropped the retry'), ['dropped the retry']);
+  // where a section ends: under a # heading, the next one of its level or above; else the next # heading or the reply's end
+  assert.deepEqual(decisionsIn('Done.\n\n## Decisions to confirm\n- Caption not read: the research didn\'t use it\n- Limit 50 per run\n\n## Files\n- a.ts'),
+    ['- Caption not read: the research didn\'t use it', '- Limit 50 per run']);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\nScope:\n- export is CSV only\n**Default**\n- 50 per page\n\n## Files\n- a.ts'),
+    ['Scope:', '- export is CSV only', '**Default**', '- 50 per page']);                 // grouped items are items
+  assert.deepEqual(decisionsIn('## Decisions to confirm\n### 1. Caption not read\nThe research did not use it.\n# Next\nx'), ['### 1. Caption not read', 'The research did not use it.']);
+  assert.deepEqual(decisionsIn('**Decisions to confirm:**\n1. kept the old schema\n\n## Tests\n12 pass'), ['1. kept the old schema']);
+  assert.deepEqual(decisionsIn('**Decisions to confirm**\nNone\n**Except:**\n- capped runs at 50\n'), ['None', '**Except:**', '- capped runs at 50']);   // a bold line ends nothing
+  assert.deepEqual(decisionsIn('Decisions to confirm (I capped runs at 50): none'), ['(I capped runs at 50)', 'none']);   // said in the heading's brackets
+  assert.deepEqual(decisionsIn('Decisions to confirm:\nuse v2?\nI also chose the following:\n- limit 50'), ['use v2?', 'I also chose the following:', '- limit 50']);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\n- a\n```\n# limit raised\n```\n- b\n## Tests\nok'), ['- a', '```', '# limit raised', '```', '- b']);
+  assert.equal(decisionsIn('Done.\n```\n## Decisions to confirm\n- quoted, not said\n```\n'), null);
+  // every section is read; a look-alike before the real one hides nothing
+  assert.deepEqual(decisionsIn('Decisions to confirm: none\n\n## Part 2\n\n## Decisions to confirm\n- real'), ['- real']);
+  assert.deepEqual(decisionsIn('To confirm: all 12 tests pass.\n\n## Open questions\nNone.\n\n## Decisions to confirm\n- real'), ['- real']);
+  // silent only when all it says is none; empty is said; "none, but" and "none" then more are decisions
+  for (const none of ['Decisions to confirm: none', '## Decisions to confirm\n\n- None.\n', '**Decisions to confirm**\nnone\n\n## Tests\nok', 'Decisions to confirm: none\n\n(recovered by cellrun from runs/20261109T101500.jsonl: the session finished but its reply was never filed)'])
+    assert.deepEqual(decisionsIn(none), [], none);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\n## Tests\nok'), ['(this section is empty: read the reply)']);
+  assert.deepEqual(decisionsIn('Decisions to confirm:\n- none yet, but the limit is 50'), ['- none yet, but the limit is 50']);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\nNone.\n- except: capped the run at 50 items\n'), ['None.', '- except: capped the run at 50 items']);
+  assert.deepEqual(decisionsIn('Decisions to confirm: none\n\nOne caveat: I dropped the XLSX export.'), ['none', 'One caveat: I dropped the XLSX export.']);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\n**None**\n### Caveat\nDropped XLSX.'), ['**None**', '### Caveat', 'Dropped XLSX.']);
+  assert.deepEqual(decisionsIn('## Decisions to confirm\nNone — но экспорт ограничен'), ['None — но экспорт ограничен']);   // letters of any script
+  assert.deepEqual(decisionsIn('Decisions to confirm:\n(recovered by cellrun from memory: capped runs at 50)'), ['(recovered by cellrun from memory: capped runs at 50)']);
+  for (const absent of ['All done, 12 tests pass.', 'Open questions remain about the schema, but tests pass.', 'I had two decisions to confirm with you earlier; both are settled.',
+    'Decisions to confirm with the operator were all settled.', '## Open questions\n- is v2 wanted?'])
+    assert.equal(decisionsIn(absent), null, absent);                         // prose, or another heading, is no section
+  // what is printed can't redraw the terminal or run on for ever
+  assert.deepEqual(decisionsIn('## Decisions to confirm\n- a\u001b[2K\u0007b\r\n'), ['- a[2Kb']);
+  const long = `- kept the old schema ${'because the migration was out of scope '.repeat(12)}and capped every run at 50 items`;   // a paragraph: whole
+  assert.deepEqual(decisionsIn(`## Decisions to confirm\n${long}`), [long]);
+  assert.match(decisionsIn(`## Decisions to confirm\n${'.'.repeat(300000)}x`)![0], /^\.{1000} … \(line cut: read the reply\)$/);
+
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'one\n');
+  const first = task('write the report', 'Report written.\n\n## Decisions to confirm\n- Caption not read: the research didn\'t use it\n\n## Tests\n3 pass');
+  const dry = land('--dry-run');
+  assert.match(dry.stdout, new RegExp(`DECISIONS TO CONFIRM, from the reply being landed \\(${first}\\)\\. Take each to the operator, or log it[^\\n]*\\n  - Caption not read: the research didn't use it\\n(?!  )`));
+  rmSync(join(mailbox(main), 'inbox', 'read', `${first}.json`));             // the mailbox is transient: the log's copy will do
+  const landed = land('--message', 'the report');
+  assert.equal(landed.status, 0, landed.stderr);
+  // after everything else, the sync and root's log commit too: the last thing on the screen
+  assert.match(landed.stdout, /landed cell\/demo on main[\s\S]*committed root's log: \w+\r?\nDECISIONS TO CONFIRM[^\n]*\n  - Caption not read: the research didn't use it\r?\n$/);
+  assert.doesNotMatch(landed.stdout, /3 pass/);                              // the section, not the reply
+
+  // the next land: only its own replies; one that says none is silent, one with no section is said
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'two\n');
+  task('revise it', 'Revised.\n\nDecisions to confirm: none');
+  const quiet = land('--message', 'revised');
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.doesNotMatch(quiet.stdout, /DECISIONS TO CONFIRM|Caption|no "Decisions to confirm"/);
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'three\n');
+  const bare = task('once more', 'Done, all pass.');
+  git(wt, 'add', '-A'); git(wt, 'commit', '-qm', 'by hand');                 // already committed on the branch: still a reply this land lands
+  const kept = task('and the index', 'Indexed.\n\n**Decisions to confirm**\n- kept v1 of the schema');   // two replies in one land
+  writeFileSync(join(mailbox(main), 'inbox', 'read', `${kept}.json`), '{ not json');   // a damaged mail file: the log's copy will do
+  const both = land('--message', 'again').stdout;
+  assert.match(both, new RegExp(`the reply being landed \\(${bare}\\) has no "Decisions to confirm" section: read it`));
+  assert.match(both, new RegExp(`DECISIONS TO CONFIRM, from the reply being landed \\(${kept}\\)[^\\n]*\\n  - kept v1 of the schema`));
+
+  // the work lands, then root's log commit fails (a hook that refuses): the decisions are printed all the same
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'three and a half\n');
+  task('one more', 'Done.\n\nDecisions to confirm:\n- dropped the XLSX export');
+  mkdirSync(join(main, '.git', 'hooks'), { recursive: true });
+  writeFileSync(join(main, '.git', 'hooks', 'commit-msg'), '#!/bin/sh\nif grep -q "^Root log:" "$1"; then exit 1; fi\nexit 0\n', { mode: 0o755 });
+  const hooked = land('--message', 'hooked');
+  rmSync(join(main, '.git', 'hooks', 'commit-msg'));
+  assert.notEqual(hooked.status, 0);
+  assert.match(hooked.stdout, /landed cell\/demo on main[\s\S]*DECISIONS TO CONFIRM[^\n]*\n  - dropped the XLSX export/);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'the log the hook refused');
+
+  // bodies kept out of the logs (mail.log "hash"): the text comes from root's mailbox
+  mkdirSync(join(main, 'state', 'bedrock'), { recursive: true });
+  writeFileSync(join(main, 'state', 'bedrock', 'guards.json'), JSON.stringify({ mail: { log: 'hash' } }));
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'guards'); git(wt, 'merge', '-q', 'main');
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'four\n');
+  task('and again', 'Done.\n\nDecisions to confirm:\n- skipped the archive (too large)');
+  assert.doesNotMatch(readLog(cellWt).map((e) => JSON.stringify(e)).join('\n'), /skipped the archive/);
+  assert.match(land('--message', 'hashed').stdout, /DECISIONS TO CONFIRM[^\n]*\n  - skipped the archive \(too large\)/);
+});
+
 test('cell land: an undo that fails says so, never "back where it was" (#77)', (t) => {
   const { tmp, main, wt, cellWt } = world(t);
   mkdirSync(join(cellWt, 'exit'), { recursive: true });
