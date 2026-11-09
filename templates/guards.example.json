@@ -12,5 +12,6 @@
     { "path": "OTHER_PROJECT/vault/", "why": "another project's vault" },
     { "path": "records/*bank*", "why": "bank records" }
   ],
-  "worktrees": { "home": "../.cells/myproject" }
+  "worktrees": { "home": "../.cells/myproject" },
+  "land": { "ignored": ["**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**", "cells/*/state/out/**"] }
 }

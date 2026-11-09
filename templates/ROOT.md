@@ -44,7 +44,7 @@ Root is the cell that contains the others. Its session is the operator's working
 ## When a cell replies
 
 1. Read the reply in full. Note what it says is for root. Don't take "all pass" on trust.
-2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails, or if the cell's tests got weaker. Read why, then send the cell a follow-up task. If weaker tests are right (a test moved, a case became obsolete), show the operator the findings; landing them is the operator's call (`--accept-weaker "<why>"`).
+2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails, if the cell's tests got weaker, or if the worktree holds git-ignored files outside `guards.json` `land.ignored` (where the project set it). Read its report: it lists the git-ignored files left in the worktree, and the main checkout's git-ignored paths the check ran without. Read why, then send the cell a follow-up task. If weaker tests are right (a test moved, a case became obsolete), show the operator the findings; landing them is the operator's call (`--accept-weaker "<why>"`).
 3. Take its "for root" items: decide what's root's, ask the operator about theirs.
 
 ## Hand over (end of a session) — the `/session-close` skill runs this

@@ -7,8 +7,12 @@
 //     "cells":         { "game": { "owns": ["game/**", "sim/**"] } },                          paths a cell owns beyond its folder
 //     "mail":          { "log": "hash" },                                                      mail bodies kept out of the logs
 //     "unreadable":    [ { "path": "OTHER_PROJECT/vault/", "why": "…" } ],                     no session reads these
-//     "worktrees":     { "home": "../.cells/myproject" }                                       where cell checkout puts cells
+//     "worktrees":     { "home": "../.cells/myproject" },                                      where cell checkout puts cells
+//     "land":          { "ignored": ["**/__pycache__/**", "cells/*/state/out/**"] }            git-ignored files a land accepts
 //   }
+// land.ignored (#77): globs over worktree paths. Once set (an empty list too), `cell land` refuses while the cell's
+// worktree holds a git-ignored file outside it, what the kit rebuilds aside (land.ts REBUILT): data a run left behind is
+// deleted or allowed by the operator, never waved through. Not set: land only lists them.
 // worktrees.home: the folder holding the project's cell worktrees (<home>/<cell>), relative to the main checkout and
 // outside it (#26: under the main checkout is root's, so a cell nested there would be judged as root). Default: the
 // sibling <repo>-cells/. Relative, never by drive, so the project opens the same from Windows and WSL.
@@ -38,7 +42,7 @@ export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
 export type MailLog = 'body' | 'hash';
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; error?: string }
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; error?: string }
 interface Raw {
   operator_only?: { command?: string; pattern?: string; message?: string }[];
   protected?: { path?: string; by?: string }[];
@@ -46,6 +50,7 @@ interface Raw {
   mail?: { log?: string };
   unreadable?: { path?: string; why?: string }[];
   worktrees?: { home?: string };
+  land?: { ignored?: string[] };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -61,12 +66,29 @@ export function commandRe(command: string): RegExp {
 // What a cell may not own: the kernel, the logs and bedrock, other cells, the hooks, git, the generated docs.
 const UNOWNABLE = /^(kernel|state|cells|\.claude|\.git)(\/|$)|^docs\/assumptions\.md$/i;
 
+// Probe paths nobody would name. The operator still reads each glob: this catches the catch-alls, not intent.
+const TOO_WIDE = ['zq9x', 'zq9x/w7zk/j3v8', 'zq9x/w7zk/j3.v8', 'zq9x/w7zk/j3.v8qx'];
+
 // The problems with a guards doc (empty = fine). Used by bedrock's amend and approve, and when the hooks load it.
 export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees', 'land'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees, land)`);
+  if (raw.land !== undefined) {
+    if (!raw.land || typeof raw.land !== 'object' || Array.isArray(raw.land)) out.push('land must be an object ({ "ignored": ["<glob>", …] })');
+    else {
+      for (const k of Object.keys(raw.land)) if (k !== 'ignored') out.push(`land: unknown key "${k}" (ignored)`);
+      const g = raw.land.ignored;
+      if (g !== undefined && !Array.isArray(g)) out.push('land.ignored must be a list of globs (e.g. ["**/__pycache__/**"])');
+      for (const [i, x] of (Array.isArray(g) ? g : []).entries()) {
+        if (typeof x !== 'string' || !x.trim()) out.push(`land.ignored[${i}] must be a glob`);
+        else if (/^[a-zA-Z]:|^[\\/]|^~|(^|\/)\.\.(\/|$)/.test(x)) out.push(`land.ignored[${i}] "${x}": a path inside the worktree, from its root`);
+        // a glob that takes a path nobody named allows whatever a run leaves: **, **/*.*, ?*/**
+        else if (TOO_WIDE.some((p) => globRe(x).test(p))) out.push(`land.ignored[${i}] "${x}": too wide (it would allow any file); name a folder or an extension, or leave land.ignored out to only list`);
+      }
+    }
+  }
   if (raw.worktrees !== undefined) {
     if (!raw.worktrees || typeof raw.worktrees !== 'object' || Array.isArray(raw.worktrees)) out.push('worktrees must be an object ({ "home": "../.cells/<project>" })');
     else {
@@ -141,6 +163,7 @@ export function loadConfig(path = configPath()): Config {
     mailLog: raw.mail?.log === 'hash' ? 'hash' : 'body',
     unreadable: (raw.unreadable ?? []).map((u) => ({ path: u.path!, why: u.why ?? `unreadable (bedrock guards.json: ${u.path})` })),
     home: raw.worktrees?.home,
+    landIgnored: raw.land?.ignored,
   };
 }
 

@@ -38,6 +38,7 @@ ${owns.length ? `- **You also own, outside this folder:** ${owns.map((g) => `\`$
 - **Need a kernel or root change?** Don't work around it — say so (what, why, smallest change). Root decides.
 - **The rule says no, the evidence says probably yes?** Raise a review proposing ONE exact claim with its evidence: \`node ${toRoot}/kernel/src/cli.ts review raise --cell . --file r.json\` (\`{ question, proposes: { about, kind, says }, evidence }\`). Root is mailed; only the operator decides.
 - **Done means tested:** your tests, the kernel's (\`cd ${toRoot}/kernel && npm test\`), then fold + lint. Keep \`MODEL.md\` current. Publish numbers in \`state/out/metrics.json\` (\`{ name: number }\`); root's \`cell sync\` records them.
+- **Tests read only what is committed:** a fixture in \`test/\`, or a temp folder the test fills itself. Never the repository root as a data folder, nor a git-ignored one (\`data/\`, \`state/out/\`): root's land check runs in this worktree, which holds none of the main checkout's git-ignored files, so such a test passes here and fails where the data is. Delete what a test run leaves behind.
 - Rules flow down from the root: [\`${toRoot}/state/bedrock/\`](${toRoot}/state/bedrock/). This cell has no bedrock and can't amend the root's.
 
 ## How it runs

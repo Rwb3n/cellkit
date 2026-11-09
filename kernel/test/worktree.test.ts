@@ -580,6 +580,122 @@ test('cell land: weaker tests stop the land; the operator lands them with a reas
   assert.match(git(main, 'log', '-1', '--format=%B', 'HEAD~1'), /Weaker tests, accepted by the operator: case two moved[\s\S]*1 fewer test case/);
 });
 
+test('cell land: git-ignored files in the worktree are listed; with land.ignored set, any outside it stop the land, the check\'s own leftovers too (#77)', async (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const onMain = (message: string) => { git(main, 'add', '-A'); git(main, 'commit', '-qm', message); git(wt, 'merge', '-q', 'main'); };
+  writeFileSync(join(main, '.gitignore'), 'node_modules/\n**/state/views/\ntmp/\n*.cache\n*.dat\n');
+  onMain('ignores');
+  const put = (text: string, ...path: string[]) => { mkdirSync(dirname(join(...path)), { recursive: true }); writeFileSync(join(...path), text); };
+  put('done\n', cellWt, 'exit', 'report.md');
+  put('x'.repeat(3000), cellWt, 'tmp', 'deep', 'real.json');                 // what a run left behind
+  put('x', cellWt, 'tmp', 'a.json');
+  put('{}', cellWt, 'tmp', 'node_modules', 'm', 'x.json');                   // a kit name elsewhere is data like the rest
+  put('{}', cellWt, 'tmp', 'state', 'views', 'x.json');
+  put('k', cellWt, 'tmp', 'ok.cache');
+  put('{}', cellWt, 'state', 'views', 'x.json');                             // a view fold wrote: the one thing never listed
+  // no allowlist: listed, never a refusal
+  const listed = land('--dry-run');
+  assert.match(listed.stdout, /git-ignored in the worktree, not landed: cells\/demo\/tmp\/ \(5 file\(s\), 3 KB\)/);
+  assert.doesNotMatch(listed.stdout, /cells\/demo\/state\/views|would stop/);
+  // an allowlist: anything outside it stops the land before it changes a thing
+  const guards = join(main, 'state', 'bedrock', 'guards.json');
+  put(JSON.stringify({ land: { ignored: ['**/*.cache'] } }), guards);
+  onMain('guards');
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  const refused = land('--message', 'the report');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /land\.ignored\) doesn't allow: cells\/demo\/tmp\/ \(4 file\(s\), 3 KB\)[\s\S]*the operator approves/);   // ok.cache is allowed
+  assert.doesNotMatch(refused.stderr, /back where it was/);                  // refused whole: nothing to undo
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);
+  assert.match(git(wt, 'status', '--porcelain'), /report\.md/);              // not even committed on its branch
+  rmSync(join(cellWt, 'tmp'), { recursive: true });
+  // an ignored file in a folder git doesn't track yet, beside a plain one: git's folder listing leaves it out
+  put('notes\n', cellWt, 'new', 'a.txt');
+  put('x'.repeat(2000), cellWt, 'new', 'deep', 'b.dat');
+  put('rows', cellWt, 'state', 'views', 'customers.csv');                    // and beside the views, something that is no view
+  const hidden = land('--message', 'the report');
+  assert.match(hidden.stderr, /doesn't allow: 2 entries, [\s\S]*cells\/demo\/new\/deep\/ \(1 file\(s\), 2 KB\) · cells\/demo\/state\/views\/ \(1 file\(s\), 1 KB\)/);
+  assert.doesNotMatch(hidden.stderr, /back where it was/);
+  rmSync(join(cellWt, 'new', 'deep'), { recursive: true });
+  rmSync(join(cellWt, 'state', 'views', 'customers.csv'));
+  put('k', cellWt, 'keep.cache');
+  assert.match(land('--dry-run').stdout, /not landed \(allowed by land\.ignored\): cells\/demo\/keep\.cache \(1 KB\)/);
+  put('x'.repeat(5000), cellWt, 'big.cache');                                // several: the sum, and the largest first
+  assert.match(land('--dry-run').stdout, /: 2 entries, 5 KB in all: cells\/demo\/big\.cache \(5 KB\) · cells\/demo\/keep\.cache \(1 KB\)/);
+  rmSync(join(cellWt, 'big.cache'));
+  // a check that leaves files behind, in an ignored folder and in a new one: the land is undone
+  const leaves = `node -e "const f=require('fs');f.mkdirSync('tmp');f.mkdirSync('scratch');f.writeFileSync('tmp/out.json','x');f.writeFileSync('scratch/log.txt','x');f.writeFileSync('scratch/real.dat','x')"`;
+  const sweep = () => { for (const d of ['tmp', 'scratch']) rmSync(join(wt, d), { recursive: true }); };
+  assert.match(land('--dry-run', '--check', leaves).stdout, /would stop: [\s\S]*doesn't allow: 2 entries, [\s\S]*scratch\/real\.dat \(1 KB\)/);
+  sweep();
+  const undone = land('--message', 'the report', '--check', leaves);
+  assert.equal(undone.status, 1);
+  assert.match(undone.stderr, /after the check: [\s\S]*doesn't allow: 2 entries, [\s\S]*tmp\/ \(1 file[\s\S]*back where it was/);
+  assert.match(undone.stderr, /scratch\/real\.dat \(1 KB\)/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);
+  assert.doesNotMatch(git(main, 'log', '--format=%s'), /Land cell\/demo/);
+  sweep();
+  // a check that leaves a file git does show: said, and left to the next land
+  assert.match(land('--dry-run', '--check', `node -e "require('fs').writeFileSync('cells/demo/dry.txt','x')"`).stdout, /the check left uncommitted paths in the worktree: cells\/demo\/dry\.txt/);
+  rmSync(join(cellWt, 'dry.txt'));
+  const ok = land('--message', 'the report', '--check', `node -e "require('fs').writeFileSync('cells/demo/left.txt','x')"`);
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /the check left uncommitted paths in the worktree: cells\/demo\/left\.txt/);
+  assert.match(ok.stdout, /allowed by land\.ignored\): cells\/demo\/keep\.cache/);
+  // a guards doc that can't be read as an allowlist allows nothing
+  writeFileSync(guards, JSON.stringify({ land: { ignored: ['**'] } }));
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'too wide');
+  assert.match(land().stderr, /refused: .*land\.ignored\[0\] "\*\*": too wide/);
+  const { checkGuards } = await import('../src/config.ts');
+  assert.deepEqual(checkGuards({ land: { ignored: [] } }), []);              // set and empty: nothing ignored is allowed
+  assert.deepEqual(checkGuards({ land: { ignored: ['**/__pycache__/**', 'cells/*/state/out/**'] } }), []);
+  assert.match(checkGuards({ land: { ignored: ['../data/**'] } }).join(), /inside the worktree/);
+  assert.match(checkGuards({ land: { ignored: 'tmp' } }).join(), /must be a list of globs/);
+  for (const wide of ['**', '**/*', '**/*.*', '?*/**', '**/?*', '**/*.???*']) assert.match(checkGuards({ land: { ignored: [wide] } }).join(), /too wide/, wide);
+  assert.match(checkGuards({ land: { allow: [] } }).join(), /land: unknown key "allow"/);
+});
+
+test('cell land: an undo that fails says so, never "back where it was" (#77)', (t) => {
+  const { tmp, main, wt, cellWt } = world(t);
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'done\n');
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  // a check that breaks the worktree's git index: the listing after it fails, and so does the undo
+  writeFileSync(join(tmp, 'break.cjs'), `const fs = require('fs'); fs.writeFileSync(fs.readFileSync('.git', 'utf8').replace('gitdir: ', '').trim() + '/index', 'garbage');\n`);
+  const r = run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', '--message', 'the report', '--check', `node "${join(tmp, 'break.cjs')}"`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /after the check, the worktree's git-ignored files couldn't be listed: [\s\S]*nothing was landed, but cell\/demo could NOT be put back to/);
+  assert.doesNotMatch(r.stderr, /is back where it was/);
+  assert.doesNotMatch(git(main, 'log', '--format=%s'), /Land cell\/demo/);
+  assert.notEqual(git(main, 'rev-parse', 'cell/demo').trim(), start);          // the message is true: the land's commit is still there
+});
+
+test('cell land: a check\'s result names the main checkout\'s git-ignored paths it ran without (#68)', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  writeFileSync(join(main, '.gitignore'), 'node_modules/\n**/state/views/\ndata/\n.env\n');
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'ignores'); git(wt, 'merge', '-q', 'main');
+  for (const d of [join(main, 'data', 'raw'), join(main, 'kernel', 'node_modules', 'm')]) {   // real data; and what npm installs
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'x.json'), '{}');
+  }
+  writeFileSync(join(main, '.env'), 'K=v\n');
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'done\n');
+  const pass = 'node -e "process.exit(0)"';
+  assert.match(land('--dry-run', '--check', pass).stdout, /the check ran without the main checkout's git-ignored paths: \.env · data\/ \(/);
+  assert.doesNotMatch(land('--dry-run').stdout, /ran without/);              // no check: nothing ran
+  mkdirSync(join(wt, 'data', 'raw'), { recursive: true });                   // an empty folder of that name is not the data
+  assert.match(land('--dry-run', '--check', pass).stdout, /git-ignored paths: \.env · data\/ \(/);
+  // files of its own there: no longer missing
+  writeFileSync(join(wt, 'data', 'sample.json'), '{}');
+  const r = land('--message', 'the report', '--check', pass);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /check passed[\s\S]*git-ignored paths: \.env \([\s\S]*not landed: data\/ \(1 file/);
+  assert.doesNotMatch(r.stdout, /node_modules/);
+});
+
 test('kinds: a project\'s claim kinds are bedrock; a kinds doc that would invalidate a logged claim is refused', (t) => {
   const { main } = world(t, { kernel: true });
   // the project's own kernel copy reads the project's bedrock, as in a real project
