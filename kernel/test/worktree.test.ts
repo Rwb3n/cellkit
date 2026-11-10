@@ -3,7 +3,7 @@
 // starts a cell headless in its own worktree only when mail is queued.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -723,15 +723,15 @@ test('cell land: the last thing it prints is the "Decisions to confirm" of each 
   const landed = land('--message', 'the report');
   assert.equal(landed.status, 0, landed.stderr);
   // after everything else, the sync and root's log commit too: the last thing on the screen
-  assert.match(landed.stdout, /landed cell\/demo on main[\s\S]*committed root's log: \w+\r?\nDECISIONS TO CONFIRM[^\n]*\n  - Caption not read: the research didn't use it\r?\n$/);
+  assert.match(landed.stdout, /landed cell\/demo on main[\s\S]*committed root's log: \w+\r?\n[^\n]*has no "Overturned" section[^\n]*\r?\nDECISIONS TO CONFIRM[^\n]*\n  - Caption not read: the research didn't use it\r?\n$/);
   assert.doesNotMatch(landed.stdout, /3 pass/);                              // the section, not the reply
 
   // the next land: only its own replies; one that says none is silent, one with no section is said
   writeFileSync(join(cellWt, 'exit', 'report.md'), 'two\n');
-  task('revise it', 'Revised.\n\nDecisions to confirm: none');
+  task('revise it', 'Revised.\n\nDecisions to confirm: none\nOverturned: none');
   const quiet = land('--message', 'revised');
   assert.equal(quiet.status, 0, quiet.stderr);
-  assert.doesNotMatch(quiet.stdout, /DECISIONS TO CONFIRM|Caption|no "Decisions to confirm"/);
+  assert.doesNotMatch(quiet.stdout, /DECISIONS TO CONFIRM|Caption|no "Decisions to confirm"|Overturned/);
   writeFileSync(join(cellWt, 'exit', 'report.md'), 'three\n');
   const bare = task('once more', 'Done, all pass.');
   git(wt, 'add', '-A'); git(wt, 'commit', '-qm', 'by hand');                 // already committed on the branch: still a reply this land lands
@@ -760,6 +760,342 @@ test('cell land: the last thing it prints is the "Decisions to confirm" of each 
   task('and again', 'Done.\n\nDecisions to confirm:\n- skipped the archive (too large)');
   assert.doesNotMatch(readLog(cellWt).map((e) => JSON.stringify(e)).join('\n'), /skipped the archive/);
   assert.match(land('--message', 'hashed').stdout, /DECISIONS TO CONFIRM[^\n]*\n  - skipped the archive \(too large\)/);
+});
+
+test('cell land: "Overturned" items stop the land until root says what it checked, and the check is kept in the merge (#72)', async (t) => {
+  const { main, wt, cellWt } = world(t);
+  const { decisionsIn, overturnedIn } = await import('../src/land.ts');
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const task = (ask: string, answer: string) => { send(main, 'demo', ask); takeNext(cellWt); stop(cellWt, answer); return receive(main)[0].id; };
+  // read as "Decisions to confirm" is; either heading ends the other's section
+  const both = 'Done.\n\n## Decisions to confirm\nnone\n\n## Overturned\n- Sovereign at 10:53 was working, not waiting (transcript line 412)\n';
+  assert.deepEqual(overturnedIn(both), ['- Sovereign at 10:53 was working, not waiting (transcript line 412)']);
+  assert.deepEqual(decisionsIn(both), []);
+  assert.deepEqual(overturnedIn('Decisions to confirm: none\nOverturned: the timeline was 3 messages short'), ['the timeline was 3 messages short']);
+  assert.deepEqual(decisionsIn('Decisions to confirm: none\nOverturned: the timeline was 3 messages short'), []);
+  assert.deepEqual(decisionsIn('Overturned: none\nDecisions to confirm:\n- capped runs at 50'), ['- capped runs at 50']);
+  assert.deepEqual(overturnedIn('**Overturned values** (2)\n- a\n- b\n\n## Tests\nok'), ['- a', '- b']);
+  for (const none of ['Overturned: none', '**Overturned**\nNothing overturned.', '## Overturned items\n- none', 'Overturned: no values'])
+    assert.deepEqual(overturnedIn(none), [], none);
+  assert.deepEqual(overturnedIn('Overturned: none, except the 10:53 label'), ['none, except the 10:53 label']);
+  assert.deepEqual(overturnedIn('## Overturned\nnone\n\n---\n'), []);                // a rule under it says nothing
+  assert.deepEqual(overturnedIn('**Overturned**\nnone\n\nAll tests pass (212/212).'), ['none', 'All tests pass (212/212).']);   // strict: more text is an item
+  assert.deepEqual(overturnedIn('Overturned: none\n- ✗ → ✓'), ['none', '- ✗ → ✓']);                // symbols are not a rule
+  // as a list item it is both: a line of the section it stands in, which goes on, and an item with what is indented under it
+  const mine = 'Decisions to confirm:\n- Overturned: my own earlier default of 50, now 100\n- capped the run at 20';
+  assert.deepEqual(decisionsIn(mine), ['- Overturned: my own earlier default of 50, now 100', '- capped the run at 20']);
+  assert.deepEqual(overturnedIn(mine), ['my own earlier default of 50, now 100', '- capped the run at 20']);   // shown under both: never lost
+  const numbered = 'Decisions to confirm:\n1. Capped at 20\n2. Overturned: my default 50, now 100\n3. Skipped the archive';
+  assert.deepEqual(decisionsIn(numbered), ['1. Capped at 20', '2. Overturned: my default 50, now 100', '3. Skipped the archive']);
+  assert.deepEqual(overturnedIn(numbered), ['my default 50, now 100', '3. Skipped the archive']);
+  const bullets = '- **Decisions to confirm:** none\n- **Overturned:** label 3 was working, not waiting';
+  assert.deepEqual(overturnedIn(bullets), ['label 3 was working, not waiting']);
+  assert.deepEqual(decisionsIn(bullets), ['none', '- **Overturned:** label 3 was working, not waiting']);
+  assert.deepEqual(overturnedIn('Done.\n* Overturned:\n  - label 3\n  - label 4\n* Tests: 12 pass'), ['  - label 3', '  - label 4', '* Tests: 12 pass']);
+  assert.deepEqual(overturnedIn('- **Overturned:** label 3 was working,\nnot waiting (line 412)\n- label 4 too'), ['label 3 was working,', 'not waiting (line 412)', '- label 4 too']);
+  assert.deepEqual(overturnedIn('- Overturned:\n- label 3'), ['- label 3']);
+  assert.deepEqual(overturnedIn('- Overturned: none'), []);
+  for (const absent of ['I overturned two labels.', 'Overturned two of the three labels: see below.', '## Decisions to confirm\n- a', 'Done.\n```\nOverturned: quoted, not said\n```'])
+    assert.equal(overturnedIn(absent), null, absent);
+
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'one\n');
+  const id = task('label the sessions', 'Labelled.\n\nDecisions to confirm: none\n\nOverturned:\n- Sovereign at 10:53 was working, not waiting (transcript line 412)\n');
+  assert.match(land('--dry-run').stdout, new RegExp(`would stop: cell demo overturned values the task or its sources gave:\\nfrom the reply being landed \\(${id}\\):\\n  - Sovereign at 10:53[^\\n]*\\n[^\\n]*--checked`));
+  const start = git(wt, 'rev-parse', 'HEAD').trim(), mainStart = git(main, 'rev-parse', 'HEAD').trim();
+  const refused = land('--message', 'labels');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /cell demo overturned values[\s\S]*Sovereign at 10:53[\s\S]*Check at least one item against its source yourself[\s\S]*--checked/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);                  // refused before anything changed
+  assert.equal(git(main, 'rev-parse', 'HEAD').trim(), mainStart);
+  for (const noValue of [['--message', 'labels', '--checked', '  '], ['--checked', '--message', 'labels']]) {   // empty, or the next option taken as its value
+    const r = land(...noValue);
+    assert.equal(r.status, 1, noValue.join(' '));
+    assert.match(r.stderr, /--checked needs what you checked/);
+  }
+  assert.match(land('--message', 'labels', '--checked', 'x', '--accept-weaker', '--dry').stderr, /--accept-weaker needs the operator's reason/);
+  assert.equal(git(main, 'rev-parse', 'HEAD').trim(), mainStart);
+  const ok = land('--message', 'labels', '--checked', 'read transcript line 412 myself: a tool call was open');
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /overturned items checked by root: read transcript line 412 myself/);
+  assert.match(git(main, 'log', '-1', '--format=%B', 'HEAD~1'), new RegExp(`Overturned by the cell, checked by root: read transcript line 412 myself[^\\n]*\\nfrom the reply being landed \\(${id}\\):\\n  - Sovereign at 10:53`));
+
+  // --checked with nothing overturned is refused: never typed out of habit
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'two\n');
+  task('again', 'Done.\n\nDecisions to confirm: none\nOverturned: none');
+  const habit = land('--message', 'again', '--checked', 'looked fine');
+  assert.equal(habit.status, 1);
+  assert.match(habit.stderr, /--checked was given, but no reply being landed lists overturned items/);
+  assert.match(land('--dry-run', '--checked', 'looked fine').stdout, /would stop: --checked was given/);
+  const plain = land('--message', 'again');
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /Overturned|overturned/);
+
+  // a reply with no such section (a cell not refreshed): said, not refused
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'three\n');
+  const bare = task('more', 'Done.\n\nDecisions to confirm: none');
+  const said = land('--message', 'more');
+  assert.equal(said.status, 0, said.stderr);
+  assert.match(said.stdout, new RegExp(`the reply being landed \\(${bare}\\) has no "Overturned" section: read it`));
+
+  // two replies in one land: the one with items stops it, whatever the other says
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'four\n');
+  const withItems = task('relabel', 'Done.\n\nDecisions to confirm: none\nOverturned:\n- apify after 11:07 was waiting, not idle');
+  task('and tidy', 'Tidied.\n\nDecisions to confirm: none\nOverturned: none');
+  const two = land('--message', 'two');
+  assert.equal(two.status, 1);
+  assert.match(two.stderr, new RegExp(`from the reply being landed \\(${withItems}\\):\\n  - apify after 11:07`));
+  assert.equal(land('--message', 'two', '--checked', '--no-ff was not it: the 11:07 transcript line shows a question open').status, 0);   // words after it: a text, not an option
+
+  // a long section keeps its end: an item far down is not past the cut
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'four and a half\n');
+  task('all of them', `Done.\n\nDecisions to confirm: none\nOverturned:\n${Array.from({ length: 50 }, (_, i) => `- label ${i + 1} was wrong`).join('\n')}`);
+  const long = land('--message', 'long');
+  assert.equal(long.status, 1);
+  assert.match(long.stderr, /  - label 30 was wrong\n  … 10 more line\(s\) here: read the reply\n  - label 41 was wrong\n[\s\S]*  - label 50 was wrong\n/);
+  assert.equal(land('--message', 'long', '--checked', 'labels 1, 25 and 50 against the transcript').status, 0);
+
+  // bodies kept out of the logs and no copy in root's mailbox (a second machine): unread is not "nothing overturned"
+  mkdirSync(join(main, 'state', 'bedrock'), { recursive: true });
+  writeFileSync(join(main, 'state', 'bedrock', 'guards.json'), JSON.stringify({ mail: { log: 'hash' } }));
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'guards'); git(wt, 'merge', '-q', 'main');
+  writeFileSync(join(cellWt, 'exit', 'labels.md'), 'five\n');
+  const gone = task('once more', 'Done.\n\nDecisions to confirm: none\nOverturned:\n- the timeline was 3 messages short');
+  rmSync(join(mailbox(main), 'inbox', 'read', `${gone}.json`));
+  const unread = land('--message', 'unread');
+  assert.equal(unread.status, 1);
+  assert.match(unread.stderr, new RegExp(`^refused: the text of a reply being landed \\(${gone}\\) can't be read here[^\\n]*\\nRead an unread reply where you have it[^\\n]*--checked`));
+  assert.doesNotMatch(unread.stderr, /overturned values the task/);          // not known: not said
+  const read = land('--message', 'unread', '--checked', 'its Overturned section: the timeline; I counted the 3 messages in the transcript');
+  assert.equal(read.status, 0, read.stderr);
+  assert.match(git(main, 'log', '-1', '--merges', '--format=%B'), /A reply that could not be read here, checked by root: its Overturned section: the timeline[^\n]*\nthe text of a reply being landed/);
+});
+
+test('cell land: a test that was weaker while a command of the run ran stops the land, though it was put back (#72)', async (t) => {
+  const { tmp, main, wt, cellWt } = world(t);
+  const { weakerDuring, weakerTests } = await import('../src/weaker.ts');
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const shell = (command: string, project = cellWt) => hook('hook-bash.ts', project, { command });
+  const record = join(mailbox(cellWt), 'weaker.jsonl');
+  const during = (into = 'main') => weakerDuring(cellWt, wt, into).map((x) => x.what);
+  const body = `test('guard', () => {\n  assert.ok(guard());\n  assert.equal(written(), 0);\n});\n`, cut = body.replace('  assert.equal(written(), 0);\n', '');
+  const fewer = (file: string) => `cells/demo/${file}: 1 fewer assertion line(s)`;
+  for (const d of ['test', 'src']) mkdirSync(join(main, 'cells', 'demo', d), { recursive: true });
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'a.test.ts'), body);
+  writeFileSync(join(main, 'cells', 'demo', 'src', 'my guard.test.ts'), body);   // a space in the name: git ends its diff header with a tab
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'rows.csv'), 'assert,1\n'.repeat(130000));   // over 1 MB: data, whatever its folder
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'tests'); git(wt, 'merge', '-q', 'main');
+  const suite = join(cellWt, 'test', 'a.test.ts'), spaced = join(cellWt, 'src', 'my guard.test.ts');
+
+  assert.throws(() => weakerTests(wt, 'no-such-commit'), /the tests couldn't be compared/);   // not "nothing weaker"
+  assert.equal(shell('node --test').status, 0);
+  assert.deepEqual(during(), []);
+  // the cell takes an assertion out (an edit, or a sed the guards didn't see), runs its proof, and puts the line back
+  writeFileSync(suite, cut);
+  const proof = shell('node --test');
+  assert.equal(proof.status, 0, proof.stderr);                               // it refuses nothing
+  assert.equal(shell('git status').status, 0);                               // the same state again: written once
+  assert.equal(readFileSync(record, 'utf8').trim().split('\n').length, 2);   // the tree as committed, then with the cut
+  writeFileSync(suite, body);
+  assert.equal(shell('git status').status, 0);
+  assert.deepEqual(during(), [fewer('test/a.test.ts')]);
+  assert.match(weakerDuring(cellWt, wt, 'main')[0].at, /^20\d\d-/);
+  assert.deepEqual(git(wt, 'status', '--porcelain').trim(), '');             // the tree is as it was: git shows nothing
+
+  // accepted with nothing to land: the acceptance would be in no commit, so the record stays
+  const nothing = land('--message', 'nothing', '--accept-weaker', 'ok');
+  assert.equal(nothing.status, 0, nothing.stderr);
+  assert.match(nothing.stdout, /nothing to land; the record of tests that were weaker during the run is kept/);
+  assert.equal(during().length, 1);
+
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'proof.md'), 'the planted write was refused\n');
+  assert.match(land('--dry-run').stdout, /would stop: the cell's tests were weaker during its run than they are now[^\n]*\n  cells\/demo\/test\/a\.test\.ts: 1 fewer assertion line\(s\) \(first seen 20[^\n]*\)\n[^\n]*--accept-weaker/);
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  const refused = land('--message', 'proof');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /were weaker during its run[\s\S]*a\.test\.ts: 1 fewer assertion[\s\S]*--accept-weaker[\s\S]*back where it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);
+  assert.equal(during().length, 1);                                          // a refused land keeps the record
+  const ok = land('--message', 'proof', '--accept-weaker', 'the proof was rerun on a copy of the test');   // (the operator)
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(git(main, 'log', '-1', '--merges', '--format=%B'), /Weaker tests, accepted by the operator: the proof was rerun[^\n]*\n  during the run, since put back: cells\/demo\/test\/a\.test\.ts: 1 fewer assertion/);
+  assert.equal(existsSync(record), false);                                   // landed: the next run starts with none
+
+  // weaker and still weaker at the land: said once, as the tree's; a test file with a space in its name is compared too
+  // … whatever git is set to print: other prefixes, an external diff program that prints nothing
+  git(main, 'config', 'diff.mnemonicPrefix', 'true'); git(main, 'config', 'diff.external', 'true');
+  writeFileSync(suite, cut); writeFileSync(spaced, cut);
+  shell('node --test');
+  assert.deepEqual(during(), [fewer('src/my guard.test.ts'), fewer('test/a.test.ts')]);
+  const still = land('--message', 'trimmed');
+  assert.equal(still.status, 1);
+  assert.match(still.stderr, /the cell's tests got weaker:\n  cells\/demo\/src\/my guard\.test\.ts: 1 fewer assertion[^\n]*\n  cells\/demo\/test\/a\.test\.ts: 1 fewer assertion/);
+  assert.doesNotMatch(still.stderr, /during its run/);
+  git(wt, 'reset', '-q');                                                    // (the refused land left the cut staged: unstage it)
+  writeFileSync(spaced, body); rmSync(record);
+  git(main, 'config', '--unset', 'diff.mnemonicPrefix'); git(main, 'config', '--unset', 'diff.external');
+
+  // one assertion off for a proof and put back, then another dropped for good: the same words, and both are said
+  shell('node --test');                                                      // (suite is cut: the proof's state)
+  writeFileSync(suite, body.replace('  assert.ok(guard());\n', ''));
+  shell('node --test');
+  const twice = land('--message', 'the other line');
+  assert.equal(twice.status, 1);
+  assert.match(twice.stderr, /got weaker:\n  cells\/demo\/test\/a\.test\.ts: 1 fewer assertion[^\n]*\n[^\n]*were weaker during its run[^\n]*\n  cells\/demo\/test\/a\.test\.ts: 1 fewer assertion/);
+  git(wt, 'reset', '-q'); writeFileSync(suite, cut); rmSync(record);
+
+  // off and on again in two commits, a command between: the commit the command ran on is a state too
+  git(wt, 'add', '--', 'cells/demo/test/a.test.ts'); git(wt, 'commit', '-qm', 'off for the proof');
+  shell('node --test');
+  writeFileSync(suite, body);
+  git(wt, 'add', '--', 'cells/demo/test/a.test.ts'); git(wt, 'commit', '-qm', 'and on again');
+  shell('node --test');
+  assert.deepEqual(during(), [fewer('test/a.test.ts')]);
+  assert.deepEqual(weakerTests(wt, 'main...HEAD'), []);                      // the tree being landed shows nothing
+  git(wt, 'reset', '-q', '--hard', 'HEAD~2');                                // the test's own tidying
+  writeFileSync(suite, cut); rmSync(record);
+
+  // the bytes on disk are what is written down, whatever git is told to show of the file: an attribute that calls the
+  // tests binary, a pathspec setting in the environment, assume-unchanged, skip-worktree (suite is still cut)
+  writeFileSync(join(cellWt, '.gitattributes'), '*.test.ts binary\n');
+  run('hook-bash.ts', [], { CLAUDE_PROJECT_DIR: cellWt, GIT_LITERAL_PATHSPECS: '1' }, JSON.stringify({ cwd: cellWt, tool_input: { command: 'node --test' } }));
+  assert.deepEqual(during(), [fewer('test/a.test.ts')]);
+  process.env.GIT_LITERAL_PATHSPECS = '1';                                   // the land's own comparison, of the tree, under both
+  try { assert.deepEqual(weakerTests(wt, git(wt, 'merge-base', 'main', 'HEAD').trim()), [fewer('test/a.test.ts')]); } finally { delete process.env.GIT_LITERAL_PATHSPECS; }
+  rmSync(join(cellWt, '.gitattributes')); rmSync(record);
+  // … or an edit of the same size with the old modification time put back (git trusts the stat data, and shows nothing)
+  writeFileSync(suite, body);
+  const stat = statSync(suite);
+  writeFileSync(suite, body.replace('  assert.equal(written(), 0);', '  //sert.equal(written(), 0);'));
+  utimesSync(suite, stat.atime, stat.mtime);
+  shell('node --test');
+  assert.deepEqual(during(), [fewer('test/a.test.ts')]);
+  assert.equal(existsSync(join(mailbox(cellWt), 'weaker')), true);           // the bytes are kept beside the record, not as git objects (a prune takes those)
+  writeFileSync(suite, cut); rmSync(record);
+  for (const flag of ['assume-unchanged', 'skip-worktree']) {
+    git(wt, 'update-index', `--${flag}`, 'cells/demo/test/a.test.ts');
+    assert.equal(git(wt, 'status', '--porcelain').trim(), '', flag);         // git shows nothing
+    shell('node --test');
+    assert.deepEqual(during(), [fewer('test/a.test.ts')], flag);
+    rmSync(record); rmSync(suite);
+    shell('node --test');
+    assert.deepEqual(during(), ['cells/demo/test/a.test.ts: deleted (1 test case(s), 2 assertion(s))'], flag);   // gone: a finding, whichever mark hid it
+    if (flag === 'skip-worktree') {                                          // but for a worktree that is a sparse checkout: left out, not there to run
+      git(wt, 'config', 'core.sparseCheckout', 'true'); rmSync(record);
+      shell('node --test');
+      assert.deepEqual(during(), []);
+      git(wt, 'config', '--unset', 'core.sparseCheckout');
+    }
+    rmSync(record, { force: true }); mkdirSync(suite);
+    assert.equal(shell('node --test').status, 0, flag);                      // a folder where the file was: a finding, not a failure
+    assert.deepEqual(during(), ['cells/demo/test/a.test.ts: deleted (1 test case(s), 2 assertion(s))'], flag);
+    rmSync(suite, { recursive: true }); rmSync(record);
+    writeFileSync(suite, body);
+    shell('node --test');
+    assert.deepEqual(during(), [], flag);                                    // hidden and unchanged: nothing
+    git(wt, 'update-index', `--no-${flag}`, 'cells/demo/test/a.test.ts');
+    writeFileSync(suite, cut); rmSync(record);
+  }
+  // Not a state of its own: the commit's bytes as git converts them (CRLF on disk under core.autocrlf), and a file over
+  // 1 MB (data, though a test file by its folder).
+  git(wt, 'config', 'core.autocrlf', 'true');
+  writeFileSync(suite, body.replaceAll('\n', '\r\n'));
+  writeFileSync(join(cellWt, 'test', 'rows.csv'), 'xssert,1\n'.repeat(130000));
+  shell('node --test');
+  assert.deepEqual(JSON.parse(readFileSync(record, 'utf8').trim().split('\n').at(-1)!).files, {});
+  git(wt, 'config', 'core.autocrlf', 'false');
+  git(wt, 'checkout', '-q', '--', 'cells/demo/test/rows.csv');
+  writeFileSync(suite, cut); rmSync(record);
+  // nor objects as git replace says: the commit the cell left main at, replaced by one that holds the cut
+  const base = git(wt, 'merge-base', 'main', 'HEAD').trim();
+  git(wt, 'add', '--', 'cells/demo/test/a.test.ts');
+  const swapped = git(wt, 'commit-tree', git(wt, 'write-tree').trim(), '-p', base, '-m', 'as if it had always been so').trim();
+  git(wt, 'reset', '-q');
+  git(wt, 'replace', base, swapped);
+  shell('node --test');
+  assert.deepEqual(during(), [fewer('test/a.test.ts')]);
+  git(wt, 'replace', '-d', base);
+  writeFileSync(suite, body); rmSync(record);
+
+  // a session that is not this cell's in its own worktree writes nothing down: another cell's session opened here, a
+  // cell with no worktree (its session sits in the main checkout), root's, one in a folder that is no repository
+  writeFileSync(suite, cut);
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'a.test.ts'), cut);
+  const lone = join(tmp, 'lone', 'cells', 'x');
+  mkdirSync(lone, { recursive: true });
+  writeFileSync(join(lone, 'binding.json'), '{}');
+  for (const project of [join(wt, 'cells', 'other'), join(main, 'cells', 'other'), main, lone]) {
+    const r = shell('node --test', project);
+    assert.equal(r.status, 0, `${project}: ${r.stderr}`);
+  }
+  for (const box of [cellWt, join(main, 'cells', 'other'), main]) assert.equal(existsSync(join(mailbox(box), 'weaker.jsonl')), false, box);
+  writeFileSync(suite, body);
+  git(main, 'checkout', '-q', '--', 'cells/demo/test/a.test.ts');
+
+  // what can't be read is a finding: a line of the record, a commit it names, the bytes of a state
+  mkdirSync(join(mailbox(cellWt)), { recursive: true });
+  const none = '0'.repeat(40), head = git(wt, 'rev-parse', 'HEAD').trim();
+  writeFileSync(record, `{ not json\n${JSON.stringify({ at: 'x', head: none, files: {} })}\n${JSON.stringify({ at: 'x', head, files: { 'cells/demo/test/a.test.ts': none } })}\n${JSON.stringify({ at: 'x', head: '--help', files: {} })}\n`);
+  assert.deepEqual(during(), ['the record of this run holds a line that can\'t be read', 'the record of this run names a commit (000000000) that is gone, or shares none with main',
+    'cells/demo/test/a.test.ts: what it held during the run can no longer be read']);
+  writeFileSync(join(cellWt, 'exit', 'proof.md'), 'again\n');
+  const damaged = land('--message', 'again');
+  assert.equal(damaged.status, 1);
+  assert.match(damaged.stderr, /were weaker during its run[\s\S]*the record of this run holds a line that can't be read/);
+  rmSync(record);
+  // a record that can't be written refuses the command
+  if (process.platform === 'win32' || process.getuid?.() !== 0) {            // (root writes a read-only file)
+    writeFileSync(record, '{}\n');
+    chmodSync(record, 0o444);
+    const blocked = shell('node --test');
+    chmodSync(record, 0o644);
+    assert.equal(blocked.status, 2);
+    assert.match(blocked.stderr, /hook-bash failed/);
+    assert.equal(readFileSync(record, 'utf8'), '{}\n');
+  }
+  rmSync(record);
+  git(wt, 'checkout', '-q', '--', 'cells/demo/exit/proof.md');
+
+  // The land judges, not the hook: each state against where the cell had left the branch being landed on. So none of
+  // these is the cell's: a branch root made at the cell's tip, root's checkout sitting on it, or detached at an older
+  // commit; an assertion main itself dropped; a trunk that isn't called main.
+  writeFileSync(suite, `${body}test('more', () => { assert.ok(more()); });\n`);
+  git(wt, 'add', '--', 'cells/demo/test'); git(wt, 'commit', '-qm', 'one more test');
+  git(main, 'branch', 'look-at-demo', 'cell/demo');
+  writeFileSync(suite, body);                                                // back to what main has: nothing weaker than main
+  assert.equal(shell('ls').status, 0);
+  git(main, 'checkout', '-q', 'look-at-demo');
+  assert.equal(shell('ls').status, 0);
+  git(main, 'checkout', '-q', 'main');
+  assert.deepEqual(during(), []);
+  git(main, 'branch', '-D', 'look-at-demo');
+  git(wt, 'reset', '-q', '--hard', 'HEAD~1');                                // the test's own tidying: the branch as it was
+  rmSync(record);
+
+  git(main, 'checkout', '-q', '-b', 'develop');                              // the trunk here; main goes stale
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'a.test.ts'), cut);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'root drops an assertion');
+  git(wt, 'merge', '-q', 'develop');
+  git(main, 'checkout', '-q', '--detach', 'HEAD~1');
+  assert.equal(shell('ls').status, 0);
+  git(main, 'checkout', '-q', 'develop');
+  assert.deepEqual(during('develop'), []);
+  assert.deepEqual(during('main'), [fewer('test/a.test.ts')]);               // landing on main instead, it would be: main still has the assertion
+  assert.doesNotMatch(land('--dry-run').stdout, /would stop/);
+
+  // an acceptance of nothing is refused, as a check of nothing is
+  assert.match(land('--dry-run', '--accept-weaker', 'as last time').stdout, /would stop: --accept-weaker was given, but no test is or was weaker/);
+  const habit = land('--message', 'x', '--accept-weaker', 'as last time');
+  assert.equal(habit.status, 1);
+  assert.match(habit.stderr, /--accept-weaker was given, but no test is or was weaker: drop it[\s\S]*back where it was/);
+
+  // a worktree made anew starts with no record (one left by an earlier worktree, removed by hand, refused its first land)
+  const left = join(mailbox(join(main, 'cells', 'other')), 'weaker.jsonl');
+  mkdirSync(dirname(left), { recursive: true });
+  writeFileSync(left, '{ an earlier run\n');
+  assert.equal(run('cli.ts', ['cell', 'checkout', '--cell', main, '--name', 'other']).status, 0);
+  assert.equal(existsSync(left), false);
 });
 
 test('cell land: an undo that fails says so, never "back where it was" (#77)', (t) => {

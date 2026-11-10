@@ -2,12 +2,14 @@
 // hours to two cell-log entries left uncommitted in a worktree; AI-MMO and PS5-STUDY did these steps by hand each time.
 //
 //   node kernel/src/cli.ts cell land --name <cell> [--message "…"] [--check "<command>"] [--into <branch>] [--dry-run]
+//                                    [--checked "<what root checked, against what>"]
 //   ! node kernel/src/cli.ts cell land … --accept-weaker "<why>"      (operator only)
 //
 // Refused whole, before anything changes, when: the cell has no worktree · its session is working on a message ·
 // root's checkout is not on <into> (default: the branch it is on) · root has uncommitted work of its own (anything but
 // state/log/, state/views/, docs/assumptions.md: mail and sync write those) · `cell audit` finds a change outside
-// cells/<name>/ · the worktree holds git-ignored files outside the project's `land.ignored` allowlist, if it set one.
+// cells/<name>/ · the worktree holds git-ignored files outside the project's `land.ignored` allowlist, if it set one ·
+// a reply being landed lists "Overturned" items and root gave no --checked (or gave one with nothing overturned).
 // Then, stopping at the first failure and undoing what it did on the cell's branch:
 //   1. commit the cell's uncommitted work on its branch (pathspec cells/<name> and the paths it owns)
 //   2. merge <into> into the cell's branch (a conflict: abort, and leave it to root in the worktree)
@@ -15,7 +17,8 @@
 //      then the allowlist again (what the check left behind), and the report says which of the main checkout's
 //      git-ignored paths the check ran without
 //   4. merge the cell's branch into <into> with --no-ff (one revertable commit: git revert -m 1 <it>)
-// Before 2, the cell's tests must not have got weaker (weaker.ts): fewer cases or assertions, skips or loosening added.
+// Before 2, the cell's tests must not have got weaker (weaker.ts): fewer cases or assertions, skips or loosening added,
+// in the tree being landed or in any tree a command of the run ran against (the record hook-bash keeps).
 // If they did, the land stops; the operator alone lands it anyway, with --accept-weaker "<why>" (hook-blocked for
 // agents), and the reason goes into the merge commit.
 // The CLI then syncs the cell and commits root's log (commitRootLog), so mail entries never sit uncommitted.
@@ -28,7 +31,7 @@ import { join } from 'node:path';
 import { delivered, status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
-import { weakerTests } from './weaker.ts';
+import { blobName, forgetWeaker, weakerDuring, weakerTests, type Was } from './weaker.ts';
 import { cellAudit, cellBranch, cellWorktree, currentBranch, inMain, WorktreeError } from './worktree.ts';
 
 const ROOT_WRITTEN = [/^state\/log\//, /^state\/views\//, /^docs\/assumptions\.md$/];
@@ -152,29 +155,54 @@ function absent(main: string, wt: string): string | null {
 // nothing and end nothing; words in the heading's brackets are the section's first line. A section is
 // silent only when every line of it says none (a second review: "None." followed by "except: capped the run at 50" was
 // silent under a first-line rule); an empty one is said. What can't be told apart is printed.
-const PHRASE = /^[^A-Za-z]*decisions?\s+(?:for\s+(?:you|root|the\s+operator)\s+)?to\s+(?:be\s+)?confirm(?:ed)?(?![A-Za-z0-9])/i;
+//
+// "Overturned" (#72; COCKPIT: a cell found root's own backbrief wrong in 2 of 3 expected labels, and a design's timeline
+// short of 3 messages; both corrections were right, and nothing but the cell had checked either before they landed: the
+// tests pass whether a correction is right or not, since the cell writes the code and the test that holds the new
+// value). The brief asks for a second closing section headed "Overturned": each value the task or its sources gave that
+// the work changed, with the evidence, or "none". It is read exactly as the first is, and a land that would land one
+// with items stops until root says what it checked, against what: --checked "<…>", kept in the merge commit. A check is
+// never by the claim's own voice: the cell's evidence is the claim. --checked with nothing overturned is refused too,
+// so it is never typed out of habit.
+const HEADS = {
+  decisions: /^[^A-Za-z]*decisions?\s+(?:for\s+(?:you|root|the\s+operator)\s+)?to\s+(?:be\s+)?confirm(?:ed)?(?![A-Za-z0-9])/i,
+  overturned: /^[^A-Za-z]*overturned(?:\s+(?:items?|values?))?(?![A-Za-z0-9])/i,
+};
+// "Overturned" as a list item ("- Overturned: my own earlier default of 50", "2. Overturned: …", "- **Overturned:**
+// label 3") is both: a line of whatever section it stands in, which it doesn't end, and the heading of an Overturned
+// section that runs as any other does. So what follows it under "Decisions to confirm" is printed as decisions and
+// shown as overturned: twice, never lost. Read as a heading only, it took the rest of a Decisions section with it (a
+// review); as a plain line only, a reply whose two closing sections were bullets landed its item unasked (the next);
+// as an item with just the lines indented under it, its sibling bullets were in neither reading (the third).
+const ITEM = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;
+type Head = keyof typeof HEADS;
 const AFTER = /^[\s*_#.]*(?:\(([^)]*)\))?[\s*_#.]*(?:$|[:—–-]\s*(.*)$)/;      // alone on the line (a count or a note in brackets), or a colon or dash and the first item
-const NONE = /^[^\p{L}\p{N}]*(?:none|nothing|n\/a|no\s+decisions?)[^\p{L}\p{N}]*$/iu;   // the word alone: no letter of any script beside it
+const NONE = /^[^\p{L}\p{N}]*(?:none|nothing|n\/a|no\s+(?:decisions?|items?|values?))(?:\s+overturned)?[^\p{L}\p{N}]*$/iu;   // the word alone: no letter of any script beside it
 const RECOVERED = /^\(recovered by cellrun from .*: the session finished but its reply was never filed\)$/;                         // cellrun's own line after a reply it filed from a run log
-const FENCE = /^\s*(?:```|~~~)/, HASHES = /^\s{0,3}(#{1,6})\s/;
+const FENCE = /^\s*(?:```|~~~)/, HASHES = /^\s{0,3}(#{1,6})\s/, RULE = /^[\s\-*_=~#>|`.]*$/;
 // printed to a terminal: no control characters (a reply could redraw the land's own lines), no endless line (and a cut
 // one says so: a paragraph of three decisions cut at the first is two decisions lost)
 const LINE_MAX = 1000;
 const printable = (l: string) => ((c) => (c.length > LINE_MAX ? `${c.slice(0, LINE_MAX)} … (line cut: read the reply)` : c))(l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ''));
-const sectionAt = (line: string): { first: string[] } | null => {
-  const m = PHRASE.exec(line), rest = m && AFTER.exec(line.slice(m[0].length));
-  if (!rest) return null;
-  const note = /\p{L}/u.test(rest[1] ?? '') ? [`(${rest[1].trim()})`] : [], item = (rest[2] ?? '').replace(/^[\s*_]+/, '').trim();
-  return { first: [...note, ...(item ? [item] : [])] };
+const sectionAt = (line: string): { head: Head; first: string[]; aside: boolean } | null => {
+  for (const head of Object.keys(HEADS) as Head[]) {
+    const m = HEADS[head].exec(line), rest = m && AFTER.exec(line.slice(m[0].length));
+    if (!rest) continue;
+    const note = /\p{L}/u.test(rest[1] ?? '') ? [`(${rest[1].trim()})`] : [], item = (rest[2] ?? '').replace(/^[\s*_]+/, '').trim();
+    return { head, first: [...note, ...(item ? [item] : [])], aside: head === 'overturned' && ITEM.test(line) };
+  }
+  return null;
 };
-// The sections' lines, [] if each says none, null if the reply has no such section.
-export function decisionsIn(reply: string): string[] | null {
+// The sections' lines, [] if each says none, null if the reply has no such section. Either heading ends the other's section.
+export const decisionsIn = (reply: string) => sectionIn(reply, 'decisions');
+export const overturnedIn = (reply: string) => sectionIn(reply, 'overturned');
+function sectionIn(reply: string, want: Head): string[] | null {
   const lines = reply.split(/\r?\n/).map(printable), out: string[] = [];
   let found = false, fenced = false;
   for (let i = 0; i < lines.length; i++) {
     if (FENCE.test(lines[i])) { fenced = !fenced; continue; }
     const head = fenced ? null : sectionAt(lines[i]);
-    if (!head) continue;
+    if (!head || head.head !== want) continue;
     found = true;
     const level = HASHES.exec(lines[i])?.[1].length;
     const body = [...head.first];
@@ -182,14 +210,14 @@ export function decisionsIn(reply: string): string[] | null {
     for (let inFence = false; j < lines.length; j++) {
       if (FENCE.test(lines[j])) inFence = !inFence;
       else if (!inFence) {
-        const h = HASHES.exec(lines[j])?.[1].length;
-        if (sectionAt(lines[j]) || (h && (!level || h <= level))) break;
+        const h = HASHES.exec(lines[j])?.[1].length, s = sectionAt(lines[j]);
+        if ((s && !s.aside) || (h && (!level || h <= level))) break;
       }
       body.push(lines[j].trimEnd());
     }
-    const kept = body.filter((l) => l.trim());
-    if (!kept.length) out.push('(this section is empty: read the reply)');
-    else if (!kept.every((l) => NONE.test(l) || RECOVERED.test(l))) out.push(...kept);
+    const kept = body.filter((l) => l.trim()), said = kept.filter((l) => !RULE.test(l));   // a rule or a fence under the section says nothing
+    if (!said.length) out.push('(this section is empty: read the reply)');
+    else if (!said.every((l) => NONE.test(l) || RECOVERED.test(l))) out.push(...kept);
     i = j - 1;
   }
   return found ? out : null;
@@ -209,15 +237,30 @@ function repliesLanding(main: string, wt: string, name: string, into: string, pe
   });
 }
 const SECTION_MAX = 40;
+// a long one keeps its end: an item under a second heading, far below a first, was past the cut (a review)
+const capped = (d: string[]) => (d.length <= SECTION_MAX ? d : [...d.slice(0, SECTION_MAX - 10), `… ${d.length - SECTION_MAX} more line(s) here: read the reply`, ...d.slice(-10)]).map((l) => `  ${l}`).join('\n');
+// What the replies being landed overturn: the lines to show, and a line for each reply that has no such section.
+function overturned(replies: { id: string; text: string }[]): { items: string[]; unread: string[]; absent: string[] } {
+  const items: string[] = [], unread: string[] = [], absent: string[] = [];
+  for (const { id, text } of replies) {
+    const o = text ? overturnedIn(text) : null;
+    // a reply that can't be read here is not a reply with nothing overturned (a review: with mail.log "hash" and no copy
+    // in root's mailbox, as on a second machine, a reply with items landed unasked)
+    if (!text) unread.push(id);
+    else if (o === null) absent.push(`the reply being landed (${id}) has no "Overturned" section: read it for values the task or its sources gave that the work changed`);
+    else if (o.length) items.push(`from the reply being landed (${id}):\n${capped(o)}`);
+  }
+  return { items, unread, absent };
+}
 function decisionNotes(replies: { id: string; text: string }[]): string[] {
   return replies.flatMap(({ id, text }) => {
     const d = text ? decisionsIn(text) : null;
     if (d === null) return [`the reply being landed (${id}) has no "Decisions to confirm" section${text ? '' : ' that can be read (its text is in neither root\'s mailbox nor the log)'}: read it for choices the cell made that nobody confirmed`];
-    return d.length ? [`DECISIONS TO CONFIRM, from the reply being landed (${id}). Take each to the operator, or log it (constraint if they decided, assume if not):\n${d.slice(0, SECTION_MAX).map((l) => `  ${l}`).join('\n')}${d.length > SECTION_MAX ? `\n  … and ${d.length - SECTION_MAX} more line(s): read the reply` : ''}`] : [];
+    return d.length ? [`DECISIONS TO CONFIRM, from the reply being landed (${id}). Take each to the operator, or log it (constraint if they decided, assume if not):\n${capped(d)}`] : [];
   });
 }
 
-export interface LandOptions { name?: string; message?: string; check?: string; into?: string; dryRun?: boolean; acceptWeaker?: string }
+export interface LandOptions { name?: string; message?: string; check?: string; into?: string; dryRun?: boolean; acceptWeaker?: string; checked?: string }
 
 // The steps taken, and `after`: what root must still do (a reply's decisions to confirm), for the caller to print last.
 export type Landed = string[] & { after?: string[] };
@@ -247,13 +290,47 @@ export function cellLand(root: string, o: LandOptions): Landed {
 
   const branch = cellBranch(name), message = o.message ?? `cell ${name}: work`;
   const pending = dirty(wt);
-  const weakerNote = (w: string[]) => `the cell's tests got weaker:\n  ${w.join('\n  ')}\nLand it anyway only on the operator's word: ! node kernel/src/cli.ts cell land --name ${name} … --accept-weaker "<why>"`;
-  const decisions = decisionNotes(repliesLanding(main, wt, name, into, pending));
+  // weaker in the tree being landed (w), and weaker in a tree a command of the run ran against, since put back (#72)
+  const cellDir = join(wt, 'cells', name);
+  // A state's finding is the tree's own, and not said twice, when the words are the tree's and the bytes are those now on
+  // disk. The words alone are not enough: one assertion off for a proof and put back, then another dropped for good, is
+  // "1 fewer assertion line(s)" both times (a review).
+  const onDisk = (p: string, like: number) => { try { return blobName(readFileSync(join(wt, p)), like); } catch { return null; } };
+  const during = (w: string[]): Was[] => {
+    const out = new Map<string, Was>();
+    for (const d of weakerDuring(cellDir, wt, into))
+      if (!(w.includes(d.what) && (d.path === undefined || onDisk(d.path, d.name?.length ?? 40) === d.name)) && !out.has(d.what)) out.set(d.what, d);
+    return [...out.values()];
+  };
+  const duringLines = (d: Was[]) => d.map((x) => `${x.what} (first seen ${x.at})`);
+  const weakerNote = (w: string[], d: Was[]) => [
+    ...(w.length ? [`the cell's tests got weaker:\n  ${w.join('\n  ')}`] : []),
+    ...(d.length ? [`the cell's tests were weaker during its run than they are now: a command ran while they were, so a proof made then rests on the cell's word:\n  ${duringLines(d).join('\n  ')}`] : []),
+    `Land it anyway only on the operator's word: ! node kernel/src/cli.ts cell land --name ${name} … --accept-weaker "<why>"`].join('\n');
+  const replies = repliesLanding(main, wt, name, into, pending);
+  const over = overturned(replies);
+  const overText = [
+    ...(over.items.length ? [`cell ${name} overturned values the task or its sources gave:\n${over.items.join('\n')}`] : []),
+    ...(over.unread.length ? [`the text of ${over.unread.length > 1 ? 'replies' : 'a reply'} being landed (${over.unread.join(', ')}) can't be read here (it is in neither root's mailbox nor the log), so nor can what it overturned`] : [])].join('\n');
+  const overNote = !overText ? null : [overText,
+    ...(over.items.length ? ['The land\'s check can\'t tell whether a correction is right: the cell wrote both the code and the test that holds the new value. Check at least one item against its source yourself, then land with --checked "<what you checked, against what>". If a section in fact says nothing was overturned (a "none" with more text after it), say that instead: --checked "nothing overturned: <why the rest is no item>"'] : []),
+    ...(over.unread.length ? ['Read an unread reply where you have it (the session that received it), or ask the cell to send it again, then land with --checked "<what its Overturned section says, and what you checked>"'] : [])].join('\n');
+  const checked = o.checked?.trim();
+  // a value that is the next option ("--checked --message x") is a forgotten value, not a check; the same for --accept-weaker
+  const bare = (v: string | undefined) => v !== undefined && (!v.trim() || /^--\S*$/.test(v.trim()));
+  const overRefusal = bare(o.checked) ? '--checked needs what you checked, against what, in quotes'
+    : bare(o.acceptWeaker) ? '--accept-weaker needs the operator\'s reason, in quotes'
+    : overNote && !checked ? overNote
+    : checked && !overNote ? '--checked was given, but no reply being landed lists overturned items: drop it (it records a check of an "Overturned" section, nothing else)' : null;
+  if (overRefusal && !o.dryRun) throw new WorktreeError(overRefusal);
+  const decisions = [...over.absent, ...decisionNotes(replies)];
   const strayNote = (paths: string[]) => `the check left uncommitted paths in the worktree: ${more(paths.slice(0, SHOWN), paths.length)}`;
   if (o.dryRun) {
     const plan = [
       pending.length ? `would commit ${pending.length} path(s) on ${branch}: "${message}"` : `nothing uncommitted on ${branch}`,
-      ...((w) => (w.length ? [`would stop: ${weakerNote(w)}`] : []))(weakerTests(wt, git(wt, ['merge-base', into, 'HEAD']).out)),
+      ...(overRefusal ? [`would stop: ${overRefusal}`] : []),
+      ...((w) => ((d) => (w.length || d.length ? [`would stop: ${weakerNote(w, d)}`]
+        : o.acceptWeaker ? ['would stop: --accept-weaker was given, but no test is or was weaker: drop it'] : []))(during(w)))(weakerTests(wt, git(wt, ['merge-base', into, 'HEAD']).out)),
       `would merge ${into} into ${branch}${o.check ? `, then run in ${wt} under ${SHELL}: ${o.check}` : ''}`,
     ];
     if (o.check) {
@@ -283,7 +360,6 @@ export function cellLand(root: string, o: LandOptions): Landed {
     steps.push(`committed on ${branch}: ${head(wt).slice(0, 9)}`);
   }
   const committed = head(wt);
-  const weaker = weakerTests(wt, `${into}...${committed}`);
   // Back to before the land: drop the merge (all work was committed, so --hard loses nothing), then un-commit the
   // cell's work, leaving it staged in the worktree as it was.
   const undo = (why: string): never => {
@@ -296,8 +372,14 @@ export function cellLand(root: string, o: LandOptions): Landed {
     throw new WorktreeError(`${why}\n${back ? `${branch} is back where it was (${start.slice(0, 9)}); nothing was landed`
       : `nothing was landed, but ${branch} could NOT be put back to ${start.slice(0, 9)}: look at ${wt} (git status, git log) before anything else`}`);
   };
-  if (weaker.length && !o.acceptWeaker) undo(weakerNote(weaker));
-  if (weaker.length) steps.push(`weaker tests accepted by the operator: ${o.acceptWeaker}`);
+  let weaker: string[] = [], was: Was[] = [];
+  try { weaker = weakerTests(wt, `${into}...${committed}`); was = during(weaker); }
+  catch (e) { undo((e as Error).message); }
+  if ((weaker.length || was.length) && !o.acceptWeaker) undo(weakerNote(weaker, was));
+  // as --checked: an acceptance of nothing is a habit, and would sit in no commit
+  if (o.acceptWeaker && !weaker.length && !was.length) undo('--accept-weaker was given, but no test is or was weaker: drop it');
+  if (weaker.length || was.length) steps.push(`weaker tests accepted by the operator: ${o.acceptWeaker}`);
+  if (checked) steps.push(`overturned items checked by root: ${checked}`);
   const merged = git(wt, ['merge', '-q', '--no-edit', into], false);
   if (!merged.ok) undo(`merging ${into} into ${branch} conflicted. Resolve it in ${wt} (git merge ${into}), then land again.\n${merged.out}`);
   steps.push(`merged ${into} into ${branch}`);
@@ -321,11 +403,14 @@ export function cellLand(root: string, o: LandOptions): Landed {
   }
   if (leftNow.note) steps.push(leftNow.note);
   const ahead = git(main, ['rev-list', '--count', `${into}..${branch}`]).out;
-  if (ahead === '0') { steps.push('nothing to land'); return steps; }
-  const why = weaker.length ? `\n\nWeaker tests, accepted by the operator: ${o.acceptWeaker}\n  ${weaker.join('\n  ')}` : '';
+  // an acceptance is kept in the merge commit, and there is none: the record stays for the land that has one
+  if (ahead === '0') { steps.push(`nothing to land${was.length ? '; the record of tests that were weaker during the run is kept (an acceptance is recorded with a landing)' : ''}`); return steps; }
+  const why = (weaker.length || was.length ? `\n\nWeaker tests, accepted by the operator: ${o.acceptWeaker}\n  ${[...weaker, ...duringLines(was).map((l) => `during the run, since put back: ${l}`)].join('\n  ')}` : '')
+    + (checked ? `\n\n${over.items.length ? 'Overturned by the cell' : 'A reply that could not be read here'}, checked by root: ${checked}\n${overText.replace(/^cell [^\n]* gave:\n/, '')}` : '');
   const landed = git(main, ['merge', '-q', '--no-ff', '-m', `Land ${branch}: ${message}${why}`, branch], false);
   if (!landed.ok) { git(main, ['merge', '--abort'], false); throw new WorktreeError(`merging ${branch} into ${into} failed; aborted.\n${landed.out}`); }
   steps.push(`landed ${branch} on ${into}: ${head(main).slice(0, 9)} (${ahead} commit(s); undo with git revert -m 1 ${head(main).slice(0, 9)})`);
+  forgetWeaker(cellDir);                                                    // the record is of this landing's run; the next starts empty
   return steps;
 }
 

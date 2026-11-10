@@ -37,14 +37,14 @@ Root is the cell that contains the others. Its session is the operator's working
 
 ## Delegate to a cell
 
-1. Write the task to a file (the session scratchpad, not the repo). Say what and why, the boundary, the tests to run, and exactly what to reply with (the brief already asks for a closing "Decisions to confirm" section). Mention any work in flight on the same code.
+1. Write the task to a file (the session scratchpad, not the repo). Say what and why, the boundary, the tests to run, and exactly what to reply with (the brief already asks for closing "Decisions to confirm" and "Overturned" sections). Mention any work in flight on the same code.
 2. `node kernel/src/mail.ts send --to <cell> --file task.md`, then `node kernel/src/cellrun.ts --cell <cell>` in the background.
 3. `node kernel/src/mail.ts watch --as root --wait 3500` in the background. Never block the operator's turn. One watcher per box: `watch` marks mail read, so a second one is refused while the first lives (`mail.ts status` shows `watched_by`). To read the mail now instead, `watch --as root --steal`: the background one then ends without taking anything.
 
 ## When a cell replies
 
-1. Read the reply in full. Note what it says is for root. Don't take "all pass" on trust.
-2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails, if the cell's tests got weaker, or if the worktree holds git-ignored files outside `guards.json` `land.ignored` (where the project set it). On a refusal, read why, then send the cell a follow-up task. If weaker tests are right (a test moved, a case became obsolete), show the operator the findings; landing them is the operator's call (`--accept-weaker "<why>"`).
+1. Read the reply in full. Note what it says is for root. Don't take "all pass" on trust. If it has **Overturned** items (values the task, a design or your own brief gave that the cell changed), check at least one against its source yourself, not by the cell's evidence: its tests pass either way, since it wrote them to the new value.
+2. `node kernel/src/cli.ts cell land --name <cell> --message "<what>" --check "<the tests>"`. Land refuses whole or undoes itself if the audit, the merge or the check fails, if the cell's tests got weaker (now, or while a command of its run ran), if a reply has Overturned items and you gave no `--checked "<what you checked, against what>"`, or if the worktree holds git-ignored files outside `guards.json` `land.ignored` (where the project set it). On a refusal, read why, then send the cell a follow-up task. If weaker tests are right (a test moved, a case became obsolete), show the operator the findings; landing them is the operator's call (`--accept-weaker "<why>"`).
 3. Read land's report. It lists the git-ignored files left in the worktree and the main checkout's git-ignored paths the check ran without, and it ends with the reply's **Decisions to confirm**: the choices the cell made that nobody confirmed. Take each to the operator, or log it before moving on: `constraint` if the operator decided, `assume` if not. A decision nobody looked at ships as a product limit.
 4. Take its other "for root" items: decide what's root's, ask the operator about theirs.
 

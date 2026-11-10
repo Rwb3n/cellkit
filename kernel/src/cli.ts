@@ -16,6 +16,7 @@ import { cellNew, cellRebind, cellRefresh, cellSync } from './cell.ts';
 import { decide, foldReviews, raise } from './review.ts';
 import { isCell, logHome, nameOf, rootOf, send as sendMail } from './mail.ts';
 import { cellAudit, cellBranch, cellCheckout, inMain, samePath, WorktreeError } from './worktree.ts';
+import { forgetWeaker } from './weaker.ts';
 import { cellLand, commitRootLog } from './land.ts';
 import type { Kind } from './schemas.ts';
 
@@ -123,6 +124,7 @@ function main(): number {
       if (rest[0] === 'checkout') {
         try {
           const dest = cellCheckout(cell, { name: opt('name'), path: opt('path') });
+          forgetWeaker(join(dest, 'cells', opt('name')!));                    // a new worktree's run starts with no record: an earlier worktree's, removed by hand, refused its first land
           console.log(`cell ${opt('name')}: worktree ${dest} on branch ${cellBranch(opt('name')!)}; run it headless (node kernel/src/cellrun.ts --cell ${opt('name')}) or open its session at ${join(dest, 'cells', opt('name')!)}`);
           return 0;
         } catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
@@ -138,7 +140,7 @@ function main(): number {
       if (rest[0] === 'land') {
         const name = opt('name');
         let steps: ReturnType<typeof cellLand>;
-        try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run'), acceptWeaker: opt('accept-weaker') }); }
+        try { steps = cellLand(cell, { name, message: opt('message'), check: opt('check'), into: opt('into'), dryRun: rest.includes('--dry-run'), acceptWeaker: opt('accept-weaker'), checked: opt('checked') }); }
         catch (e) { if (e instanceof WorktreeError) { console.error(`refused: ${e.message}`); return 1; } throw e; }
         for (const s of steps) console.log(s);
         if (rest.includes('--dry-run')) return 0;

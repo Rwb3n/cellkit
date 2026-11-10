@@ -14,6 +14,8 @@
 // 7. Nobody reads a secret or an unreadable path (secrets.ts; Read and Grep: hook-read.ts), by act, not by text.
 // 6. Nobody kills processes by name (taskkill /IM, pkill, killall, Stop-Process -Name): on one machine that takes other
 //    projects' runners and builds too (AI-MMO: another project's `taskkill /F /IM python.exe` took every runner). By pid.
+// 8. In a cell session, before a command runs, what the changed test files hold is written down
+//    for the land to read (weaker.ts, #72). It refuses nothing; a record that can't be written refuses the command.
 // Deliberately strict: a command that merely mentions `cli.ts approve` is refused too.
 // Fails closed: a check that throws refuses the command, naming the error (an uncaught throw exits 1, which Claude Code
 // doesn't treat as blocking: the command would run unchecked; AI-MMO #134).
@@ -24,6 +26,7 @@ import { loadConfig, ownedRes } from './config.ts';
 import { basename, posix, resolve } from 'node:path';
 import { acts, actUnits, codeTargets, commandsRun, gitGlobals, outside, writePrimitive, writeTargets } from './shell.ts';
 import { shellRefusal } from './secrets.ts';
+import { noteWeaker } from './weaker.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -189,6 +192,8 @@ for (const t of [...writeTargets(command), ...codeTargets(act)]) {
   if (owned)
     block(`that command ${t.removes ? 'removes' : 'writes'} ${p}${t.git ? (t.removes ? ' (git clean or stash -u takes away what is not committed there, new log entries included)' : ' (git restores or removes it)') : ''}, which is or holds kernel-owned paths (state/log, state/views, state/bedrock, docs/assumptions.md): written only by the kernel CLI. Use it, or name the files you mean.`);
 }
+// Rule 8, last: the command is about to run.
+if (project && existsSync(`${project}/binding.json`) && !misplaced(project)) noteWeaker(project);   // in its own worktree: another's is not its record
 } catch (e) {
   block(`hook-bash failed (${(e as Error).message}); refusing rather than letting the command run unchecked. Tell root if it persists.`);
 }
