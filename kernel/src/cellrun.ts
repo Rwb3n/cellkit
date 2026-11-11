@@ -24,7 +24,8 @@
 // Refuses (exit 2) a cell with no worktree, (3) a cell already working on a message (another session is running it:
 // never run headless and interactive for the same cell at once), (4) a cell with nothing queued, (5) a cell with a
 // live runner already, (6) no room within --hold, (7) merging main into the worktree failed (aborted; the mail is still queued).
-// Otherwise exits with claude's code. The transcript (stream-json) goes to <mailbox>/runs/<UTC stamp>.jsonl.
+// Otherwise exits with claude's code, or (8) when claude exited 0 and a reply is not coming: a task still in flight
+// with no answer in the log, or one found taken, unanswered and not in flight (root is told by mail either way: #101). The transcript (stream-json) goes to <mailbox>/runs/<UTC stamp>.jsonl.
 // The run's lock records the session's pid too: a runner can die while its session works on (AI-MMO: a kill by process
 // name from another project took every runner), and that orphan keeps the lock, counts toward MAX_RUNNERS, and makes a
 // new run and `mail.ts release` refuse until it ends. Every run leaves <log>.exit (how it ended; none: killed hard).
@@ -49,7 +50,8 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { alive, lockFile, pause } from './log.ts';
-import { dirOf, fileReply, mailbox, message, runnerLock, runnerOf, send, status, type Runner } from './mail.ts';
+import { dirOf, fileReply, mailbox, markTold, message, runnerLock, runnerOf, send, status, told, unanswered, type Runner } from './mail.ts';
+import { refoldPresent } from './refold.ts';
 import { cellWorktree, currentBranch, inMain } from './worktree.ts';
 
 export const PROMPT = 'waiting for mail';
@@ -164,7 +166,12 @@ export function level(root: string, wt: string, dryRun = false): { ok: boolean; 
   if (inTheWay.length) return { ok: true, say: `not levelled with ${branch} ${short}: ${branch} changed file(s) the worktree holds as ignored files, which a merge would overwrite: ${inTheWay.join(', ')} (move them, then run again)` };
   if (dryRun) return { ok: true, say: `would merge ${branch} ${short} into the worktree` };
   const merged = git(wt, ['merge', '-q', '--no-edit', sha]);
-  if (merged.ok) return { ok: true, say: `merged ${branch} ${short} into the worktree` };
+  if (merged.ok) {
+    // the merge brought main's log entries in; the views here are git-ignored and still as folded before it (#102)
+    let behind: string[] = [], failed = '';
+    try { behind = refoldPresent(wt); } catch (e) { failed = (e as Error).message; }
+    return { ok: true, say: `merged ${branch} ${short} into the worktree${behind.length ? `; rebuilt its views from the merged log (${behind.join(', ')})` : ''}${failed ? `; its views could not be rebuilt (${failed}): run fold there` : ''}` };
+  }
   const tail = merged.out.split(/\r?\n/).slice(-8).map((l) => `    ${l}`).join('\n');
   if (!midMerge(wt)) return { ok: false, say: `merging ${branch} ${short} failed before it started (not a conflict); the worktree is as it was. Fix what git says, then run again:\n${tail}` };
   const unmerged = git(wt, ['diff', '--name-only', '--diff-filter=U']).out.split(/\r?\n/).filter(Boolean);
@@ -310,8 +317,21 @@ async function runSession(root: string, wt: string, cellDir: string, name: strin
     }
     after = status(cellDir);
   }
+  // A task the cell took that is neither answered nor in flight (#101): no reply is coming, and an exit code of 0 with
+  // nothing in flight would read as done. Root is told where to look, once per task (a mark in the box), whichever run
+  // finds it: this one's, or one left by a run that was interrupted or by an interactive session. The run then exits 8.
+  const lost = unanswered(cellDir).filter((id) => !told(cellDir, id));
+  for (const id of lost) {
+    const m = send(cellDir, 'root', `cellrun: ${name} took task ${id}, and it has no reply and is not in flight: no reply is coming. ` +
+      `Found at the end of the run that exited ${r.code ?? r.signal}; what was done, if anything, is uncommitted in the worktree (git status there) and in the transcript: ${log} ` +
+      `(a task an earlier run took is in an earlier transcript, in the same folder). ` +
+      `Read them, then record what you found as its reply: node kernel/src/mail.ts release --as ${name} --for ${id} --note "…" (then send the task again if it still needs doing)`, 'blocked');
+    markTold(cellDir, id);
+    console.error(`cellrun: ${name} took ${id} and left it unanswered; told root (${m.id})`);
+  }
   console.log(`cellrun: ${name} exited ${r.code ?? r.signal}; its inbox ${after.unread} unread, working_on ${after.working_on}; root inbox ${status(root).unread} unread`);
-  return r.code ?? 1;
+  // the same for a task still in flight that the log held no answer to: root was told above, and 0 would read as done
+  return (r.code ?? 1) === 0 && (lost.length || after.working_on) ? 8 : r.code ?? 1;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

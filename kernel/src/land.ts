@@ -31,6 +31,7 @@ import { join } from 'node:path';
 import { delivered, status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
+import { refoldPresent } from './refold.ts';
 import { blobName, forgetWeaker, weakerDuring, weakerTests, type Was } from './weaker.ts';
 import { cellAudit, cellBranch, cellWorktree, currentBranch, inMain, WorktreeError } from './worktree.ts';
 
@@ -369,6 +370,9 @@ export function cellLand(root: string, o: LandOptions): Landed {
     // said only if true: an undo runs when something already failed, and its own git commands can fail the same way
     // (both resets, not the head alone: a --hard that fails on a locked file leaves the merge in the tree)
     const back = hard && soft && git(wt, ['rev-parse', 'HEAD'], false).out === start;
+    // the views follow the log back (if the merge was made, they were rebuilt from the merged one; before it, this
+    // changes nothing); best effort: views are disposable, lint says
+    try { refoldPresent(wt); } catch { /* the reason for the undo is what matters */ }
     throw new WorktreeError(`${why}\n${back ? `${branch} is back where it was (${start.slice(0, 9)}); nothing was landed`
       : `nothing was landed, but ${branch} could NOT be put back to ${start.slice(0, 9)}: look at ${wt} (git status, git log) before anything else`}`);
   };
@@ -385,6 +389,11 @@ export function cellLand(root: string, o: LandOptions): Landed {
   steps.push(`merged ${into} into ${branch}`);
   const after = cellAudit(main, name);
   if (after.length) undo(`after merging ${into}, cell ${name} differs outside its folder: ${after.join(', ')}`);
+  // the merge brought ${into}'s log entries in; the views in the worktree are git-ignored and still as folded before it (#102)
+  let behind: string[] = [];
+  try { behind = refoldPresent(wt); }
+  catch (e) { undo(`after merging ${into}, views in ${wt} couldn't be rebuilt from the merged log, so the check would run on views older than it: ${(e as Error).message}\nIf it is a log that can't be read, lint says which entry (node kernel/src/cli.ts lint --all); to land without those views, delete that folder's state/views in the worktree`); }
+  if (behind.length) steps.push(`rebuilt the worktree's views from the merged log: ${behind.join(', ')}`);
   let leftNow = left;
   if (o.check) {
     const before = new Set(dirty(wt));

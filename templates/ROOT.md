@@ -20,7 +20,7 @@ Root is the cell that contains the others. Its session is the operator's working
 |---|---|---|
 | Each cell: head, entries, published numbers | `state/views/cells.json` | `node kernel/src/cli.ts cell sync` (runs at session start) |
 | Mail waiting for root | the root mailbox | `node kernel/src/mail.ts status` · `watch --as root` |
-| A cell mid-task | its mailbox | `node kernel/src/mail.ts status --as <cell>` (`working_on`) |
+| A cell mid-task | its mailbox | `node kernel/src/mail.ts status --as <cell>` (`working_on`; `unanswered`: tasks taken with no reply coming, to read up on and `release --for <id>`) |
 | Reviews waiting for the operator | the cells' logs | `node kernel/src/cli.ts review list --all` |
 | Decisions and assumptions | `docs/assumptions.md` (generated) | `## Known` = operator decisions |
 | What changed recently | git | `git log --oneline -20` |

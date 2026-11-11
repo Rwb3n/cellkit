@@ -3,14 +3,14 @@
 // starts a cell headless in its own worktree only when mail is queued.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cellNew } from '../src/cell.ts';
 import { readLog } from '../src/log.ts';
-import { current, mailbox, receive, runnerOf, send, status, takeNext } from '../src/mail.ts';
+import { current, mailbox, receive, release, runnerOf, send, status, takeNext } from '../src/mail.ts';
 import { level, liveRunners, recoverAnswer, room } from '../src/cellrun.ts';
 import { cellAudit, cellCheckout, cellWorktree, gitCommonDir, inMain, misplaced, samePath } from '../src/worktree.ts';
 
@@ -84,6 +84,19 @@ test('worktree: cell checkout makes a worktree on branch cell/<name> beside the 
   const stopped = spawnSync(process.execPath, [join(wt, 'kernel', 'src', 'mail-hook.ts')], { input: '{}', encoding: 'utf8',
     env: { ...process.env, CLAUDE_PROJECT_DIR: cellWt, CELLKIT_MAIL_WAIT: '0' } });
   assert.equal(stopped.status, 0, stopped.stderr);
+  // #101: root's mail is handled from the main checkout only. The root of a cell's worktree is no cell's folder, so a
+  // session that stepped up to it (cd ../..) would be root there: it could watch root's box and task other cells.
+  const { CLAUDE_PROJECT_DIR: _, ...bare } = process.env;
+  const fromWt = (...args: string[]) => spawnSync(process.execPath, [join(wt, 'kernel', 'src', 'mail.ts'), ...args], { cwd: wt, env: bare, encoding: 'utf8' });
+  const q = send(cellWt, 'root', 'a question for root', 'question');
+  for (const args of [['watch'], ['watch', '--as', 'root'], ['recv'], ['send', '--to', 'other', '--body', 'do this'], ['release', '--as', 'other']]) {
+    const r = fromWt(...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(r.stderr, /^refused: root's mail is handled from the main checkout, and this is another checkout of the repository \(.*repo-cells.demo\)/, args.join(' '));
+  }
+  assert.equal(JSON.parse(fromWt('status').stdout).unread, 1);              // looking is fine; nothing was taken
+  const fromMain = spawnSync(process.execPath, [join(main, 'kernel', 'src', 'mail.ts'), 'watch'], { cwd: main, env: bare, encoding: 'utf8' });
+  assert.match(fromMain.stdout, new RegExp(q.id), fromMain.stderr);
   assert.notEqual(spawnSync('git', ['-C', main, 'worktree', 'remove', '--force', wt]).status, 0);   // locked: one -f won't
   git(main, 'worktree', 'remove', '-f', '-f', wt);
   assert.ok(existsSync(join(main, 'kernel', 'node_modules', 'ajv', 'package.json')));   // main's are left alone
@@ -367,6 +380,72 @@ exec "${process.execPath}" "${fake}.mjs" "$@"
   assert.match(run('mail.ts', ['release', '--as', 'demo'], { CLAUDE_PROJECT_DIR: cellWt }).stderr, /orphaned session .* let it finish/);
 });
 
+test('cellrun: a session can\'t take its own mail with watch; a task a run took and left unanswered is told to root (#101)', (t) => {
+  const { main, cellWt } = world(t);
+  const t0 = send(main, 'demo', 'task zero');
+  // "watch": what ecom-lab's session did, told "waiting for mail". "grab": a task read with nothing making it the one in
+  // flight, however that comes about (what watch did before it refused a cell's box).
+  const fake = join(tmpdir(), `cellkit-fake-grab-${process.pid}`);
+  writeFileSync(`${fake}.mjs`, `import { spawnSync } from 'node:child_process';
+import { readdirSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+const say = (o) => console.log(JSON.stringify(o));
+if (process.env.CELLKIT_FAKE === 'watch') {
+  const r = spawnSync(process.execPath, [${JSON.stringify(join(src, 'mail.ts'))}, 'watch'], { encoding: 'utf8' });
+  say({ type: 'user', message: { content: [{ type: 'tool_result', content: 'exit ' + r.status + ' ' + r.stdout + r.stderr }] } });
+} else {
+  const box = join(process.env.CELLKIT_BOX, 'inbox'), [f] = readdirSync(box).filter((x) => x.endsWith('.json')).sort();
+  renameSync(join(box, f), join(box, 'read', f));
+}
+say({ type: 'result', subtype: 'success', is_error: false, result: 'did the work' });
+`);
+  const exe = process.platform === 'win32' ? `${fake}.cmd` : fake;
+  writeFileSync(exe, process.platform === 'win32' ? `@"${process.execPath}" "${fake}.mjs" %*
+` : `#!/bin/sh
+exec "${process.execPath}" "${fake}.mjs" "$@"
+`, { mode: 0o755 });
+  t.after(() => { rmSync(`${fake}.mjs`, { force: true }); rmSync(exe, { force: true }); });
+  const cellrun = (mode: string) => run('cellrun.ts', ['--root', main, '--cell', 'demo'], { CELLKIT_CLAUDE: exe, CELLKIT_FAKE: mode, CELLKIT_BOX: mailbox(cellWt), CELLKIT_MIN_FREE_MB: '0' });
+  const lost = () => (status(cellWt) as { unanswered?: string[] }).unanswered;
+
+  assert.match(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8'), /told "waiting for mail" yourself, answer in a line and end your turn.*Never go and fetch it: `mail\.ts watch` is root's/);
+  const watched = cellrun('watch');
+  assert.equal(watched.status, 0, watched.stdout + watched.stderr);
+  const [, log] = watched.stdout.match(/; log (.+\.jsonl)/)!;
+  assert.match(readFileSync(log, 'utf8'), /exit 1 refused: this is cell demo's session, and a cell watches no box/);
+  assert.deepEqual([status(cellWt).unread, current(cellWt), lost()], [1, null, undefined]);   // still queued…
+  assert.deepEqual(receive(main), []);
+  assert.match(stop(cellWt, 'waiting for mail').stdout, /task zero/);       // …and the Stop hook hands it over, so its answer is filed
+  stop(cellWt, 'zero is done');
+  assert.deepEqual(receive(main).map((m) => [m.reply_to, m.body]), [[t0.id, 'zero is done']]);
+
+  const t1 = send(main, 'demo', 'task one');
+  const grabbed = cellrun('grab');                                          // claude exits 0 with nothing in flight: it would read as done
+  assert.equal(grabbed.status, 8, grabbed.stdout + grabbed.stderr);
+  assert.match(grabbed.stderr, new RegExp(`cellrun: demo took ${t1.id} and left it unanswered; told root`));
+  const told = receive(main);
+  assert.deepEqual(told.map((m) => m.kind), ['blocked']);
+  assert.match(told[0].body, new RegExp(`demo took task ${t1.id}, and it has no reply and is not in flight[\\s\\S]*exited 0[\\s\\S]*transcript: .+\\.jsonl[\\s\\S]*release --as demo --for ${t1.id} `));
+  assert.deepEqual(lost(), [t1.id]);
+
+  const t2 = send(main, 'demo', 'task two');                                // told once per task: t1 is not news to the next run
+  assert.equal(cellrun('grab').status, 8);
+  const again = receive(main);
+  assert.equal(again.length, 1);
+  assert.match(again[0].body, new RegExp(`took task ${t2.id}, `));
+  assert.deepEqual(lost(), [t1.id, t2.id]);
+
+  // one left by something other than a run that finished (an interrupted run, an interactive session): the next run tells root
+  rmSync(join(mailbox(cellWt), 'inbox', `.told-${t1.id}`));
+  send(main, 'demo', 'task three');
+  assert.equal(cellrun('watch').status, 8);                                 // this run took nothing itself
+  assert.deepEqual(receive(main).map((m) => m.body.match(/took task (\S+),/)![1]), [t1.id]);
+  release(cellWt, 'read the worktree: nothing was done', t1.id);            // recorded: no longer unanswered, and never told again
+  assert.deepEqual(lost(), [t2.id]);
+  assert.equal(cellrun('watch').status, 0);
+  assert.deepEqual(receive(main).map((m) => [m.kind, m.reply_to]), [['reply', t1.id]]);
+});
+
 test('cellrun: no MCP servers; one runner per cell; waits for room (sessions, memory) and gives up with the mail queued', (t) => {
   const { main, cellWt } = world(t);
   assert.equal(room(8000, 3, 3, 4096), '3 session(s) running (at most 3, CELLKIT_MAX_RUNNERS)');
@@ -540,6 +619,82 @@ test('cell land: commits the cell\'s work, merges main in, checks, lands it --no
   assert.equal(run('cli.ts', ['lint', '--cell', main]).status, 0);
   assert.doesNotMatch(run('cli.ts', ['lint', '--all', '--cell', main]).stderr, /(root|demo): views (are stale|missing)/);   // #7
   assert.match(land().stdout, /nothing to land/);
+});
+
+// #102 (ecom-lab): the cell had folded the root views in its worktree; root then logged an assumption on main; the land
+// merged main in and its check compared the merged log with those views (git-ignored: no merge touches them).
+test('cell land: the views in the worktree are rebuilt from the merged log before the check runs, and follow it back on an undo (#102)', async (t) => {
+  const { refold } = await import('../src/refold.ts');
+  const { tmp, main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const work = (n: number) => { mkdirSync(join(cellWt, 'exit'), { recursive: true }); writeFileSync(join(cellWt, 'exit', `report${n}.md`), 'done\n'); };
+  const onMain = (statement: string) => {                                   // root logs a guess and commits it
+    assert.equal(run('cli.ts', ['assume', '--cell', main, '--statement', statement]).status, 0);
+    git(main, 'add', '-A'); git(main, 'commit', '-qm', statement);
+  };
+  // the check a project would write: the root views in this checkout are those of the log in this checkout
+  const check = join(tmp, 'views-current.mjs');
+  writeFileSync(check, `import { readFileSync } from 'node:fs';
+import { readLog } from ${JSON.stringify(pathToFileURL(join(src, 'log.ts')).href)};
+const head = JSON.parse(readFileSync('state/views/summary.json', 'utf8')).head, log = readLog('.').at(-1).hash;
+if (head !== log) { console.error('views are of ' + head + ', the log is at ' + log); process.exit(3); }
+`);
+  const viewHead = () => JSON.parse(readFileSync(join(wt, 'state', 'views', 'summary.json'), 'utf8')).head;
+  const logHead = () => readLog(wt).at(-1)!.hash;
+
+  work(1); onMain('the first guess');                                       // a checkout with no views gets none
+  const none = land('--check', 'node -e "process.exit(0)"');
+  assert.equal(none.status, 0, none.stdout + none.stderr);
+  assert.ok(!existsSync(join(wt, 'state', 'views')));
+  assert.doesNotMatch(none.stdout, /rebuilt the worktree's views/);
+
+  refold(wt); refold(cellWt);                                               // the cell folds the root views in its worktree, and its own
+  work(2); onMain('the second guess');
+  const before = viewHead();
+  assert.notEqual(before, readLog(main).at(-1)!.hash);                      // main's log has moved on
+  const failed = land('--check', `node "${check}" && node -e "process.exit(5)"`);   // the views were current when the check ran: it got to the exit 5
+  assert.match(failed.stderr, /check failed .*exit 5[\s\S]*back where it was/);
+  assert.deepEqual([viewHead(), logHead()], [before, before]);              // undone: the views are of the branch's log again
+  const r = land('--check', `node "${check}"`);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /rebuilt the worktree's views from the merged log: \.\n[\s\S]*check passed/);   // the cell's own were not behind: not named
+  assert.equal(viewHead(), logHead());
+  assert.notEqual(viewHead(), before);
+
+  onMain('the third guess');                                                // the same merge, made by cellrun before a session starts
+  assert.match(level(main, wt).say, /^merged main [0-9a-f]{7} into the worktree; rebuilt its views from the merged log \(\.\)$/);
+  assert.equal(viewHead(), logHead());
+
+  // each cell's views too; views with no log beside them (a cell that is gone) are left alone; a log that can't be read
+  // is named with its folder, stops a land, and doesn't keep the other folders' views from being rebuilt
+  const { append, logDir } = await import('../src/log.ts');
+  const { refoldPresent } = await import('../src/refold.ts');
+  append(cellWt, { kind: 'observation', body: { source: { adapter: 't', provider: 't', capability: 't' }, observed_at: '2026-01-01T00:00:00.000Z', reliability: [], licence: { store: 'full' }, payload: { n: 1 } } });
+  mkdirSync(join(wt, 'cells', 'ghost', 'state', 'views'), { recursive: true });
+  assert.deepEqual(refoldPresent(wt), ['cells/demo']);
+  assert.deepEqual(readdirSync(join(wt, 'cells', 'ghost', 'state', 'views')), []);
+  const other = join(wt, 'cells', 'other');
+  refold(other);
+  append(cellWt, { kind: 'observation', body: { source: { adapter: 't', provider: 't', capability: 't' }, observed_at: '2026-01-01T00:00:00.000Z', reliability: [], licence: { store: 'full' }, payload: { n: 2 } } });
+  const torn = join(logDir(other), readdirSync(logDir(other)).sort().at(-1)!), whole = readFileSync(torn);
+  writeFileSync(torn, '{ "id": ');
+  assert.throws(() => refoldPresent(wt), /^Error: cells\/other: /);
+  assert.equal(JSON.parse(readFileSync(join(cellWt, 'state', 'views', 'summary.json'), 'utf8')).head, readLog(cellWt).at(-1)!.hash);   // demo's were still rebuilt
+  writeFileSync(torn, whole);
+  const tornFirst = join(logDir(cellWt), readdirSync(logDir(cellWt)).sort().at(-1)!), wholeFirst = readFileSync(tornFirst);
+  writeFileSync(tornFirst, '{ "id": ');                                      // the failing folder comes first: the later one is still rebuilt
+  rmSync(join(other, 'state', 'views', 'summary.json'));
+  assert.throws(() => refoldPresent(wt), /^Error: cells\/demo: /);
+  assert.ok(existsSync(join(other, 'state', 'views', 'summary.json')));
+  writeFileSync(tornFirst, wholeFirst);
+  const onMainToo = torn.replace(wt, main);                                  // the same entry, torn on main: the merge brings it in
+  writeFileSync(onMainToo, '{ "id": '); git(main, 'commit', '-qam', 'a torn entry');
+  work(3);
+  const stopped = land('--check', 'node -e "process.exit(0)"');
+  assert.match(stopped.stderr, /views in .* couldn't be rebuilt from the merged log.*: cells\/other: [\s\S]*lint --all[\s\S]*back where it was/);
+  writeFileSync(onMainToo, whole); git(main, 'commit', '-qam', 'mended');
+  const mended = land('--check', `node "${check}"`);
+  assert.equal(mended.status, 0, mended.stdout + mended.stderr);
 });
 
 test('lint: a root handover untouched for 20 commits gets a warning', async (t) => {

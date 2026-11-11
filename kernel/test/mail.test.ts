@@ -2,12 +2,12 @@
 // Cells may write only to root, and only reply · blocked · question · done.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { send, receive, current, interim, claimWatch, status, HOLD_MAX, MailError } from '../src/mail.ts';
+import { send, receive, current, interim, claimWatch, status, release, unanswered, HOLD_MAX, MailError } from '../src/mail.ts';
 
 const hook = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'mail-hook.ts');
 const world = () => {
@@ -176,8 +176,10 @@ test('mail: with no task in flight, a progress-sounding answer is not held', () 
 
 // #90: `watch` marks mail read, so two watchers on one box race for it. One watcher per box.
 const mailCli = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'mail.ts');
-const asRoot = (c1: string) => ({ env: { ...process.env, CLAUDE_PROJECT_DIR: c1 }, encoding: 'utf8' as const });   // run from a cell, --as root: the temp root's box
-const watchRoot = (c1: string, ...args: string[]) => spawnSync(process.execPath, [mailCli, 'watch', '--as', 'root', ...args], asRoot(c1));
+// run as the temp world's root: --root names its repository (a cell's session watches no box: #101)
+const rootOfCell = (c1: string) => resolve(c1, '..', '..');
+const asRoot = (c1: string) => ({ env: { ...process.env, CLAUDE_PROJECT_DIR: rootOfCell(c1) }, encoding: 'utf8' as const });
+const watchRoot = (c1: string, ...args: string[]) => spawnSync(process.execPath, [mailCli, 'watch', '--root', rootOfCell(c1), '--as', 'root', ...args], asRoot(c1));
 
 test('mail: one watcher per box: a second is refused and takes nothing; a dead one counts for nothing; --steal takes over (#90)', () => {
   const { root, c1 } = world();
@@ -226,7 +228,7 @@ test('mail: one watcher per box: a second is refused and takes nothing; a dead o
   writeFileSync(lock, JSON.stringify({ pid: 0, at: 'x' }));         // no process at all
   assert.equal(watchRoot(c1).status, 0);
   // a name that is no cell is nobody's box (its folder, once made, would read as root's)
-  const typo = spawnSync(process.execPath, [mailCli, 'watch', '--as', 'typo'], asRoot(c1));
+  const typo = spawnSync(process.execPath, [mailCli, 'watch', '--root', root, '--as', 'typo'], asRoot(c1));
   assert.match(typo.stderr, /refused: no cell named typo/);
   assert.ok(!existsSync(join(root, 'cells', 'typo')));
   for (const bad of [['--for'], ['--for', '--steal']]) assert.match(watchRoot(c1, ...bad).stderr, /--for takes a message id/, bad.join(' '));
@@ -240,7 +242,7 @@ test('mail: one watcher per box: a second is refused and takes nothing; a dead o
 test('mail: a waiting watcher that is taken over ends (exit 3) without taking the mail; of eight started at once, one watches (#90)', async () => {
   const { root, c1 } = world();
   const start = (...args: string[]) => new Promise<{ code: number | null; out: string; err: string }>((done) => {
-    const p = spawn(process.execPath, [mailCli, 'watch', '--as', 'root', ...args], asRoot(c1));
+    const p = spawn(process.execPath, [mailCli, 'watch', '--root', root, '--as', 'root', ...args], asRoot(c1));
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });
@@ -259,4 +261,93 @@ test('mail: a waiting watcher that is taken over ends (exit 3) without taking th
   const eight = await Promise.all(Array.from({ length: 8 }, () => start('--wait', '6')));
   assert.equal(eight.filter((r) => r.code === 0).length, 1, eight.map((r) => `${r.code} ${r.err}`).join('\n'));
   assert.equal(eight.filter((r) => r.code === 1 && /already being watched/.test(r.err)).length, 7);
+});
+
+// #101 (ecom-lab): a headless session told "waiting for mail" took its own task with `watch`: read, never in flight, so
+// its answer was filed nowhere, and the run exited 0.
+test('mail: a cell\'s box is never watched, and a cell watches no box: the task stays queued for the Stop hook, whose hand-over gets its reply filed (#101)', () => {
+  const { root, c1, c2 } = world();
+  const t1 = send(root, 'c1', 'count the places');
+  const q = send(c2, 'root', 'c2 needs a decision', 'question');   // mail in root's box, another cell's
+  const { CLAUDE_PROJECT_DIR: _, ...bare } = process.env;
+  const cli = (args: string[], o: { project?: string; cwd?: string }) =>
+    spawnSync(process.execPath, [mailCli, ...args], { env: { ...bare, ...(o.project ? { CLAUDE_PROJECT_DIR: o.project } : {}) }, cwd: o.cwd, encoding: 'utf8' });
+  mkdirSync(join(c1, 'adapters'));
+  // from the cell's own session, as it was done; from a folder inside the cell; and the flags a session tries next
+  for (const where of [{ project: c1 }, { cwd: c1 }, { cwd: join(c1, 'adapters') }])
+    for (const args of [['watch'], ['watch', '--as', 'c1'], ['recv'], ['watch', '--as', 'c1', '--steal'], ['watch', '--for', t1.id], ['watch', '--as', 'root'], ['watch', '--root', root, '--as', 'root']]) {
+      const r = cli(args, where), what = `${args.join(' ')} from ${JSON.stringify(where)}`;
+      assert.equal(r.status, 1, what);
+      assert.match(r.stderr, /^refused: this is cell c1's session, and a cell watches no box: .*End your turn, and the task arrives( \(run from .*, you are cell c1\))?\s*$/, what);
+      assert.equal(r.stdout, '', what);
+    }
+  // a folder inside a cell is the cell for sending too: it writes to root only, never a task to another cell
+  assert.match(cli(['send', '--to', 'c2', '--body', 'do this'], { cwd: join(c1, 'adapters') }).stderr, /refused: a cell writes only to root \(not c2\) \(run from .*adapters, you are cell c1\)/);
+  // only a cell's folder: a binding.json elsewhere makes no cell of the folders under it
+  mkdirSync(join(root, 'lone', 'sub'), { recursive: true });
+  writeFileSync(join(root, 'lone', 'binding.json'), '{}');
+  assert.equal(JSON.parse(cli(['status', '--root', root], { cwd: join(root, 'lone', 'sub') }).stdout).box, 'root');
+  assert.match(cli(['status', '--root'], { project: root }).stderr, /--root takes a repository folder/);
+  // root, asking for a cell's box: refused too, and told where to look
+  const asked = cli(['watch', '--root', root, '--as', 'c1'], { project: root });
+  assert.equal(asked.status, 1);
+  assert.match(asked.stderr, /^refused: c1 is a cell: its mail is handed to its session by the Stop hook.*status --as c1 shows what is queued/);
+  assert.deepEqual((status(root) as { unread: number }).unread, 1);  // root's mail was taken by nobody
+  assert.match(cli(['watch', '--root', root, '--as', 'root'], { project: root }).stdout, new RegExp(q.id));   // root reads its own
+  assert.throws(() => receive(c1), MailError);
+  assert.throws(() => claimWatch(c1), MailError);
+  assert.ok(!existsSync(join(c1, 'inbox', 'watch.lock')));          // refused before anything is written
+  assert.deepEqual([status(c1).unread, current(c1), 'unanswered' in status(c1)], [1, null, false]);   // still queued, nothing lost
+
+  assert.ok(stop(c1, 'waiting for mail').reason.includes('count the places'));
+  assert.equal(stop(c1, '445 places'), null);
+  assert.equal(receive(root, t1.id)[0].body, '445 places');
+});
+
+test('mail: an answer of only spaces and newlines is still filed as a reply (#101)', () => {
+  const { root, c1 } = world();
+  const t = send(root, 'c1', 'run the suite');
+  stop(c1, 'started');
+  assert.equal(stop(c1, ' \n\t\n'), null);                          // the hook must not throw with the task no longer in flight
+  assert.equal(receive(root, t.id)[0].body, '(no answer text)');
+  assert.deepEqual([current(c1), 'unanswered' in status(c1)], [null, false]);
+});
+
+test('mail: a task taken with no reply and not in flight shows in status as unanswered; release --for files its placeholder (#101)', () => {
+  const { root, c1 } = world();
+  const t1 = send(root, 'c1', 'map the new sheet');
+  renameSync(join(c1, 'inbox', `${t1.id}.json`), join(c1, 'inbox', 'read', `${t1.id}.json`));   // read, and nothing made it the task in flight
+  assert.deepEqual((status(c1) as { unanswered?: string[] }).unanswered, [t1.id]);
+  assert.ok(!('unanswered' in status(root)));
+
+  const t2 = send(root, 'c1', 'then state the currency');          // the task in flight is not unanswered; nor one answered
+  stop(c1, 'started');
+  assert.deepEqual(unanswered(c1), [t1.id]);
+  assert.throws(() => release(c1, 'x', t2.id), /it is the task in flight: release it without --for/);
+  stop(c1, 'all three are in pounds');
+  assert.equal(receive(root, t2.id)[0].body, 'all three are in pounds');
+  assert.deepEqual(unanswered(c1), [t1.id]);
+
+  assert.throws(() => release(c1, 'x', 'nope'), MailError);
+  const cli = (...args: string[]) => spawnSync(process.execPath, [mailCli, 'release', '--root', root, '--as', 'c1', ...args], asRoot(c1));
+  assert.match(cli('--for').stderr, /--for takes a message id/);
+  // during a live run (this process stands in for it) a hand-over could be between "read" and "in flight": no release
+  writeFileSync(join(c1, 'runner.lock'), JSON.stringify({ pid: process.pid, at: 'now', state: 'running' }));
+  assert.match(cli('--for', t1.id).stderr, new RegExp(`refused: c1 has a live run \\(pid ${process.pid}\\); let it finish, then release ${t1.id}\\. If that pid is not .*delete .*runner\\.lock`));
+  rmSync(join(c1, 'runner.lock'));
+  writeFileSync(join(c1, 'inbox', '.told-' + t1.id), 'then');      // root was told of it (cellrun): cleared with its reply
+  writeFileSync(join(c1, 'outbox', 'read', 'torn.json'), '{ "id": ');   // a file that can't be read is no answer, and no crash
+  assert.deepEqual(unanswered(c1), [t1.id]);
+  const done = cli('--for', t1.id, '--note', 'read the worktree: the mapping is written, its check fails');
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stdout, new RegExp(`^released: filed \\S+ as the reply to ${t1.id}`));
+  const [r] = receive(root, t1.id);
+  assert.deepEqual([r.kind, r.body], ['reply', 'read the worktree: the mapping is written, its check fails']);
+  assert.ok(!('unanswered' in status(c1)) && !existsSync(join(c1, 'inbox', '.told-' + t1.id)));
+  assert.throws(() => release(c1, 'again', t1.id), /is not a task c1 took and left unanswered/);   // one reply, not two
+
+  const t3 = send(root, 'c1', 'a third');                           // with no note, the placeholder says what is known
+  renameSync(join(c1, 'inbox', `${t3.id}.json`), join(c1, 'inbox', 'read', `${t3.id}.json`));
+  release(c1, undefined, t3.id);
+  assert.match(receive(root, t3.id)[0].body, /^\(released: the task was taken, and no reply was ever filed/);
 });

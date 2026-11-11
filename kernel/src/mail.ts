@@ -20,14 +20,15 @@
 //                                  read; one watcher per box (exit 1 if another holds it, 3 if this one was taken over)
 //   node kernel/src/mail.ts status [--as <name>]
 //   node kernel/src/mail.ts release --as <cell> [--note "…"]   a session died mid-task: file a placeholder reply, free the cell
+//   node kernel/src/mail.ts release --as <cell> --for <id> [--note "…"]   a task taken and never answered (status: unanswered)
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { alive, append, AppendError, lockFile } from './log.ts';
 import { sha256 } from './canon.ts';
 import { configPath, loadConfig } from './config.ts';
-import { cellWorktree, gitCommonDir, inMain } from './worktree.ts';
+import { cellWorktree, gitCommonDir, inMain, samePath } from './worktree.ts';
 import { refold } from './refold.ts';
 
 export type MailKind = 'task' | 'reply' | 'blocked' | 'question' | 'done';
@@ -110,8 +111,20 @@ function logMail(root: string, dir: string, m: Message): void {
   }
 }
 
-// Take unread mail from a box (marks it read). --for narrows to replies to one message.
+// Only root's box is watched. A cell's mail is taken by its Stop hook alone (takeNext), which makes the task the one in
+// flight, so the session's next answer is filed as its reply. A watch only marks mail read: a task taken that way has
+// no reply coming (#101; ecom-lab: told "waiting for mail", a headless session went looking, found `watch`, took its own
+// task with it and did the work; nothing was in flight when it stopped, so no reply was filed, twice in three tasks, and
+// the run exited 0).
+const rootsOnly = (dir: string) => {
+  if (isCell(dir)) throw new MailError(`${nameOf(dir)} is a cell: its mail is handed to its session by the Stop hook, one task at a time, when the session ends its turn. ` +
+    `A watch would take the task without making it the one in flight, and its reply would never be filed. In the cell's session: end your turn, and the task arrives. ` +
+    `From root: node kernel/src/mail.ts status --as ${nameOf(dir)} shows what is queued`);
+};
+
+// Take unread mail from root's box (marks it read). --for narrows to replies to one message.
 export function receive(dir: string, forId?: string): Message[] {
+  rootsOnly(dir);
   const got = unread(dir).filter((m) => !forId || m.reply_to === forId);
   for (const m of got) markRead(dir, m.id);
   return got;
@@ -144,6 +157,7 @@ export function watchers(dir: string): (Watcher & { path: string })[] {
 }
 export function claimWatch(dir: string, o: { forId?: string; steal?: boolean } = {}): { take: () => Message[] | null; release: () => void } {
   if (o.forId !== undefined && !/^\w[\w-]*$/.test(o.forId)) throw new MailError(`--for takes a message id, not ${JSON.stringify(o.forId)}`);
+  rootsOnly(dir);
   ensure(dir);
   const own = watchPath(dir, o.forId);
   const mine = () => { try { return (JSON.parse(readFileSync(own, 'utf8')) as Watcher).pid === process.pid; } catch { return false; } };
@@ -197,8 +211,25 @@ export function fileReply(cell: string, answer: string): Message | null {
   const asked: Message = JSON.parse(readFileSync(join(inbox(cell), 'read', `${id}.json`), 'utf8'));
   rmSync(currentPath(cell));
   rmSync(heldPath(cell, id), { force: true });
-  return send(cell, asked.from, answer || '(no answer text)', 'reply', id);
+  // an answer of spaces or newlines is no text either: send refuses an empty body, and the task, no longer in flight,
+  // would be left with no reply at all
+  return send(cell, asked.from, answer.trim() ? answer : '(no answer text)', 'reply', id);
 }
+
+// The tasks a cell took that have no reply and are not in flight: each is a reply root is still waiting for and that
+// nothing will file (#101). Read from the mailbox: a task in inbox/read/ with no message in outbox/read/ answering it.
+// None should exist: a task is taken only by the Stop hook, and what it takes is in flight until its reply is filed.
+// This is the check that says so when something else went wrong (a hook that threw, a box edited by hand).
+export function unanswered(cell: string): string[] {
+  if (!isCell(cell)) return [];
+  const read = (d: string): Message[] => jsons(d).sort().flatMap((f) => { try { return [JSON.parse(readFileSync(join(d, f), 'utf8')) as Message]; } catch { return []; } });
+  const answered = new Set(read(sent(cell)).map((m) => m.reply_to)), now = current(cell);
+  return read(join(inbox(cell), 'read')).filter((m) => m.kind === 'task' && m.id !== now && !answered.has(m.id)).map((m) => m.id);
+}
+// Root is told of an unanswered task once (cellrun.ts), whichever run finds it: a mark in the box, cleared with its reply.
+const toldPath = (cell: string, id: string) => join(inbox(cell), `.told-${id}`);
+export const told = (cell: string, id: string) => existsSync(toldPath(cell, id));
+export const markTold = (cell: string, id: string) => writeFileSync(toldPath(cell, id), new Date().toISOString());
 
 // Hand the oldest unread task to the session (marks it read and current), and record it on the cell's log now.
 export function takeNext(cell: string): Message | null {
@@ -239,8 +270,20 @@ export function runnerOf(cell: string): (Runner & { orphan: boolean }) | null {
 // A cell's session died while working on a message (nothing will ever file its reply): file a placeholder reply so the
 // asker learns the task was not done, and the cell can take mail again. Refused while a headless run or its orphaned
 // session is live. cellrun --resume first: it recovers the reply from the run log, or a fresh session finishes the task.
-export function release(cell: string, note = '(released: the session ended without a reply; the task was not done)'): Message | null {
+// With an id (--for): the reply for a task that was taken and never answered (`unanswered`). Root reads the worktree
+// and the run log first, and says what it found. Refused during a live run like any release: a hand-over marks the task
+// read a moment before it makes it the one in flight, and a release in between would be a second reply to it.
+export function release(cell: string, note?: string, forId?: string): Message | null {
   const r = runnerOf(cell);
+  if (forId !== undefined) {
+    if (r) throw new MailError(`${nameOf(cell)} has a live ${r.orphan ? `orphaned session (pid ${r.session}, its runner gone)` : `run (pid ${r.pid})`}; let it finish, then release ${forId}. If that pid is not a claude session or cellrun (pids are reused), delete ${runnerLock(cell)}`);
+    if (!unanswered(cell).includes(forId)) throw new MailError(`${forId} is not a task ${nameOf(cell)} took and left unanswered (mail.ts status --as ${nameOf(cell)} lists them${current(cell) === forId ? '; it is the task in flight: release it without --for' : ''})`);
+    const asked = message(cell, forId)!;
+    const m = send(cell, asked.from, note?.trim() ? note : '(released: the task was taken, and no reply was ever filed; what was done is in the cell\'s worktree and its run log)', 'reply', forId);
+    rmSync(toldPath(cell, forId), { force: true });
+    return m;
+  }
+  note ??= '(released: the session ended without a reply; the task was not done)';
   if (r) throw new MailError(`${nameOf(cell)} has a live ${r.orphan ? `orphaned session (pid ${r.session}, its runner gone)` : `run (pid ${r.pid})`}; let it finish. If that pid is not a claude session or cellrun (pids are reused), delete ${runnerLock(cell)}`);
   return fileReply(cell, note);
 }
@@ -248,8 +291,9 @@ export function release(cell: string, note = '(released: the session ended witho
 // working_on with no live run: a session that died mid-task (or an interactive one: only the operator knows).
 export const status = (dir: string) => {
   const working_on = current(dir), r = isCell(dir) ? runnerOf(dir) : null;
-  const w = watchers(dir);
+  const w = watchers(dir), lost = unanswered(dir);
   return { box: nameOf(dir), unread: unread(dir).length, working_on,
+    ...(lost.length ? { unanswered: lost } : {}),
     run: r ? (r.orphan ? `orphaned session ${r.session}` : `${r.state} (pid ${r.pid})`) : working_on ? 'none: died, or interactive (cellrun --resume)' : null,
     ...(w.length ? { watched_by: w.map((x) => `pid ${x.pid} since ${x.at}${x.for ? ` for ${x.for}` : ''}`).join(' · ') } : {}) };
 };
@@ -259,8 +303,22 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const [cmd, ...rest] = process.argv.slice(2);
   const opt = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
   const here = resolve(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-  const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const me = isCell(here) ? here : repo;                       // run from a cell → you are that cell; else root
+  // --root <repo>: another repository's root (tests; cellrun.ts has the same). Never a way out of a cell: see `me`.
+  const repo = resolve(opt('root') ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
+  // Run from a cell, or from any folder inside one → you are that cell; else root. A subfolder counts: from
+  // cells/<x>/adapters a session was root, could send tasks to other cells and take root's mail (a review of #101).
+  const cellAt = (d: string): string | null => {
+    if (isCell(d)) return d;
+    for (let p = dirname(d); dirname(p) !== p; p = dirname(p)) if (isCell(p) && basename(dirname(p)) === 'cells') return p;
+    return null;
+  };
+  const me = cellAt(here) ?? repo;
+  // root's shell, left in a cell's folder, is that cell too: a refusal says so
+  const asCell = isCell(me) && !process.env.CLAUDE_PROJECT_DIR ? ` (run from ${here}, you are cell ${nameOf(me)})` : '';
+  // Root acts from the main checkout only. The root of a cell's worktree is a checkout of the repository and no cell's
+  // folder: a session that stepped up to it would be root there, and could watch root's box or task another cell
+  // (a review of #101: a refusal that says "root does this elsewhere" is followed). Looking (status) stays open.
+  const elsewhere = !isCell(me) && !samePath(inMain(repo), repo);
   // a name that is no cell is nobody's box: its folder, once made, would read as root's (nameOf), and take root's mail
   const boxOf = (name?: string) => {
     if (name && name !== 'root' && !isCell(dirOf(rootOf(me), name))) throw new MailError(`no cell named ${name}`);
@@ -268,12 +326,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   try {
+    if (rest.includes('--root') && (!opt('root') || opt('root')!.startsWith('--'))) throw new MailError('--root takes a repository folder, not nothing');
+    if (elsewhere && cmd !== 'status') throw new MailError(`root's mail is handled from the main checkout, and this is another checkout of the repository (${repo}): a cell's worktree, or one of Claude Code's. Nothing was sent or taken`);
     if (cmd === 'send') {
       const to = opt('to');
       if (!to) throw new MailError('send needs --to <root|cell>');
       const body = opt('body') ?? (opt('file') ? readFileSync(opt('file')!, 'utf8') : '');
       console.log(send(me, to, body, (opt('kind') as MailKind) ?? (nameOf(me) === 'root' ? 'task' : 'question')).id);
     } else if (cmd === 'watch' || cmd === 'recv') {
+      // A cell watches no box, root's included (--as root from a cell took other cells' replies to root: the same review).
+      if (isCell(me)) throw new MailError(`this is cell ${nameOf(me)}'s session, and a cell watches no box: its own mail is handed to it by the Stop hook, one task at a time, when it ends its turn ` +
+        `(a watch would take the task without making it the one in flight, and its reply would never be filed), and root's box is root's to read. End your turn, and the task arrives`);
       const box = boxOf(opt('as')), until = Date.now() + Number(opt('wait') ?? 0) * 1000;
       if (rest.includes('--for') && opt('for') === undefined) throw new MailError('--for takes a message id, not nothing');
       const watch = claimWatch(box, { forId: opt('for'), steal: rest.includes('--steal') });
@@ -286,7 +349,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       } finally { watch.release(); }
     } else if (cmd === 'release') {
       if (!opt('as') || opt('as') === 'root') throw new MailError('release needs --as <cell>');
-      const m = release(boxOf(opt('as')), opt('note'));
+      if (rest.includes('--for') && opt('for') === undefined) throw new MailError('--for takes a message id, not nothing');
+      const m = release(boxOf(opt('as')), opt('note'), opt('for'));
       console.log(m ? `released: filed ${m.id} as the reply to ${m.reply_to}` : `${opt('as')} is not working on a message`);
     } else if (cmd === 'status') {
       console.log(JSON.stringify(status(boxOf(opt('as')))));
@@ -294,7 +358,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       throw new MailError('usage: mail.ts send|watch|status|release …');
     }
   } catch (e) {
-    if (e instanceof MailError) { console.error(`refused: ${e.message}`); process.exit(1); }
+    if (e instanceof MailError) { console.error(`refused: ${e.message}${asCell}`); process.exit(1); }
     // the short lock around a claim, held too long: a process stuck in it, or a leftover whose pid was reused
     if (e instanceof AppendError && /watch\.claim/.test(e.message)) { console.error(`refused: the box's watch lock is busy: ${e.message}. If that pid is not a mail watch, delete that file`); process.exit(1); }
     throw e;
