@@ -9,7 +9,12 @@
 //     "unreadable":    [ { "path": "OTHER_PROJECT/vault/", "why": "…" } ],                     no session reads these
 //     "worktrees":     { "home": "../.cells/myproject" },                                      where cell checkout puts cells
 //     "land":          { "ignored": ["**/__pycache__/**", "cells/*/state/out/**"] }            git-ignored files a land accepts
+//     "source":        { "files": ["**/*.ts", "src/**"], "root": true }                        what no shell hand-types (#82)
 //   }
+// source (#82): the files whose text is written with the Write and Edit tools, never typed through the shell (a heredoc,
+// echo or printf redirected, sed -i, a literal Set-Content), which eats backslashes and quotes on the way. In a cell's
+// session always; in root's too with "root": true. files: globs from the repository root; not set, a default list of
+// code and config extensions (SOURCE_DEFAULT); an empty list switches it off.
 // land.ignored (#77): globs over worktree paths. Once set (an empty list too), `cell land` refuses while the cell's
 // worktree holds a git-ignored file outside it, what the kit rebuilds aside (land.ts REBUILT): data a run left behind is
 // deleted or allowed by the operator, never waved through. Not set: land only lists them.
@@ -42,7 +47,12 @@ export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
 export type MailLog = 'body' | 'hash';
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; error?: string }
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; source?: string[]; sourceRoot?: boolean; error?: string }
+// What counts as a source file when source.files is not set: code and structured text, by extension. Not prose or data
+// (.md, .txt, .csv, .log), which a shell writes as well as any tool.
+export const SOURCE_DEFAULT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|c|h|cpp|hpp|sh|bash|ps1|psm1|sql|json|ya?ml|toml|html?|css|scss|vue|svelte)$/i;
+// Is this path (from the repository root, / separators) a source file by the project's list, or by the default?
+export const isSource = (c: Config, rel: string) => (c.source ? c.source.some((g) => globRe(g).test(rel.toLowerCase())) : SOURCE_DEFAULT.test(rel));
 interface Raw {
   operator_only?: { command?: string; pattern?: string; message?: string }[];
   protected?: { path?: string; by?: string }[];
@@ -51,6 +61,7 @@ interface Raw {
   unreadable?: { path?: string; why?: string }[];
   worktrees?: { home?: string };
   land?: { ignored?: string[] };
+  source?: { files?: string[]; root?: boolean };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -74,7 +85,7 @@ export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees', 'land'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees, land)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees', 'land', 'source'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees, land, source)`);
   if (raw.land !== undefined) {
     if (!raw.land || typeof raw.land !== 'object' || Array.isArray(raw.land)) out.push('land must be an object ({ "ignored": ["<glob>", …] })');
     else {
@@ -87,6 +98,18 @@ export function checkGuards(value: unknown): string[] {
         // a glob that takes a path nobody named allows whatever a run leaves: **, **/*.*, ?*/**
         else if (TOO_WIDE.some((p) => globRe(x).test(p))) out.push(`land.ignored[${i}] "${x}": too wide (it would allow any file); name a folder or an extension, or leave land.ignored out to only list`);
       }
+    }
+  }
+  if (raw.source !== undefined) {
+    if (!raw.source || typeof raw.source !== 'object' || Array.isArray(raw.source)) out.push('source must be an object ({ "files": ["<glob>", …], "root": true })');
+    else {
+      for (const k of Object.keys(raw.source)) if (!['files', 'root'].includes(k)) out.push(`source: unknown key "${k}" (files, root)`);
+      const g = raw.source.files;
+      if (g !== undefined && !Array.isArray(g)) out.push('source.files must be a list of globs (e.g. ["**/*.ts", "src/**"])');
+      for (const [i, x] of (Array.isArray(g) ? g : []).entries())
+        if (typeof x !== 'string' || !x.trim()) out.push(`source.files[${i}] must be a glob`);
+        else if (/^[a-zA-Z]:|^[\\/]|^~|(^|\/)\.\.(\/|$)/.test(x)) out.push(`source.files[${i}] "${x}": a path inside the repository, from its root`);
+      if (raw.source.root !== undefined && typeof raw.source.root !== 'boolean') out.push('source.root must be true or false');
     }
   }
   if (raw.worktrees !== undefined) {
@@ -164,6 +187,8 @@ export function loadConfig(path = configPath()): Config {
     unreadable: (raw.unreadable ?? []).map((u) => ({ path: u.path!, why: u.why ?? `unreadable (bedrock guards.json: ${u.path})` })),
     home: raw.worktrees?.home,
     landIgnored: raw.land?.ignored,
+    source: raw.source?.files,
+    sourceRoot: raw.source?.root === true,
   };
 }
 

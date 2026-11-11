@@ -86,10 +86,26 @@ export function lintCellWorktrees(root: string): { errors: string[]; warnings: s
   return { errors, warnings };
 }
 
+// The log against git (#54): every entry committed in HEAD is still here, and unchanged. The chain check below can't
+// see this: an older state/ copied over the log (`cp -r backup/state .`), or its last entries deleted, is a shorter
+// chain that is whole. Entries not committed yet are new, and fine. Outside a repository there is nothing to compare.
+export function lintLogInHead(cellDir: string): string[] {
+  const r = spawnSync('git', ['-C', cellDir, '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-z', '--no-renames', '--', 'state/log'], { encoding: 'utf8' });
+  if (r.status !== 0 || r.error) return [];
+  const out: string[] = [];
+  for (const line of r.stdout.split('\0').filter(Boolean)) {
+    const xy = line.slice(0, 2), path = line.slice(3), name = path.replace(/^.*\//, '');
+    if (xy === '??' || !/[DMTU]/.test(xy)) continue;
+    out.push(`${name}: a log entry committed in HEAD is ${xy.includes('D') ? 'missing' : 'changed'} here. The log is append-only: an older copy of state/ was put over it, or an entry was deleted or edited by hand. The operator restores it from their prompt: ! git checkout HEAD -- ${path}`);
+  }
+  return out;
+}
+
 export function lint(cellDir: string): LintResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const dir = logDir(cellDir);
+  errors.push(...lintLogInHead(cellDir));
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f !== '.gitkeep').sort() : [];
   let prev: string | null = null;
   const kinds = new Map<string, string>();

@@ -39,6 +39,7 @@ ${owns.length ? `- **You also own, outside this folder:** ${owns.map((g) => `\`$
 - **The rule says no, the evidence says probably yes?** Raise a review proposing ONE exact claim with its evidence: \`node ${toRoot}/kernel/src/cli.ts review raise --cell . --file r.json\` (\`{ question, proposes: { about, kind, says }, evidence }\`). Root is mailed; only the operator decides.
 - **Done means tested:** your tests, the kernel's (\`cd ${toRoot}/kernel && npm test\`), then fold + lint. Keep \`MODEL.md\` current. Publish numbers in \`state/out/metrics.json\` (\`{ name: number }\`); root's \`cell sync\` records them.
 - **Tests read only what is committed:** a fixture in \`test/\`, or a temp folder the test fills itself. Never the repository root as a data folder, nor a git-ignored one (\`data/\`, \`state/out/\`): root's land check runs in this worktree, which holds none of the main checkout's git-ignored files, so such a test passes here and fails where the data is. Delete what a test run leaves behind.
+- **Source is written with the Write and Edit tools,** never typed through the shell (a heredoc, \`echo\` or \`printf\` redirected, \`sed -i\`, a literal \`Set-Content\`): the shell eats backslashes and quotes on the way, and the hook refuses it for source files. A program's own output sent to a file is fine. **Every regex in a guard or a mask gets a test that matches and one that doesn't.**
 - **A proof that needs an assertion or a guard off runs on a copy of the test,** never by editing the real one and putting it back: root's land reads what your tests were while your commands ran, and a test that was weaker then stops the landing until the operator accepts it.
 - Rules flow down from the root: [\`${toRoot}/state/bedrock/\`](${toRoot}/state/bedrock/). This cell has no bedrock and can't amend the root's.
 
@@ -53,7 +54,7 @@ ${owns.length ? `- **You also own, outside this folder:** ${owns.map((g) => `\`$
 ## Your worktree
 
 - You work in your own git worktree, on branch \`cell/${b.name}\`: nothing you change touches the main checkout or another cell until root merges it. Your log here travels on your branch; root-log writes (mail to root) land in the main checkout's log automatically.
-- **Don't run git commands that write** (commit, merge, checkout, reset, stash). Root verifies your work, commits it on your branch, merges it, and merges main into your branch between tasks (that is how kernel changes reach you: your hooks run the kernel copy on your branch). Root's \`cell audit\` fails on any change outside this folder.
+- **Don't run git commands that write** (commit, merge, checkout, reset, stash). Those that move another branch or change git's settings, objects, worktrees or remotes (push, update-ref, \`branch <name>\`, \`config\` writes, replace, update-index, gc) are refused by the hook. Root verifies your work, commits it on your branch, merges it, and merges main into your branch between tasks (that is how kernel changes reach you: your hooks run the kernel copy on your branch). Root's \`cell audit\` fails on any change outside this folder.
 - **Opened in the wrong checkout** (the main checkout's copy of this folder, or another cell's worktree)? The hooks refuse every write and no mail is handed over; the message says where to reopen. End your turn.
 
 \`\`\`

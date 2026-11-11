@@ -203,7 +203,7 @@ export function actUnits(command: string, depth = 0): string[] {
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
 // git's checkout, restore, rm or mv writes, already joined to the folder git's own options name; `removes` one deleted
 // or moved away (rm, mv's sources). Data heredocs are text (#2); what runs in a shell string or a shell-fed heredoc counts.
-export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string; sub?: 'open' | 'close' }
+export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string; sub?: 'open' | 'close'; from?: string[] }
 // A git command's pathspecs: its arguments that aren't options (nor the value of one in `valued`), or all after `--`;
 // none means the whole checkout ('.').
 function pathspecs(args: string[], valued: string[]): string[] {
@@ -249,7 +249,8 @@ export function writeTargets(command: string): WriteTarget[] {
         for (const t of at('.')) out.push({ target: t, git: true, reset: back ? `${mode} ${commit}` : mode });
     }
     else if (LAST.test(verb) && plain.length) {
-      out.push({ target: plain.at(-1)! });
+      // `from`: what a copy or move brings into the target, by name (#54: `cp -r backup/state .` lands ./state)
+      out.push({ target: plain.at(-1)!, ...(plain.length > 1 && !/^ln$/i.test(verb) ? { from: plain.slice(0, -1) } : {}) });
       if (MOVES.test(verb)) for (const a of plain.slice(0, -1)) out.push({ target: a, removes: true });   // mv's sources go
     }
     else if (ALL.test(verb)) for (const a of plain) out.push({ target: a, ...(REMOVES.test(verb) ? { removes: true } : {}) });
@@ -264,6 +265,43 @@ export function writeTargets(command: string): WriteTarget[] {
 const CODE_CALL = /\b(rmSync|rmdirSync|unlinkSync|renameSync|writeFileSync|appendFileSync|rmtree|remove|unlink|rmdir|move|rm)\s*\(\s*(['"])([^'"\n]+)\2/g;
 export function codeTargets(code: string): WriteTarget[] {
   return [...code.matchAll(CODE_CALL)].map((m) => ({ target: m[3], ...(/^(writeFileSync|appendFileSync)$/.test(m[1]) ? {} : { removes: true }) }));
+}
+
+// Files whose content a command types out itself (#82; COCKPIT: two cells wrote source through heredocs and sed, the
+// shell ate backslashes on the way, and a secret-mask regex came out with a gap no test covered: `\w` becomes `w` and
+// still reads as code). A heredoc's body or an echo/printf sent to a file (by redirect, or piped to tee or a
+// Set-Content), a literal string piped or given as -Value to one, and an edit in place (sed -i, perl -i). Not a
+// program's output sent to a file (`node gen.js > out.ts`, `git show HEAD:a.ts > a.ts`), nor a copy: nothing there
+// passed through shell quoting. `how` names the form, for the refusal.
+const TYPED = /^(echo|printf|write-output|write-host)$/i;
+const PS_WRITERS = /^(set-content|add-content|out-file|sc|ac)$/i;
+export function typedWrites(command: string, depth = 0): { target: string; how: string }[] {
+  const p = parts(command), out: { target: string; how: string }[] = [];
+  const redirect = /^(\d|&)?>>?$/;
+  const typed = (seg: string): string | null => {
+    const words = firstCommand(seg), { verb } = verbOf(words);
+    if (/^\s*(@?['"])/.test(seg) && words.slice(1).every((w, k, a) => redirect.test(w) || redirect.test(a[k - 1] ?? ''))) return 'a literal string';
+    if (TYPED.test(verb)) return verb.toLowerCase();
+    if (/^cat$/i.test(verb) && words.some((w) => /^<<-?/.test(w)) && !words.slice(1).some((w, i, a) => !/^(-|<<|\d?>)/.test(w) && !redirect.test(a[i - 1] ?? ''))) return 'a heredoc';
+    return null;
+  };
+  for (const { seg, up } of piped(p.text, true)) {
+    const words = firstCommand(seg), { verb, i } = verbOf(words), args = words.slice(i + 1);
+    const targets = words.flatMap((w, k) => (redirect.test(w) && words[k + 1] ? [words[k + 1]] : []));
+    const plain = args.filter((a, k) => !a.startsWith('-') && !redirect.test(a) && !redirect.test(args[k - 1] ?? '') && !/^<<-?/.test(a));
+    const fed = up.length ? typed(up.at(-1)!) : null, own = typed(seg);
+    if (targets.length && own) for (const t of targets) out.push({ target: t, how: `${own} redirected to it` });
+    else if (/^tee$/i.test(verb) && (fed || words.some((w) => /^<<-?/.test(w)))) for (const t of plain) out.push({ target: t, how: `${fed ?? 'a heredoc'} piped to tee` });
+    else if (/^sed$/i.test(verb) && args.some((a) => /^(-[a-zA-Z]*i|--in-place)/.test(a)) && plain.length > 1) for (const t of plain.slice(1)) out.push({ target: t, how: 'sed -i' });
+    else if (/^perl$/i.test(verb) && args.some((a) => /^-[a-zA-Z]*i/.test(a)) && plain.length > 1) for (const t of plain.slice(1)) out.push({ target: t, how: 'perl -i' });
+    else if (PS_WRITERS.test(verb)) {
+      const named = (re: RegExp) => { const k = args.findIndex((a) => re.test(a)); return k >= 0 ? args[k + 1] : undefined; };
+      const value = named(/^-(Value|InputObject)$/i);
+      const path = named(/^-(Path|LiteralPath|FilePath)$/i) ?? plain.find((a) => a !== value);
+      if (path && (fed || value !== undefined)) out.push({ target: path, how: `${fed ?? 'a literal -Value'} written by ${verb}` });
+    }
+  }
+  return [...out, ...(depth < 4 ? p.shell.flatMap((s) => typedWrites(s, depth + 1)) : [])];
 }
 
 export function commandsRun(command: string, depth = 0): string[][] {

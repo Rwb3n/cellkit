@@ -709,6 +709,29 @@ test('lint: a root handover untouched for 20 commits gets a warning', async (t) 
   assert.match(run('cli.ts', ['lint', '--cell', main]).stderr, /docs\/ROOT\.md last changed 20 commits ago/);
 });
 
+// #54: the backstop for a log replaced by a copy. A shorter chain that is whole passes the chain check.
+test('lint: a log entry committed in HEAD that is missing or changed is an error, though the chain left is whole; new entries are fine (#54)', async (t) => {
+  const { main } = world(t);
+  const { lint } = await import('../src/lint.ts');
+  const { logDir } = await import('../src/log.ts');
+  for (const s of ['one', 'two', 'three']) assert.equal(run('cli.ts', ['assume', '--cell', main, '--statement', s]).status, 0);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'three guesses');
+  assert.equal(run('cli.ts', ['assume', '--cell', main, '--statement', 'four, not committed']).status, 0);
+  assert.deepEqual(lint(main).errors, []);                                  // an entry not committed yet is new
+  const files = readdirSync(logDir(main)).filter((f) => f.endsWith('.json')).sort();
+  const kept = new Map(files.slice(-4).map((f) => [f, readFileSync(join(logDir(main), f))] as const));   // four's two entries, and three's
+  for (const f of kept.keys()) rmSync(join(logDir(main), f));               // an older state/ put over it: the chain left is whole
+  const errors = lint(main).errors;
+  assert.equal(errors.filter((e) => /a log entry committed in HEAD is missing here/.test(e)).length, 2, errors.join('\n'));
+  assert.match(errors.join('\n'), new RegExp(`${files.at(-3)}: a log entry committed in HEAD is missing here[^\\n]*! git checkout HEAD -- state/log/${files.at(-3)}`));
+  assert.ok(!errors.some((e) => /chain broken|sequence gap/.test(e)), errors.join('\n'));
+  for (const [f, bytes] of kept) writeFileSync(join(logDir(main), f), bytes);
+  assert.deepEqual(lint(main).errors, []);
+  const first = join(logDir(main), files[0]);
+  writeFileSync(first, readFileSync(first, 'utf8').replace(/\n$/, '\n\n'));  // changed, though it still parses to the same entry
+  assert.match(lint(main).errors.join('\n'), new RegExp(`${files[0]}: a log entry committed in HEAD is changed here`));
+});
+
 test('lint: a native worktree left in the repo, or its branch unmerged, gets a warning; a cell\'s own worktree doesn\'t (#48)', async (t) => {
   const { main } = world(t);
   const { lintNativeWorktrees } = await import('../src/lint.ts');
@@ -1427,8 +1450,8 @@ test('owns: a cell writes the repo paths root\'s guards give it — hooks, brief
   assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'game', 'map.ts') }), 0);
   assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'sim', 'x.ts') }), 2);
   assert.equal(hook('hook-guard.ts', { file_path: join(wt, 'kernel', 'src', 'x.ts') }), 2);
-  assert.equal(hook('hook-bash.ts', { command: 'echo x > ../../game/b.ts' }), 0);
-  assert.equal(hook('hook-bash.ts', { command: 'echo x > ../../sim/b.ts' }), 2);
+  assert.equal(hook('hook-bash.ts', { command: 'node gen.js > ../../game/b.ts' }), 0);    // (a program's output: typed text is #82's)
+  assert.equal(hook('hook-bash.ts', { command: 'node gen.js > ../../sim/b.ts' }), 2);
   mkdirSync(join(wt, 'game'), { recursive: true });
   writeFileSync(join(wt, 'game', 'map.ts'), 'export {}\n');
   assert.deepEqual(cellAudit(main, 'demo'), []);
