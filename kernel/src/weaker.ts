@@ -33,7 +33,28 @@ interface Count { cases: number; skips: number; asserts: number; loose: number }
 // objects as they are, not as `git replace` says: a replaced base hid a whole run's weakening.
 const GIT = ['-c', 'core.quotepath=off', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false'];
 const ENV = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_(LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|EXTERNAL_DIFF|DIFF_OPTS)$/i.test(k))), GIT_NO_REPLACE_OBJECTS: '1' });
-export function weakerTests(dir: string, range: string): string[] {
+export const weakerTests = (dir: string, range: string): string[] => compareTests(dir, range).findings;
+// Test data (#94; modelkit: a cell replaced the fixture folder processkit-v0.36.1/, 19 files, with a regenerated
+// v0.36.2/, its tests going from 118 to 123, and every deleted file stopped the land as "deleted (0 test case(s), 0
+// assertion(s))"). A file with a test file's name is data when its name is a data file's (DATA_FILE: a list of
+// extensions, and not named like a test) and its lines hold no case, skip, assertion or loosening. By name first,
+// because the counts know few languages: a deleted FooTest.java, calc.rs, conftest.py or snapshot counts nothing either
+// (a review), and is no data. Data that is replaced is not weaker: when the same change adds at least as many data files
+// as it deletes, the deleted ones are no finding, and are returned as `replaced` for the land to say so. A net loss
+// still is one, every deleted file named: a test that loops over its fixtures loses cases with them, and its case count
+// never shows it. By count, not by content: a fixture edited in place was never a finding either.
+// The list leaves out what is often a test that runs (a second review: a QUnit page test/index.html, a YAML suite
+// tests/test.yml both passed as data), and a name that says test or spec is one: test.json, tests/spec.yaml,
+// test_data.json, test-cases.json, LoginTests.json. Erring this way a fixture so named, or of a kind not listed (.sql,
+// no extension), is still refused when deleted, as every deleted file was before, and the operator lands it.
+const DATA_FILE = /\.(json|jsonl|ndjson|csv|tsv|xml|toml|ini|eml|msg|docx?|xlsx?|pptx?|pdf|zip|gz|tgz|tar|png|jpe?g|gif|webp|svg|parquet|bin|dat|log)$/i;
+const NAMED_TEST = /[._-](test|spec)s?\.[a-z0-9]+$|(^|\/)(test|spec)s?[._-][^/]*$|(^|\/)__snapshots__\//i;
+const CAMEL_TEST = /[a-z0-9](Test|Spec)s?\.[A-Za-z0-9]+$/;
+const dataName = (f: string) => DATA_FILE.test(f) && !NAMED_TEST.test(f) && !CAMEL_TEST.test(f);
+// The finding for a deleted data file: what a state of the run says of one too (land.ts reads it).
+export const goneData = (f: string) => gone(f, { cases: 0, skips: 0, asserts: 0, loose: 0 });
+export interface Compared { findings: string[]; replaced: string[]; added: number }
+export function compareTests(dir: string, range: string): Compared {
   const diff = (...a: string[]) => {
     const r = spawnSync('git', ['-C', dir, ...GIT, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: ENV() });
     // a diff that fails is not "nothing weaker": it stops the land
@@ -67,15 +88,30 @@ export function weakerTests(dir: string, range: string): string[] {
     if (ASSERT.test(text)) c.asserts++;
     if (LOOSE.test(text)) c.loose++;
   }
-  const out: string[] = [];
+  const rows: { lines: string[]; data?: string }[] = [];
+  let added = 0;
   for (const [f, { add, del, deleted, created }] of per) {
     // A new file has no earlier version to be weaker than (ecom-lab #71: its pytest.approx lines read as loosening);
     // a test moved into it from an old file shows on the old one, as fewer cases.
-    if (created) continue;
-    if (deleted) out.push(gone(f, del)); else out.push(...judge(f, del, add));
+    if (created) { if (isData(f, add)) added++; continue; }
+    if (deleted) rows.push({ lines: [gone(f, del)], ...(isData(f, del) ? { data: f } : {}) }); else rows.push({ lines: judge(f, del, add) });
   }
-  return out;
+  const data = rows.flatMap((r) => (r.data ? [r.data] : []));
+  // Against one commit (a dry run: the worktree as it stands), git's diff leaves out files it doesn't track yet, which
+  // is what a new fixture is until the land commits it. Counted as the land's own diff will count them once committed:
+  // not an empty file (a diff shows none), not a path counted as deleted (untracked, and still on disk), and read
+  // whole whatever its size, as the diff will read it.
+  if (!range.includes('..')) {
+    const r = spawnSync('git', ['-C', dir, ...GIT, 'ls-files', '-z', '-o', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: ENV() });
+    if (r.status !== 0) throw new WorktreeError(`the tests couldn't be compared (git ls-files): ${(r.stderr || String(r.error ?? '')).trim()}`);
+    for (const f of r.stdout.split('\0').filter((x) => x && TEST_FILE.test(x) && dataName(x) && !data.includes(x))) {
+      try { const st = lstatSync(join(dir, f)); if (st.isFile() && st.size > 0 && isData(f, count(readFileSync(join(dir, f), 'utf8')))) added++; } catch { /* gone, or held: not counted */ }
+    }
+  }
+  const replaced = data.length && data.length <= added ? data : [];
+  return { findings: rows.filter((r) => !(r.data && replaced.length)).flatMap((r) => r.lines), replaced, added };
 }
+const isData = (f: string, c: Count) => dataName(f) && !c.cases && !c.skips && !c.asserts && !c.loose;
 // The findings for one file, from what it held before and holds now (or from the lines a diff took out and put in: the
 // differences are the same).
 const gone = (f: string, was: Count) => `${f}: deleted (${was.cases} test case(s), ${was.asserts} assertion(s))`;

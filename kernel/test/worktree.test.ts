@@ -748,6 +748,73 @@ test('cell land: weaker tests stop the land; the operator lands them with a reas
   assert.match(git(main, 'log', '-1', '--format=%B', 'HEAD~1'), /Weaker tests, accepted by the operator: case two moved[\s\S]*1 fewer test case/);
 });
 
+// #94 (modelkit): the cell replaced a fixture folder with a regenerated one; each deleted file stopped the land.
+test('cell land: test data replaced by as much data lands, and the land says so; a net loss, or data gone only during the run, still stops it (#94)', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const shell = (command: string) => hook('hook-bash.ts', cellWt, { command });
+  const fx = (dir: string, v: string, name: string) => join(dir, 'test', 'fixtures', v, name);
+  mkdirSync(join(main, 'cells', 'demo', 'test', 'fixtures', 'v1'), { recursive: true });
+  for (const n of ['log.jsonl', 'rows.json']) writeFileSync(fx(join(main, 'cells', 'demo'), 'v1', n), '{"n": 1}\n');
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'a.test.ts'), `for (const f of fixtures) test(f, () => { assert.ok(read(f)); });\n`);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'tests'); git(wt, 'merge', '-q', 'main');
+
+  // the cell regenerates the fixture, and runs its tests with the old one gone: a state the record holds
+  rmSync(join(cellWt, 'test', 'fixtures', 'v1'), { recursive: true });
+  mkdirSync(join(cellWt, 'test', 'fixtures', 'v2'), { recursive: true });
+  for (const n of ['log.jsonl', 'rows.json']) writeFileSync(fx(cellWt, 'v2', n), '{"n": 2}\n');
+  assert.equal(shell('node --test').status, 0);
+  const said = /test data replaced, not counted as weaker tests: 2 file\(s\) holding no test case or assertion deleted, 2 added \(deleted: cells\/demo\/test\/fixtures\/v1\/log\.jsonl · cells\/demo\/test\/fixtures\/v1\/rows\.json\)/;
+  const dry = land('--dry-run');
+  assert.match(dry.stdout, said);
+  assert.doesNotMatch(dry.stdout, /would stop/);
+
+  rmSync(fx(cellWt, 'v2', 'rows.json'));                                    // one short: weaker, each deleted file named
+  assert.match(land('--dry-run').stdout, /would stop: the cell's tests got weaker:\n  cells\/demo\/test\/fixtures\/v1\/log\.jsonl: deleted \(0 test case\(s\), 0 assertion\(s\)\)\n  cells\/demo\/test\/fixtures\/v1\/rows\.json: deleted/);
+  const short = land('--message', 'one short');
+  assert.match(short.stderr, /the cell's tests got weaker[\s\S]*fixtures\/v1\/rows\.json: deleted[\s\S]*back where it was/);
+  writeFileSync(fx(cellWt, 'v2', 'rows.json'), '{"n": 2}\n');
+
+  const ok = land('--message', 'fixture regenerated');
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, said);
+  assert.ok(!existsSync(fx(join(main, 'cells', 'demo'), 'v1', 'rows.json')) && existsSync(fx(join(main, 'cells', 'demo'), 'v2', 'rows.json')));
+
+  // data gone while a command ran and put back since is not "replaced": nothing in the tree being landed stands for it
+  rmSync(fx(cellWt, 'v2', 'log.jsonl'));
+  assert.equal(shell('node --test').status, 0);
+  writeFileSync(fx(cellWt, 'v2', 'log.jsonl'), '{"n": 2}\n');
+  mkdirSync(join(cellWt, 'exit'), { recursive: true });
+  writeFileSync(join(cellWt, 'exit', 'report.md'), 'done\n');
+  assert.match(land('--message', 'report').stderr, /were weaker during its run[\s\S]*fixtures\/v2\/log\.jsonl: deleted \(0 test case\(s\), 0 assertion\(s\)\)[\s\S]*--accept-weaker/);
+});
+
+test('cell land: replaced test data lands when the cell committed the deletion itself; a state where the data was changed, not gone, still stops it (#94)', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const shell = (command: string) => hook('hook-bash.ts', cellWt, { command });
+  const fx = (v: string) => join(cellWt, 'test', 'fixtures', v, 'rows.json');
+  mkdirSync(join(main, 'cells', 'demo', 'test', 'fixtures', 'v1'), { recursive: true });
+  writeFileSync(join(main, 'cells', 'demo', 'test', 'fixtures', 'v1', 'rows.json'), '{"n": 1}\n');
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'tests'); git(wt, 'merge', '-q', 'main');
+
+  git(wt, 'rm', '-q', 'cells/demo/test/fixtures/v1/rows.json'); git(wt, 'commit', '-qm', 'old fixture out');   // a commit of the cell's own
+  assert.equal(shell('node --test').status, 0);                             // a state whose commit is one data file short
+  mkdirSync(join(cellWt, 'test', 'fixtures', 'v2'), { recursive: true });
+  writeFileSync(fx('v2'), '{"n": 2}\n');
+  const ok = land('--message', 'fixture regenerated');
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /test data replaced, not counted as weaker tests: 1 file\(s\)/);
+
+  writeFileSync(fx('v2'), '{"cmd": "run || true"}\n');                      // changed to something that reads as loosening, a command run…
+  assert.equal(shell('node --test').status, 0);
+  rmSync(fx('v2'));                                                         // …then replaced
+  mkdirSync(join(cellWt, 'test', 'fixtures', 'v3'), { recursive: true });
+  writeFileSync(fx('v3'), '{"n": 3}\n');
+  const stopped = land('--message', 'again');
+  assert.match(stopped.stdout + stopped.stderr, /were weaker during its run[\s\S]*fixtures\/v2\/rows\.json: loosened/);
+});
+
 test('cell land: git-ignored files in the worktree are listed; with land.ignored set, any outside it stop the land, the check\'s own leftovers too (#77)', async (t) => {
   const { main, wt, cellWt } = world(t);
   const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);

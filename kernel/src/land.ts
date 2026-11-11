@@ -32,7 +32,7 @@ import { delivered, status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
 import { refoldPresent } from './refold.ts';
-import { blobName, forgetWeaker, weakerDuring, weakerTests, type Was } from './weaker.ts';
+import { blobName, compareTests, forgetWeaker, goneData, weakerDuring, type Compared, type Was } from './weaker.ts';
 import { cellAudit, cellBranch, cellWorktree, currentBranch, inMain, WorktreeError } from './worktree.ts';
 
 const ROOT_WRITTEN = [/^state\/log\//, /^state\/views\//, /^docs\/assumptions\.md$/];
@@ -297,12 +297,19 @@ export function cellLand(root: string, o: LandOptions): Landed {
   // disk. The words alone are not enough: one assertion off for a proof and put back, then another dropped for good, is
   // "1 fewer assertion line(s)" both times (a review).
   const onDisk = (p: string, like: number) => { try { return blobName(readFileSync(join(wt, p)), like); } catch { return null; } };
-  const during = (w: string[]): Was[] => {
-    const out = new Map<string, Was>();
-    for (const d of weakerDuring(cellDir, wt, into))
+  // Nor is a state's finding one when it is test data the tree being landed replaces (#94): the file was gone in that
+  // state (from the disk, or by a commit the cell made itself: that finding names no path, only the words), and the
+  // tree's own comparison found as many data files added as deleted. A state where such a file was there with other
+  // content is judged as ever.
+  const during = (w: string[], replaced: string[] = []): Was[] => {
+    const out = new Map<string, Was>(), gone = new Set(replaced.map(goneData));
+    for (const d of weakerDuring(cellDir, wt, into)) {
+      if (d.path === undefined ? gone.has(d.what) : d.name === null && replaced.includes(d.path)) continue;
       if (!(w.includes(d.what) && (d.path === undefined || onDisk(d.path, d.name?.length ?? 40) === d.name)) && !out.has(d.what)) out.set(d.what, d);
+    }
     return [...out.values()];
   };
+  const dataNote = (c: Compared) => `test data replaced, not counted as weaker tests: ${c.replaced.length} file(s) holding no test case or assertion deleted, ${c.added} added (deleted: ${more(c.replaced.slice(0, SHOWN), c.replaced.length)})`;
   const duringLines = (d: Was[]) => d.map((x) => `${x.what} (first seen ${x.at})`);
   const weakerNote = (w: string[], d: Was[]) => [
     ...(w.length ? [`the cell's tests got weaker:\n  ${w.join('\n  ')}`] : []),
@@ -330,8 +337,8 @@ export function cellLand(root: string, o: LandOptions): Landed {
     const plan = [
       pending.length ? `would commit ${pending.length} path(s) on ${branch}: "${message}"` : `nothing uncommitted on ${branch}`,
       ...(overRefusal ? [`would stop: ${overRefusal}`] : []),
-      ...((w) => ((d) => (w.length || d.length ? [`would stop: ${weakerNote(w, d)}`]
-        : o.acceptWeaker ? ['would stop: --accept-weaker was given, but no test is or was weaker: drop it'] : []))(during(w)))(weakerTests(wt, git(wt, ['merge-base', into, 'HEAD']).out)),
+      ...((c) => ((w, d) => [...(c.replaced.length ? [dataNote(c)] : []), ...(w.length || d.length ? [`would stop: ${weakerNote(w, d)}`]
+        : o.acceptWeaker ? ['would stop: --accept-weaker was given, but no test is or was weaker: drop it'] : [])])(c.findings, during(c.findings, c.replaced)))(compareTests(wt, git(wt, ['merge-base', into, 'HEAD']).out)),
       `would merge ${into} into ${branch}${o.check ? `, then run in ${wt} under ${SHELL}: ${o.check}` : ''}`,
     ];
     if (o.check) {
@@ -376,9 +383,10 @@ export function cellLand(root: string, o: LandOptions): Landed {
     throw new WorktreeError(`${why}\n${back ? `${branch} is back where it was (${start.slice(0, 9)}); nothing was landed`
       : `nothing was landed, but ${branch} could NOT be put back to ${start.slice(0, 9)}: look at ${wt} (git status, git log) before anything else`}`);
   };
-  let weaker: string[] = [], was: Was[] = [];
-  try { weaker = weakerTests(wt, `${into}...${committed}`); was = during(weaker); }
+  let weaker: string[] = [], was: Was[] = [], cmp: Compared = { findings: [], replaced: [], added: 0 };
+  try { cmp = compareTests(wt, `${into}...${committed}`); weaker = cmp.findings; was = during(weaker, cmp.replaced); }
   catch (e) { undo((e as Error).message); }
+  if (cmp.replaced.length) steps.push(dataNote(cmp));
   if ((weaker.length || was.length) && !o.acceptWeaker) undo(weakerNote(weaker, was));
   // as --checked: an acceptance of nothing is a habit, and would sit in no commit
   if (o.acceptWeaker && !weaker.length && !was.length) undo('--accept-weaker was given, but no test is or was weaker: drop it');

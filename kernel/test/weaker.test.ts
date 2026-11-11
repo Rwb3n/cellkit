@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { TEST_FILE, weakerTests } from '../src/weaker.ts';
+import { TEST_FILE, compareTests, weakerTests } from '../src/weaker.ts';
 
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { encoding: 'utf8' });
 
@@ -59,6 +59,87 @@ test('weaker: a new test file can\'t be weaker; a tolerance added to an old one 
   const found = weakerTests(dir, 'main...HEAD');
   assert.ok(found.some((f) => /test_old\.py: loosened/.test(f)), found.join('\n'));
   assert.ok(!found.some((f) => /test_colleague/.test(f)), found.join('\n'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// #94 (modelkit): a fixture folder replaced by a regenerated one stopped the land, one "deleted (0 test case(s), 0
+// assertion(s))" per file.
+test('weaker: test data replaced by as many data files is not weaker; a net loss of data still is (#94)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cellkit-weaker-'));
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'core.autocrlf', 'false');
+  const put = (path: string, text: string) => { mkdirSync(dirname(join(dir, path)), { recursive: true }); writeFileSync(join(dir, path), text); };
+  const commit = (m: string) => { git(dir, 'add', '-A'); git(dir, 'commit', '-qm', m); };
+  const old = ['test/fixtures/v1/log.jsonl', 'test/fixtures/v1/mail.eml', 'test/fixtures/v1/rows.json'];
+  const lines = (fs: string[]) => fs.map((f) => `${f}: deleted (0 test case(s), 0 assertion(s))`);
+  for (const f of old) put(f, `{"n": 1}\n`);
+  put('test/a.test.ts', `for (const f of fixtures) test(f, () => { assert.ok(read(f)); });\n`);
+  put('test/old.test.ts', `test('old', () => { assert.ok(1); });\n`);
+  commit('base');
+  git(dir, 'checkout', '-qb', 'cell/x');
+
+  rmSync(join(dir, 'test', 'fixtures', 'v1'), { recursive: true });         // the fixture regenerated: three out, three in
+  for (const f of old) put(f.replace('v1', 'v2'), `{"n": 2}\n`);
+  // a dry run compares the worktree with one commit: the new fixture is not tracked yet, and still counts
+  assert.deepEqual(compareTests(dir, 'main'), { findings: [], replaced: old, added: 3 });
+  commit('regenerated');
+  assert.deepEqual(compareTests(dir, 'main...HEAD'), { findings: [], replaced: old, added: 3 });
+  assert.deepEqual(weakerTests(dir, 'main...HEAD'), []);
+
+  rmSync(join(dir, old[0].replace('v1', 'v2')));                            // one fewer than before: every deleted file is named
+  commit('one short');
+  assert.deepEqual(compareTests(dir, 'main...HEAD'), { findings: lines(old), replaced: [], added: 2 });
+  put('test/new.test.ts', `test('new', () => { assert.ok(1); });\n`);       // a new test file is no data: still one short
+  commit('a test, not data');
+  assert.deepEqual(weakerTests(dir, 'main...HEAD'), lines(old));
+  put('test/fixtures/v2/extra.json', `{"n": 3}\n`);                         // made up again
+  rmSync(join(dir, 'test', 'old.test.ts'));                                 // a deleted test is a finding whatever the data did
+  commit('level again, a test deleted');
+  assert.deepEqual(compareTests(dir, 'main...HEAD'), { findings: ['test/old.test.ts: deleted (1 test case(s), 1 assertion(s))'], replaced: old, added: 3 });
+
+  // data is what holds no case, skip, assertion or loosening: a fixture whose text says "should" is judged as a test
+  git(dir, 'checkout', '-q', 'main'); put('test/fixtures/spec.json', `{"it": "should round"}\n`); commit('a wordy fixture');
+  git(dir, 'checkout', '-qb', 'cell/y'); rmSync(join(dir, 'test', 'fixtures', 'spec.json')); put('test/fixtures/spec2.json', `{"n": 1}\n`); commit('replaced');
+  assert.deepEqual(weakerTests(dir, 'main...HEAD'), ['test/fixtures/spec.json: deleted (0 test case(s), 1 assertion(s))']);
+
+  // and data has a data file's name: the counts know few languages, so a deleted test, helper or snapshot that counts
+  // nothing is still a deleted test, and a new one offsets no deleted data
+  const code = ['src/test/java/FooTest.java', 'test/LoginTests.json', 'test/__snapshots__/a.snap.json', 'test/index.html', 'test/sums.test.json', 'test/sums.tests.json', 'test/sums_test.json',
+    'tests/calc.rs', 'tests/conftest.py', 'tests/spec.json', 'tests/suite.yml', 'tests/test-cases.json', 'tests/test.json', 'tests/test_data.json'];
+  git(dir, 'checkout', '-q', 'main');
+  for (const f of code) put(f, `check(sum(1, 2), 3)\n`);
+  put('tests/data/in.json', `{"n": 1}\n`);
+  commit('tests the counts cannot read');
+  git(dir, 'checkout', '-qb', 'cell/z');
+  for (const f of code) rmSync(join(dir, f));
+  for (let i = 0; i < 14; i++) put(`tests/data/new${i}.json`, `{"n": ${i}}\n`);
+  commit('deleted beside new data');
+  assert.deepEqual(weakerTests(dir, 'main...HEAD'), lines(code));
+  git(dir, 'checkout', '-q', 'main'); git(dir, 'checkout', '-qb', 'cell/w');
+  rmSync(join(dir, 'tests', 'data', 'in.json'));
+  put('src/test/java/BarTest.java', `check(1)\n`); put('tests/more.rs', `check(1)\n`);
+  commit('data deleted beside new tests');
+  assert.deepEqual(compareTests(dir, 'main...HEAD'), { findings: lines(['tests/data/in.json']), replaced: [], added: 0 });
+
+  // the worktree against one commit (a dry run) counts what the land's own diff will, once the files are committed
+  const dry = () => compareTests(dir, 'main');
+  const short = { findings: lines(['tests/data/in.json']), replaced: [], added: 0 };
+  git(dir, 'checkout', '-q', 'main'); git(dir, 'checkout', '-qb', 'cell/v');
+  rmSync(join(dir, 'tests', 'data', 'in.json'));
+  put('tests/data/empty.json', '');                                         // an empty file: a diff shows none
+  put('exit/report.json', `{"n": 1}\n`);                                    // not under a test path
+  put('tests/helper.ts', `export const h = 1;\n`);                          // code
+  put('tests/data/wordy.json', `{"it": "should"}\n`);                       // reads as a test
+  assert.deepEqual(dry(), short);
+  git(dir, 'rm', '-q', '--cached', 'tests/data/in.json'); put('tests/data/in.json', `{"n": 1}\n`);   // untracked, still there: not its own replacement
+  assert.deepEqual(dry(), short);
+  rmSync(join(dir, 'tests', 'data', 'in.json'));
+  put('tests/data/bigwordy.json', `{"n": 1}\n`.repeat(150000) + `{"it": "should"}\n`);   // over 1 MB: read all the same, as the diff will
+  assert.deepEqual(dry(), short);
+  put('tests/data/latest.json', `{"n": 1}\n`.repeat(150000));               // "latest" is no test's name
+  assert.deepEqual(dry(), { findings: [], replaced: ['tests/data/in.json'], added: 1 });
+  commit('a big fixture');
+  assert.deepEqual(compareTests(dir, 'main...HEAD'), { findings: [], replaced: ['tests/data/in.json'], added: 1 });
   rmSync(dir, { recursive: true, force: true });
 });
 
