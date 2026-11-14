@@ -90,13 +90,17 @@ export function lintCellWorktrees(root: string): { errors: string[]; warnings: s
 // see this: an older state/ copied over the log (`cp -r backup/state .`), or its last entries deleted, is a shorter
 // chain that is whole. Entries not committed yet are new, and fine. Outside a repository there is nothing to compare.
 export function lintLogInHead(cellDir: string): string[] {
-  const r = spawnSync('git', ['-C', cellDir, '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-z', '--no-renames', '--', 'state/log'], { encoding: 'utf8' });
+  // --no-optional-locks: a lint never takes the index lock from a land running beside it
+  const git = (...a: string[]) => spawnSync('git', ['--no-optional-locks', '-C', cellDir, '-c', 'core.quotepath=off', ...a], { encoding: 'utf8' });
+  const r = git('status', '--porcelain=v1', '-z', '--no-renames', '--', 'state/log');
   if (r.status !== 0 || r.error) return [];
+  const top = git('rev-parse', '--show-toplevel').stdout.trim();           // the paths are from the checkout's top, wherever this runs
   const out: string[] = [];
   for (const line of r.stdout.split('\0').filter(Boolean)) {
     const xy = line.slice(0, 2), path = line.slice(3), name = path.replace(/^.*\//, '');
     if (xy === '??' || !/[DMTU]/.test(xy)) continue;
-    out.push(`${name}: a log entry committed in HEAD is ${xy.includes('D') ? 'missing' : 'changed'} here. The log is append-only: an older copy of state/ was put over it, or an entry was deleted or edited by hand. The operator restores it from their prompt: ! git checkout HEAD -- ${path}`);
+    const staged = xy[0] === 'A';                                          // never committed: staged, then changed or deleted
+    out.push(`${name}: a log entry ${staged ? 'staged for commit' : 'committed in HEAD'} is ${xy.includes('D') ? 'missing' : 'changed'} here. The log is append-only: an older copy of state/ was put over it, or an entry was deleted or edited by hand. The operator restores it from their prompt: ! git -C "${top}" checkout ${staged ? '' : 'HEAD '}-- ${path}`);
   }
   return out;
 }

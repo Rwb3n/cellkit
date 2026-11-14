@@ -723,13 +723,30 @@ test('lint: a log entry committed in HEAD that is missing or changed is an error
   for (const f of kept.keys()) rmSync(join(logDir(main), f));               // an older state/ put over it: the chain left is whole
   const errors = lint(main).errors;
   assert.equal(errors.filter((e) => /a log entry committed in HEAD is missing here/.test(e)).length, 2, errors.join('\n'));
-  assert.match(errors.join('\n'), new RegExp(`${files.at(-3)}: a log entry committed in HEAD is missing here[^\\n]*! git checkout HEAD -- state/log/${files.at(-3)}`));
+  assert.match(errors.join('\n'), new RegExp(`${files.at(-3)}: a log entry committed in HEAD is missing here[^\\n]*! git -C "[^"\\n]+" checkout HEAD -- state/log/${files.at(-3)}`));
   assert.ok(!errors.some((e) => /chain broken|sequence gap/.test(e)), errors.join('\n'));
   for (const [f, bytes] of kept) writeFileSync(join(logDir(main), f), bytes);
   assert.deepEqual(lint(main).errors, []);
   const first = join(logDir(main), files[0]);
   writeFileSync(first, readFileSync(first, 'utf8').replace(/\n$/, '\n\n'));  // changed, though it still parses to the same entry
   assert.match(lint(main).errors.join('\n'), new RegExp(`${files[0]}: a log entry committed in HEAD is changed here`));
+  git(main, 'checkout', 'HEAD', '--', 'state/log');
+  // an entry staged and never committed, then deleted: not "committed in HEAD", and restored from the index
+  git(main, 'add', '-A');
+  const staged = files.at(-1)!;
+  rmSync(join(logDir(main), staged));
+  assert.match(lint(main).errors.join('\n'), new RegExp(`${staged}: a log entry staged for commit is missing here[^\\n]*checkout -- state/log/${staged}`));
+});
+
+// #54: the worktrees git knows of, not only the folder the project's guards name now.
+test('shell guard: a cell\'s worktree that git knows of is not removed from outside it, wherever the project now keeps its worktrees (#54)', (t) => {
+  const { tmp, main, wt } = world(t);
+  const guards = join(tmp, 'guards.json');
+  writeFileSync(guards, JSON.stringify({ worktrees: { home: '../.cells/repo' } }));   // set after demo was checked out beside the repo
+  const sh = (command: string) => run('hook-bash.ts', [], { CLAUDE_PROJECT_DIR: main, CELLKIT_CONFIG: guards }, JSON.stringify({ cwd: main, tool_input: { command } })).status;
+  const w = wt.replaceAll('\\', '/'), up = tmp.replaceAll('\\', '/');
+  for (const c of [`rm -rf ${w}`, `rm -rf ${w}/*`, `rm -rf ${w}/.git`, `rm -rf ${w}/cells/demo`, 'rm -rf ../repo-cells', `find ${w} -delete`, `rm -rf ${up}/.cells/repo`]) assert.equal(sh(c), 2, c);
+  for (const c of [`rm -rf ${w}/cells/demo/test/tmp`, 'rm -rf node_modules', `rm -rf ${up}/elsewhere`]) assert.equal(sh(c), 0, c);
 });
 
 test('lint: a native worktree left in the repo, or its branch unmerged, gets a warning; a cell\'s own worktree doesn\'t (#48)', async (t) => {

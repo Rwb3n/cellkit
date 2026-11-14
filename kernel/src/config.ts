@@ -50,7 +50,7 @@ export type MailLog = 'body' | 'hash';
 export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; source?: string[]; sourceRoot?: boolean; error?: string }
 // What counts as a source file when source.files is not set: code and structured text, by extension. Not prose or data
 // (.md, .txt, .csv, .log), which a shell writes as well as any tool.
-export const SOURCE_DEFAULT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|c|h|cpp|hpp|sh|bash|ps1|psm1|sql|json|ya?ml|toml|html?|css|scss|vue|svelte)$/i;
+export const SOURCE_DEFAULT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|c|h|cpp|hpp|lua|gd|sh|bash|bat|cmd|ps1|psm1|sql|json|xml|ya?ml|toml|html?|css|scss|vue|svelte)$|(^|\/)(Dockerfile|Makefile)$/i;
 // Is this path (from the repository root, / separators) a source file by the project's list, or by the default?
 export const isSource = (c: Config, rel: string) => (c.source ? c.source.some((g) => globRe(g).test(rel.toLowerCase())) : SOURCE_DEFAULT.test(rel));
 interface Raw {
