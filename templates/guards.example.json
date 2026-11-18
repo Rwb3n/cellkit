@@ -13,5 +13,6 @@
     { "path": "records/*bank*", "why": "bank records" }
   ],
   "worktrees": { "home": "../.cells/myproject" },
-  "land": { "ignored": ["**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**", "cells/*/state/out/**"] }
+  "land": { "ignored": ["**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**", "cells/*/state/out/**"] },
+  "source": { "files": ["**/*.ts", "**/*.py", "**/*.json"], "root": false }
 }

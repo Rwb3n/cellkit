@@ -1,0 +1,3558 @@
+[
+ {
+  "id": "r3-reg-001",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]; then cd /tmp/build; fi; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cd inside then...fi is now followed; when the test is false the rm runs in the repository"
+ },
+ {
+  "id": "r3-reg-002",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]; then cd /tmp/build; fi; git reset --hard",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same, git reset --hard"
+ },
+ {
+  "id": "r3-reg-003",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]; then cd /tmp/build; fi; git checkout -- .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same, git checkout -- ."
+ },
+ {
+  "id": "r3-reg-004",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]; then cd /tmp/build; fi; git clean -fdx",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same, git clean"
+ },
+ {
+  "id": "r3-reg-005",
+  "session": "root",
+  "command": "for d in a b; do cd /tmp/$d; done; rm -rf docs",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cd with a variable in a loop: can't be told"
+ },
+ {
+  "id": "r3-reg-006",
+  "session": "root",
+  "command": "while false; do cd /tmp; done; rm -rf state",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cd in a loop body that never runs"
+ },
+ {
+  "id": "r3-reg-007",
+  "session": "root",
+  "command": "build() { cd /tmp/b && make; }; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cd in a function body that is never called"
+ },
+ {
+  "id": "r3-reg-008",
+  "session": "root",
+  "command": "if (Test-Path C:/temp/x) { Set-Location C:/temp/x }; Remove-Item -Recurse -Force state",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell: cd inside an if block"
+ },
+ {
+  "id": "r3-reg-009",
+  "session": "root",
+  "command": "{ cd /tmp; ls; }; rm -rf state/views",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a brace group's cd does persist: reading it is right"
+ },
+ {
+  "id": "r3-reg-010",
+  "session": "cell",
+  "command": "if [ -d /tmp/a/b ]; then cd /tmp/a/b; fi; cp notes.md ../../x.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary: with the test false the copy lands at the worktree's top"
+ },
+ {
+  "id": "r3-reg-011",
+  "session": "cell",
+  "command": "if [ -d /tmp/a/b ]; then cd /tmp/a/b; fi; rm -rf ../../kernel",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary: removal outside the cell behind a conditional cd"
+ },
+ {
+  "id": "r3-reg-012",
+  "session": "root",
+  "command": "! cd /tmp/nope; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "negated cd"
+ },
+ {
+  "id": "r3-reg-013",
+  "session": "root",
+  "command": "if false; then cd /tmp; fi\ngit stash -u",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "conditional cd then stash"
+ },
+ {
+  "id": "r3-reg-014",
+  "session": "root",
+  "command": "if [ -d /tmp/x ]; then cd /tmp/x; fi; cp -r backup/state .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "conditional cd then a copy in"
+ },
+ {
+  "id": "r3-reg-020",
+  "session": "root",
+  "command": "mv \"state/log/000001.observation.json\" \\\n  /tmp/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "continued line, mv source kernel-owned"
+ },
+ {
+  "id": "r3-reg-021",
+  "session": "root",
+  "command": "rm -rf state/views \\\n  && echo ok",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "continued line then &&"
+ },
+ {
+  "id": "r3-reg-022",
+  "session": "root",
+  "command": "rm -rf \\\r\n  state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "CRLF continuation"
+ },
+ {
+  "id": "r3-reg-023",
+  "session": "root",
+  "command": "Remove-Item `\n  -Recurse `\n  -Force state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell backtick continuation, two of them"
+ },
+ {
+  "id": "r3-reg-024",
+  "session": "root",
+  "command": "git clean \\\n  -fd \\\n  .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "git clean continued twice"
+ },
+ {
+  "id": "r3-reg-025",
+  "session": "root",
+  "command": "git checkout \\\n  -- docs/assumptions.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "git checkout continued"
+ },
+ {
+  "id": "r3-reg-026",
+  "session": "cell",
+  "command": "cp src/a.ts \\\n  ../../kernel/src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, continued"
+ },
+ {
+  "id": "r3-reg-027",
+  "session": "cell",
+  "command": "echo hi \\\n  > ../../docs/notes.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, redirect on the continued line"
+ },
+ {
+  "id": "r3-reg-028",
+  "session": "root",
+  "command": "echo start \\\n(rm -rf state/views)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "continuation before a subshell mark"
+ },
+ {
+  "id": "r3-reg-029",
+  "session": "root",
+  "command": "cd /tmp \\\n; rm -rf state/views",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "cd is not joined; as before"
+ },
+ {
+  "id": "r3-reg-030",
+  "session": "root",
+  "command": "curl -s https://example.com/api \\\n  -H 'Accept: application/json' \\\n  -o /tmp/out.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "ordinary continued curl"
+ },
+ {
+  "id": "r3-reg-031",
+  "session": "root",
+  "command": "docker run --rm \\\n  -v \"$PWD\":/app \\\n  node:20 npm test",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "ordinary continued docker"
+ },
+ {
+  "id": "r3-reg-040",
+  "session": "root",
+  "command": "cp -t /tmp x.json; cp x.json \"state/bedrock/guards.json\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-t then a plain copy"
+ },
+ {
+  "id": "r3-reg-041",
+  "session": "root",
+  "command": "mv -t /tmp/hold state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "mv -t: the source goes"
+ },
+ {
+  "id": "r3-reg-042",
+  "session": "root",
+  "command": "cp x.json -t state/bedrock",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cp -t names a kernel-owned folder"
+ },
+ {
+  "id": "r3-reg-043",
+  "session": "cell",
+  "command": "cp -t ../../kernel/src src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, -t"
+ },
+ {
+  "id": "r3-reg-044",
+  "session": "cell",
+  "command": "cp src/a.ts --target-directory=../../kernel/src",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, --target-directory="
+ },
+ {
+  "id": "r3-reg-045",
+  "session": "cell",
+  "command": "Copy-Item src/a.ts -Destination ../../kernel/src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, -Destination"
+ },
+ {
+  "id": "r3-reg-046",
+  "session": "cell",
+  "command": "Copy-Item -Destination ../../kernel/src/a.ts -Path src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, -Destination first"
+ },
+ {
+  "id": "r3-reg-047",
+  "session": "cell",
+  "command": "Move-Item -Destination exit/ -Path ../../docs/notes.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary: a move's source outside the cell goes"
+ },
+ {
+  "id": "r3-reg-048",
+  "session": "cell",
+  "command": "cp -t exit ../../kernel/src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "copying in from outside is a read; the old hook took the last path for the target"
+ },
+ {
+  "id": "r3-reg-049",
+  "session": "root",
+  "command": "cp --target-directory= x.json \"state/bedrock/guards.json\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an empty --target-directory= value: the target vanishes"
+ },
+ {
+  "id": "r3-reg-050",
+  "session": "cell",
+  "command": "rsync -a src/ ../../kernel/src/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "rsync is a write verb now"
+ },
+ {
+  "id": "r3-reg-051",
+  "session": "cell",
+  "command": "ln -s ../../kernel/src/a.ts -t ../../docs",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "ln -t"
+ },
+ {
+  "id": "r3-reg-052",
+  "session": "cell",
+  "command": "Copy-Item src/a.ts -Dest ../../kernel/src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "abbreviated -Dest"
+ },
+ {
+  "id": "r3-reg-053",
+  "session": "cell",
+  "command": "Copy-Item -Dest ../../kernel/src/a.ts -Path src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "abbreviated -Dest first; old hook also took the last path"
+ },
+ {
+  "id": "r3-reg-060",
+  "session": "root",
+  "command": "if grep -q x f; then bash -c \"rm -rf state/views\"; fi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a shell string behind a keyword"
+ },
+ {
+  "id": "r3-reg-061",
+  "session": "root",
+  "command": "$r = node -e \"require('fs').rmSync('state/views',{recursive:true})\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "code after a PowerShell assignment"
+ },
+ {
+  "id": "r3-reg-062",
+  "session": "root",
+  "command": "if true; then grep -e \"writeFileSync('state/log/x')\" src/a.ts; fi",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a grep pattern is text; the old hook refused this one"
+ },
+ {
+  "id": "r3-reg-063",
+  "session": "root",
+  "command": "$x = powershell -Command \"Remove-Item state\\views -Recurse\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "shell string after an assignment"
+ },
+ {
+  "id": "r3-reg-064",
+  "session": "root",
+  "command": "then=1 rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an assignment prefix"
+ },
+ {
+  "id": "r3-reg-065",
+  "session": "root",
+  "command": "do rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "keyword first"
+ },
+ {
+  "id": "r3-reg-066",
+  "session": "root",
+  "command": "if test -f x; then python - <<'EOF'\nimport shutil\nshutil.rmtree('state/views')\nEOF\nfi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "code heredoc behind a keyword"
+ },
+ {
+  "id": "r3-reg-067",
+  "session": "root",
+  "command": "{ rm -rf state/views; }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "brace group"
+ },
+ {
+  "id": "r3-reg-068",
+  "session": "root",
+  "command": "Get-ChildItem state | ForEach-Object { Remove-Item state/views -Recurse }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "block"
+ },
+ {
+  "id": "r3-reg-069",
+  "session": "root",
+  "command": "fi; done; }; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "lone keywords before"
+ },
+ {
+  "id": "r3-reg-070",
+  "session": "root",
+  "command": "until rm -rf state/views; do sleep 1; done",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "until"
+ },
+ {
+  "id": "r3-reg-071",
+  "session": "root",
+  "command": "if cat .env; then echo x; fi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard behind a keyword"
+ },
+ {
+  "id": "r3-reg-072",
+  "session": "root",
+  "command": "$k = Get-Content .env",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard after an assignment"
+ },
+ {
+  "id": "r3-reg-073",
+  "session": "root",
+  "command": "{ cat .env; }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard in a group"
+ },
+ {
+  "id": "r3-reg-074",
+  "session": "root",
+  "command": "! grep -r SECRET .env",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard negated"
+ },
+ {
+  "id": "r3-reg-080",
+  "session": "root",
+  "command": "find state/views -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "find -delete on a kernel-owned folder"
+ },
+ {
+  "id": "r3-reg-081",
+  "session": "root",
+  "command": "find . -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "find . -delete"
+ },
+ {
+  "id": "r3-reg-082",
+  "session": "root",
+  "command": "find state -type f -delete",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "find state -type f -delete takes every log entry; a -type test does not narrow it to something safe"
+ },
+ {
+  "id": "r3-reg-083",
+  "session": "root",
+  "command": "find state/log -name '*.json' -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "find with a name test in the log folder itself"
+ },
+ {
+  "id": "r3-reg-084",
+  "session": "cell",
+  "command": "find ../../docs -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary through find -delete"
+ },
+ {
+  "id": "r3-reg-085",
+  "session": "cell",
+  "command": "find ../.. -name '*.md' -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary through find -name -delete outside the cell"
+ },
+ {
+  "id": "r3-reg-086",
+  "session": "root",
+  "command": "find . -newer x -delete",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a -newer test takes log entries too"
+ },
+ {
+  "id": "r3-reg-087",
+  "session": "root",
+  "command": "find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "find -exec rm of everything: unchanged from before, for the record"
+ },
+ {
+  "id": "r3-reg-090",
+  "session": "root",
+  "command": "taskkill /F /IM node.exe",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "kill by name, unchanged"
+ },
+ {
+  "id": "r3-reg-091",
+  "session": "root",
+  "command": "if true; then pkill node; fi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "kill by name behind keyword"
+ },
+ {
+  "id": "r3-reg-092",
+  "session": "root",
+  "command": "Get-Process node | Stop-Process",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "piped stop"
+ },
+ {
+  "id": "r3-reg-093",
+  "session": "root",
+  "command": "git commit -m \"don't pkill node\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a message that names it"
+ },
+ {
+  "id": "r3-reg-094",
+  "session": "root",
+  "command": "bash -lc \"rm -rf state/views\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "bash -lc: the string is not read (both hooks?)"
+ },
+ {
+  "id": "r3-reg-095",
+  "session": "root",
+  "command": "cmd //c \"rmdir /s /q state\\views\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "Git Bash's cmd //c (both hooks?)"
+ },
+ {
+  "id": "r3-reg-096",
+  "session": "root",
+  "command": "sudo rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "prefix (both hooks?)"
+ },
+ {
+  "id": "r3-reg-097",
+  "session": "root",
+  "command": "cd \"$(git rev-parse --show-toplevel)\" && rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cd to the repository's top by substitution"
+ },
+ {
+  "id": "r3-reg-098",
+  "session": "cell",
+  "command": "cd \"$(git rev-parse --show-toplevel)\" && echo x > docs/notes.md",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "cell boundary: cd by substitution (both hooks?)"
+ },
+ {
+  "id": "r3-kill-001",
+  "session": "root",
+  "command": "Get-CimInstance -Query \"SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%mail.ts watch%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the COCKPIT incident with the class inside a quoted WQL query"
+ },
+ {
+  "id": "r3-kill-002",
+  "session": "root",
+  "command": "Get-CimInstance -ClassName 'Win32_Process' | Where-Object { $_.CommandLine -like '*mail.ts*' } | ForEach-Object { Stop-Process -Id $_.ProcessId }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the class name quoted"
+ },
+ {
+  "id": "r3-kill-003",
+  "session": "root",
+  "command": "Get-WmiObject -Query \"select * from Win32_Process where name='node.exe'\" | ForEach-Object { $_.Terminate() }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "WMI query quoted, Terminate()"
+ },
+ {
+  "id": "r3-kill-004",
+  "session": "root",
+  "command": "Get-CimInstance \"Win32_Process\" -Filter \"Name='node.exe'\" | Invoke-CimMethod -MethodName Terminate",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "quoted class piped to Invoke-CimMethod"
+ },
+ {
+  "id": "r3-kill-005",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object Kill",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "ForEach-Object's member form"
+ },
+ {
+  "id": "r3-kill-006",
+  "session": "root",
+  "command": "Get-CimInstance CIM_Process | ? Name -eq node.exe | % { Stop-Process -Id $_.ProcessId }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "CIM_Process, the other class name"
+ },
+ {
+  "id": "r3-kill-007",
+  "session": "root",
+  "command": "taskkill //PID 4242 //F && tasklist //FI \"PID eq 4242\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Git Bash's doubled slashes: a pid written out, then a look"
+ },
+ {
+  "id": "r3-kill-008",
+  "session": "root",
+  "command": "tasklist | grep node; taskkill //F //PID 4242",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Git Bash's doubled slashes after a listing"
+ },
+ {
+  "id": "r3-kill-009",
+  "session": "root",
+  "command": "node server.js &\nSERVER_PID=\"$!\"\nsleep 2\nkill \"$SERVER_PID\"\nps aux | grep server",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "$! quoted in the assignment"
+ },
+ {
+  "id": "r3-kill-010",
+  "session": "root",
+  "command": "PID=4242; kill $PID; sleep 1; ps -p $PID",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a pid written out, held in a variable"
+ },
+ {
+  "id": "r3-kill-011",
+  "session": "root",
+  "command": "$p = Start-Process node -ArgumentList server.js -PassThru; Start-Sleep 2; Stop-Process -InputObject $p; Get-Process node",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "its own process by -InputObject"
+ },
+ {
+  "id": "r3-kill-012",
+  "session": "root",
+  "command": "$p = (Start-Process node -ArgumentList server.js -PassThru); Stop-Process -Id $p.Id; Get-Process node",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Start-Process in parentheses"
+ },
+ {
+  "id": "r3-kill-013",
+  "session": "root",
+  "command": "npm run dev > /tmp/dev.log 2>&1 &\nDEV=$!\nsleep 5\ncurl -s localhost:3000 | head -5\nkill $DEV; wait $DEV 2>/dev/null; lsof -i :3000",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the ordinary start, probe, stop, look"
+ },
+ {
+  "id": "r3-kill-014",
+  "session": "root",
+  "command": "ps aux | grep cellrun | grep -v grep",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing only"
+ },
+ {
+  "id": "r3-kill-015",
+  "session": "root",
+  "command": "Get-Process node | Select-Object Id, StartTime, Path | Format-Table",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing only"
+ },
+ {
+  "id": "r3-kill-016",
+  "session": "root",
+  "command": "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId, CommandLine",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing only"
+ },
+ {
+  "id": "r3-kill-017",
+  "session": "root",
+  "command": "netstat -ano | findstr :3000",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing only"
+ },
+ {
+  "id": "r3-kill-018",
+  "session": "root",
+  "command": "kill -TERM 4242; sleep 1; kill -0 4242 2>/dev/null && kill -KILL 4242; ps -p 4242",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "escalating on one written pid"
+ },
+ {
+  "id": "r3-kill-019",
+  "session": "root",
+  "command": "for pid in $(pgrep -f 'mail.ts watch'); do kill $pid; done",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "loop over a listing"
+ },
+ {
+  "id": "r3-kill-020",
+  "session": "root",
+  "command": "pids=$(ps -ef | awk '/mail.ts/{print $2}'); kill $pids",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "listing into a variable"
+ },
+ {
+  "id": "r3-kill-021",
+  "session": "root",
+  "command": "Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess -Force",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "by port"
+ },
+ {
+  "id": "r3-kill-022",
+  "session": "root",
+  "command": "fuser -k 3000/tcp",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "fuser -k stops whatever holds the port: list and stop in one verb"
+ },
+ {
+  "id": "r3-kill-023",
+  "session": "root",
+  "command": "npx kill-port 3000",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "for the record: by port, through a tool"
+ },
+ {
+  "id": "r3-kill-024",
+  "session": "root",
+  "command": "ps aux | grep node | awk '{print \"kill \" $2}' | sh",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a listing turned into kill lines and piped to sh"
+ },
+ {
+  "id": "r3-kill-025",
+  "session": "root",
+  "command": "grep -rn Get-Process docs/ ; kill 4242",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a search for the word"
+ },
+ {
+  "id": "r3-kill-026",
+  "session": "root",
+  "command": "docker ps -q | xargs docker kill",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "docker's own"
+ },
+ {
+  "id": "r3-kill-027",
+  "session": "root",
+  "command": "jobs -l; kill %1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "job control"
+ },
+ {
+  "id": "r3-kill-028",
+  "session": "root",
+  "command": "trap 'kill $SERVER' EXIT; node s.js & SERVER=$!; npm test; ps aux | grep s.js",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "trap"
+ },
+ {
+  "id": "r3-kill-029",
+  "session": "root",
+  "command": "Get-Process -Id 4242 -ErrorAction SilentlyContinue; if ($?) { Stop-Process -Id 4242 -Force }",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "look at one pid, then stop it"
+ },
+ {
+  "id": "r3-kill-030",
+  "session": "root",
+  "command": "wmic process where processid=4242 get commandline; taskkill /PID 4242 /T /F",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "look, then stop by number"
+ },
+ {
+  "id": "r3-kill-031",
+  "session": "cell",
+  "command": "node src/server.js & echo $! > /tmp/s.pid; sleep 1; curl -s localhost:3000; kill $(cat /tmp/s.pid)",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "pid file, no listing"
+ },
+ {
+  "id": "r3-kill-032",
+  "session": "root",
+  "command": "Get-Process | Where-Object { $_.ProcessName -eq 'node' } | ForEach-Object { Stop-Process -Id $_.Id }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the plain form, for the record"
+ },
+ {
+  "id": "r3-git-001",
+  "session": "root",
+  "command": "git fetch origin +main:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a forced fetch from a remote into a local branch moves it as a forced fetch from . does"
+ },
+ {
+  "id": "r3-git-002",
+  "session": "root",
+  "command": "git fetch -f origin main:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same with -f"
+ },
+ {
+  "id": "r3-git-003",
+  "session": "root",
+  "command": "git fetch origin main:main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "unforced: fast-forward only"
+ },
+ {
+  "id": "r3-git-004",
+  "session": "root",
+  "command": "git push <fixture>/proj +abc123:main",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a forced push into this repository named by its path"
+ },
+ {
+  "id": "r3-git-005",
+  "session": "root",
+  "command": "git push \"$(pwd)\" +abc123:main",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "by $(pwd)"
+ },
+ {
+  "id": "r3-git-006",
+  "session": "root",
+  "command": "git -C ~/projects/other checkout -B main origin/main",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "another repository under ~"
+ },
+ {
+  "id": "r3-git-007",
+  "session": "root",
+  "command": "cd ~/projects/other && git branch -M main",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "another repository under ~"
+ },
+ {
+  "id": "r3-git-008",
+  "session": "root",
+  "command": "cd $HOME/projects/other && git checkout -B main origin/main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "another repository under $HOME"
+ },
+ {
+  "id": "r3-git-009",
+  "session": "root",
+  "command": "cd \"$TMP_REPO\" && git init -q && git checkout -B main",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a throwaway repository a variable names"
+ },
+ {
+  "id": "r3-git-010",
+  "session": "root",
+  "command": "git --git-dir=<fixture>/proj/.git --work-tree=/tmp/x checkout -B main abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "this repository by --git-dir"
+ },
+ {
+  "id": "r3-git-011",
+  "session": "root",
+  "command": "git -C /tmp --git-dir=<fixture>/proj/.git branch -f main abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-C elsewhere, --git-dir here"
+ },
+ {
+  "id": "r3-git-012",
+  "session": "root",
+  "command": "git -C <fixture>/proj-cells/c1 branch -f cell/c1 abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's worktree is this repository"
+ },
+ {
+  "id": "r3-git-013",
+  "session": "root",
+  "command": "git -C /d/temp/other branch -f main abc",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Git Bash path elsewhere"
+ },
+ {
+  "id": "r3-git-014",
+  "session": "root",
+  "command": "git checkout -b feature/x",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-015",
+  "session": "root",
+  "command": "git checkout -f main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "not a branch move (as before)"
+ },
+ {
+  "id": "r3-git-016",
+  "session": "root",
+  "command": "git branch -d merged-branch",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-017",
+  "session": "root",
+  "command": "git branch -a -vv",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-018",
+  "session": "root",
+  "command": "git push -f origin feature/x",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a remote's branch"
+ },
+ {
+  "id": "r3-git-019",
+  "session": "root",
+  "command": "git push origin main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-020",
+  "session": "root",
+  "command": "git log --oneline -B -5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "-B on another subcommand"
+ },
+ {
+  "id": "r3-git-021",
+  "session": "root",
+  "command": "git diff -B main..HEAD --stat",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "diff -B (break rewrites)"
+ },
+ {
+  "id": "r3-git-022",
+  "session": "root",
+  "command": "git grep -B 2 -n needle",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "grep -B"
+ },
+ {
+  "id": "r3-git-023",
+  "session": "root",
+  "command": "git log --format=%B -1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "format"
+ },
+ {
+  "id": "r3-git-024",
+  "session": "root",
+  "command": "git init && git add -A && git commit -m init && git branch -M main",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "the standard first-commit sequence in this repository; refused by design? the text must say what to run instead"
+ },
+ {
+  "id": "r3-git-025",
+  "session": "root",
+  "command": "git worktree remove ../proj-cells/c1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "unforced: the lock stops it"
+ },
+ {
+  "id": "r3-git-026",
+  "session": "root",
+  "command": "git switch -c fix/thing",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-027",
+  "session": "root",
+  "command": "git switch --force-create main origin/main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "long form"
+ },
+ {
+  "id": "r3-git-028",
+  "session": "root",
+  "command": "git checkout --force -b tmp",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "new branch"
+ },
+ {
+  "id": "r3-git-029",
+  "session": "root",
+  "command": "git -C vendor/lib checkout -B main origin/main",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a nested repository of its own (submodule, vendored clone); unsure: read as this repository"
+ },
+ {
+  "id": "r3-git-030",
+  "session": "root",
+  "command": "git status --short && git log --oneline -5 && git diff --stat",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-git-031",
+  "session": "root",
+  "command": "git add -A && git commit -m \"git branch -f main: never\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a message that names it"
+ },
+ {
+  "id": "r3-git-032",
+  "session": "root",
+  "command": "git stash list; git show --stat HEAD",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-001",
+  "session": "cell",
+  "command": "git status --short",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-002",
+  "session": "cell",
+  "command": "git log --oneline -10 -- .",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-003",
+  "session": "cell",
+  "command": "git diff HEAD -- src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-004",
+  "session": "cell",
+  "command": "git show HEAD:cells/c1/src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-005",
+  "session": "cell",
+  "command": "git add -A . && git status",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-cgit-006",
+  "session": "cell",
+  "command": "git branch",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-007",
+  "session": "cell",
+  "command": "git branch -a",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-008",
+  "session": "cell",
+  "command": "git branch --show-current",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-009",
+  "session": "cell",
+  "command": "git branch -l 'cell/*'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-010",
+  "session": "cell",
+  "command": "git tag",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-011",
+  "session": "cell",
+  "command": "git tag -l 'v*' --sort=-creatordate",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-012",
+  "session": "cell",
+  "command": "git config user.name",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-013",
+  "session": "cell",
+  "command": "git config --get remote.origin.url",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-014",
+  "session": "cell",
+  "command": "git config -l --show-origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-015",
+  "session": "cell",
+  "command": "git config --global --get user.email",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-016",
+  "session": "cell",
+  "command": "git config core.autocrlf",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-017",
+  "session": "cell",
+  "command": "git remote -v",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-018",
+  "session": "cell",
+  "command": "git remote show origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-019",
+  "session": "cell",
+  "command": "git worktree list",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-020",
+  "session": "cell",
+  "command": "git reflog -5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-021",
+  "session": "cell",
+  "command": "git symbolic-ref --short HEAD",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-022",
+  "session": "cell",
+  "command": "git rev-parse --abbrev-ref HEAD",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-023",
+  "session": "cell",
+  "command": "git fetch origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "fetch with no refspec"
+ },
+ {
+  "id": "r3-cgit-024",
+  "session": "cell",
+  "command": "git ls-files --eol | head",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-025",
+  "session": "cell",
+  "command": "git checkout -- src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "restore own file"
+ },
+ {
+  "id": "r3-cgit-026",
+  "session": "cell",
+  "command": "git diff main...HEAD --name-only",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-027",
+  "session": "cell",
+  "command": "git log --all --oneline --graph | head -20",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-028",
+  "session": "cell",
+  "command": "git config user.email cell@example.com",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a settings write"
+ },
+ {
+  "id": "r3-cgit-029",
+  "session": "cell",
+  "command": "git -c user.name=c1 -c user.email=c1@x log -1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "-c is no write"
+ },
+ {
+  "id": "r3-cgit-030",
+  "session": "cell",
+  "command": "git config --local core.hooksPath /tmp/h",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "settings write"
+ },
+ {
+  "id": "r3-cgit-031",
+  "session": "cell",
+  "command": "git config --get core.hooksPath || git config core.hooksPath .hooks",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read then write"
+ },
+ {
+  "id": "r3-cgit-032",
+  "session": "cell",
+  "command": "git branch -f main HEAD",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "another branch; the text must not tell a cell to make branches"
+ },
+ {
+  "id": "r3-cgit-033",
+  "session": "cell",
+  "command": "git fetch . cell/c1:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "another branch moved"
+ },
+ {
+  "id": "r3-cgit-034",
+  "session": "cell",
+  "command": "git fetch ../.. cell/c1:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the worktree's top named as the remote"
+ },
+ {
+  "id": "r3-cgit-035",
+  "session": "cell",
+  "command": "git --git-dir=../../.git update-ref refs/heads/main HEAD",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--git-dir"
+ },
+ {
+  "id": "r3-cgit-036",
+  "session": "cell",
+  "command": "cd /tmp && git -C <fixture>/proj-cells/c1 push . HEAD:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cd away then -C back"
+ },
+ {
+  "id": "r3-cgit-037",
+  "session": "cell",
+  "command": "cd /tmp && git clone https://example.com/x.git && cd x && git config user.name t && git branch -f old HEAD~1 && git push origin main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "another repository entirely"
+ },
+ {
+  "id": "r3-cgit-038",
+  "session": "cell",
+  "command": "git -C /tmp/fixture-repo config user.email t@t",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a test's throwaway repository"
+ },
+ {
+  "id": "r3-cgit-039",
+  "session": "cell",
+  "command": "d=$(mktemp -d) && git -C \"$d\" init -q && git -C \"$d\" config user.email t@t && git -C \"$d\" commit --allow-empty -m x",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "the ordinary test setup: a temp repository a variable names (mktemp)"
+ },
+ {
+  "id": "r3-cgit-040",
+  "session": "cell",
+  "command": "cd \"$(mktemp -d)\" && git init -q && git config user.email t@t && git config user.name t",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "the same by cd"
+ },
+ {
+  "id": "r3-cgit-041",
+  "session": "cell",
+  "command": "git stash list",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-042",
+  "session": "cell",
+  "command": "git tag -v v1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "verify is a read; unsure it matters"
+ },
+ {
+  "id": "r3-cgit-043",
+  "session": "cell",
+  "command": "git remote get-url origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-044",
+  "session": "cell",
+  "command": "git update-index --assume-unchanged test/a.test.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a mark"
+ },
+ {
+  "id": "r3-cgit-045",
+  "session": "cell",
+  "command": "git update-index -q --refresh && git diff-index --quiet HEAD --",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the usual dirty check"
+ },
+ {
+  "id": "r3-cgit-046",
+  "session": "cell",
+  "command": "git config --get-regexp '^user\\.'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-047",
+  "session": "cell",
+  "command": "git config --file .gitmodules --get-regexp path",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read of a file"
+ },
+ {
+  "id": "r3-cgit-048",
+  "session": "cell",
+  "command": "git config --show-toplevel 2>/dev/null; git rev-parse --show-toplevel",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-049",
+  "session": "cell",
+  "command": "git branch -r",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-050",
+  "session": "cell",
+  "command": "git branch -vv --no-color | cat",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-cgit-051",
+  "session": "cell",
+  "command": "git log -1 --format=%cd --date=iso",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "read"
+ },
+ {
+  "id": "r3-cgit-052",
+  "session": "cell",
+  "command": "git commit -m \"wip: git push . HEAD:main is refused\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a message that names it (commit itself is the brief's business)"
+ },
+ {
+  "id": "r3-cgit-053",
+  "session": "cell",
+  "command": "git fetch origin '+refs/heads/*:refs/remotes/origin/*'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the default refspec written out: remote-tracking refs only; unsure it matters"
+ },
+ {
+  "id": "r3-cgit-054",
+  "session": "cell",
+  "command": "git gc --auto",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "objects"
+ },
+ {
+  "id": "r3-cgit-055",
+  "session": "cell",
+  "command": "GIT_DIR=<fixture>/proj/.git git -C /tmp update-ref refs/heads/main HEAD",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "GIT_DIR in the environment: constructed, for the record"
+ },
+ {
+  "id": "r3-mail-001",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --kind blocked --body \"$(cat exit/report.md)\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-mail-002",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts watch --as c1 --wait 600",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "its own box"
+ },
+ {
+  "id": "r3-mail-003",
+  "session": "cell",
+  "command": "node <fixture>/proj-cells/c1/kernel/src/mail.ts status",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the worktree's own by a Git Bash path (new world only)"
+ },
+ {
+  "id": "r3-mail-004",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --body \"x\" --root <fixture>/proj",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--root"
+ },
+ {
+  "id": "r3-mail-005",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --body x --root=<fixture>/proj",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--root="
+ },
+ {
+  "id": "r3-mail-006",
+  "session": "cell",
+  "command": "node ../../../../proj/kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the main checkout's by a relative path"
+ },
+ {
+  "id": "r3-mail-007",
+  "session": "cell",
+  "command": "cd ../../../../proj && node kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cd there"
+ },
+ {
+  "id": "r3-mail-008",
+  "session": "cell",
+  "command": "npx tsx <fixture>/proj/kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "npx tsx"
+ },
+ {
+  "id": "r3-mail-009",
+  "session": "cell",
+  "command": "node --test test/mail.test.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "its own test"
+ },
+ {
+  "id": "r3-mail-010",
+  "session": "cell",
+  "command": "node src/mail.ts --dry-run",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "its own file of the name"
+ },
+ {
+  "id": "r3-mail-011",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --kind question --body \"should I use --root or node ../../../proj/kernel/src/mail.ts ?\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a body that names both"
+ },
+ {
+  "id": "r3-mail-012",
+  "session": "cell",
+  "command": "cd ../.. && node kernel/src/cli.ts lint && node kernel/src/mail.ts status",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "from the worktree's top"
+ },
+ {
+  "id": "r3-mail-013",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "from src/, ../../kernel is not the kit: can't be the worktree's own (resolves to cells/kernel)",
+  "cwd": "src"
+ },
+ {
+  "id": "r3-mail-014",
+  "session": "cell",
+  "command": "node ../../../kernel/src/mail.ts send --to root --kind question --body x",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "from src/, the worktree's own",
+  "cwd": "src"
+ },
+ {
+  "id": "r3-mail-015",
+  "session": "cell",
+  "command": "bash -c 'node <fixture>/proj/kernel/src/mail.ts watch --as root'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "in a shell string"
+ },
+ {
+  "id": "r3-mail-016",
+  "session": "cell",
+  "command": "node.exe <fixture>\\proj\\kernel\\src\\mail.ts watch --as root",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "node.exe, backslashes"
+ },
+ {
+  "id": "r3-copy-001",
+  "session": "root",
+  "command": "cp -r ../proj-cells/c1/cells/. cells/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a whole cells folder copied in by dir/.: every cell's log replaced"
+ },
+ {
+  "id": "r3-copy-002",
+  "session": "root",
+  "command": "cp -r ../proj-cells/c1/cells/* cells/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same by glob"
+ },
+ {
+  "id": "r3-copy-003",
+  "session": "root",
+  "command": "cp -rT ../proj-cells/c1/cells cells",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same by -T"
+ },
+ {
+  "id": "r3-copy-004",
+  "session": "root",
+  "command": "rsync -a ../proj-cells/c1/cells/ cells/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same by rsync dir/"
+ },
+ {
+  "id": "r3-copy-005",
+  "session": "root",
+  "command": "robocopy ..\\proj-cells\\c1\\cells cells /E",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same by robocopy"
+ },
+ {
+  "id": "r3-copy-006",
+  "session": "root",
+  "command": "cp -r ../proj-cells/c1/cells/c1 cells/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "one whole cell folder copied over the cell: its state/log with it"
+ },
+ {
+  "id": "r3-copy-007",
+  "session": "root",
+  "command": "cp -r ../proj-cells/c1/docs/. docs/",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a whole docs folder copied in by dir/. (docs/assumptions.md with it when the source holds one)"
+ },
+ {
+  "id": "r3-copy-008",
+  "session": "root",
+  "command": "cp -rT ../proj-cells/c1/docs docs",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "same by -T"
+ },
+ {
+  "id": "r3-copy-009",
+  "session": "root",
+  "command": "rsync -a --delete ../proj-cells/c1/docs/ docs/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same by rsync --delete"
+ },
+ {
+  "id": "r3-copy-010",
+  "session": "root",
+  "command": "robocopy ..\\proj-cells\\c1\\docs docs /MIR",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "same by robocopy /MIR"
+ },
+ {
+  "id": "r3-copy-011",
+  "session": "root",
+  "command": "rsync -a --exclude state ../template/ .",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "state excluded by name: unsure; the exclude's value is read as a source"
+ },
+ {
+  "id": "r3-copy-012",
+  "session": "root",
+  "command": "rsync -a --exclude node_modules dist/ site/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "ordinary rsync"
+ },
+ {
+  "id": "r3-copy-013",
+  "session": "root",
+  "command": "cp -r docs /tmp/docs-backup",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a copy out"
+ },
+ {
+  "id": "r3-copy-014",
+  "session": "root",
+  "command": "cp -r state /tmp/state-backup",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a copy out"
+ },
+ {
+  "id": "r3-copy-015",
+  "session": "root",
+  "command": "cp -r src/state src/state2",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "an app folder called state"
+ },
+ {
+  "id": "r3-copy-016",
+  "session": "root",
+  "command": "mv build/docs public/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a built docs folder moved elsewhere"
+ },
+ {
+  "id": "r3-copy-017",
+  "session": "root",
+  "command": "cp docs/notes.md docs/notes-old.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-copy-018",
+  "session": "root",
+  "command": "cp -r dist/. site/ && cp README.md site/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-copy-019",
+  "session": "root",
+  "command": "cp -r backup/state \"$PWD\"",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "the target named by $PWD"
+ },
+ {
+  "id": "r3-copy-020",
+  "session": "root",
+  "command": "cp -r backup/state \"$(pwd)/\"",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "the target named by $(pwd)"
+ },
+ {
+  "id": "r3-copy-021",
+  "session": "root",
+  "command": "cd backup && cp -r state ..",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "from inside the backup"
+ },
+ {
+  "id": "r3-copy-022",
+  "session": "root",
+  "command": "cp -r backup/state/log state/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a log folder into state"
+ },
+ {
+  "id": "r3-copy-023",
+  "session": "root",
+  "command": "Copy-Item -Path backup\\state\\* -Destination state -Recurse -Force",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell glob"
+ },
+ {
+  "id": "r3-copy-024",
+  "session": "root",
+  "command": "Move-Item backup\\state .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell move"
+ },
+ {
+  "id": "r3-copy-025",
+  "session": "root",
+  "command": "cp -a backup/state/ ./",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "trailing slashes"
+ },
+ {
+  "id": "r3-copy-026",
+  "session": "root",
+  "command": "cp -r \"backup dir/state\" .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a path with a space"
+ },
+ {
+  "id": "r3-copy-027",
+  "session": "root",
+  "command": "cp -r <fixture>/proj/backup/* .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "Git Bash path with a glob, read from the disk"
+ },
+ {
+  "id": "r3-copy-028",
+  "session": "root",
+  "command": "cp -r <fixture>/proj/dist/* .",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Git Bash path with a glob: dist holds no state"
+ },
+ {
+  "id": "r3-copy-029",
+  "session": "root",
+  "command": "scp -r host:backup/state .",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "scp: for the record"
+ },
+ {
+  "id": "r3-copy-030",
+  "session": "root",
+  "command": "mv ../proj-cells ../proj-cells-old",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the worktrees' home moved away"
+ },
+ {
+  "id": "r3-copy-031",
+  "session": "root",
+  "command": "Rename-Item ..\\proj-cells proj-cells-old",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same in PowerShell"
+ },
+ {
+  "id": "r3-copy-032",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/node_modules",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "deeper in a worktree is root's to clear"
+ },
+ {
+  "id": "r3-copy-033",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/gone",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a leftover folder git lists no worktree for (after git worktree remove left ignored files behind); unsure"
+ },
+ {
+  "id": "r3-copy-034",
+  "session": "cell",
+  "command": "rm -rf node_modules dist",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a cell clears its own build"
+ },
+ {
+  "id": "r3-copy-035",
+  "session": "cell",
+  "command": "rm -rf ./*.tmp test/tmp",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a cell clears its own temp files"
+ },
+ {
+  "id": "r3-copy-036",
+  "session": "cell",
+  "command": "cp -r test/fixtures/sample exit/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-copy-037",
+  "session": "cell",
+  "command": "cp -r test/fixtures/state /tmp/w/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a fixture called state to the temp folder"
+ },
+ {
+  "id": "r3-copy-038",
+  "session": "root",
+  "command": "git worktree unlock ../proj-cells/c1 && git worktree remove ../proj-cells/c1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "for the record: unlock then remove passes in root's session, without the operator"
+ },
+ {
+  "id": "r3-src-001",
+  "session": "cell",
+  "command": "sed -i 's/foo/bar/g' $(grep -rl foo src)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "sed -i on files a substitution names: the same act as grep -rl | xargs sed -i, which is refused"
+ },
+ {
+  "id": "r3-src-002",
+  "session": "cell",
+  "command": "sed -i 's/foo/bar/g' `git ls-files '*.ts'`",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with backticks"
+ },
+ {
+  "id": "r3-src-003",
+  "session": "cell",
+  "command": "perl -pi -e 's/foo/bar/g' $(git grep -l foo)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "perl -pi on files a substitution names"
+ },
+ {
+  "id": "r3-src-004",
+  "session": "cell",
+  "command": "for f in a b; do sed -i 's/x/y/' \"src/$f.ts\"; done",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a source file named partly by a loop variable; unsure: targets built from a variable are let through by design, yet a bare $f is refused"
+ },
+ {
+  "id": "r3-src-005",
+  "session": "cell",
+  "command": "sed -i --expression='s/a/b/' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--expression= leaves one plain argument"
+ },
+ {
+  "id": "r3-src-006",
+  "session": "cell",
+  "command": "sed -i -es/a/b/ src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-e with its script attached"
+ },
+ {
+  "id": "r3-src-007",
+  "session": "cell",
+  "command": "sed -i.bak -e 's/a/b/' -e 's/c/d/' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "two -e"
+ },
+ {
+  "id": "r3-src-008",
+  "session": "cell",
+  "command": "sed -i -f fix.sed src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-f script"
+ },
+ {
+  "id": "r3-src-009",
+  "session": "cell",
+  "command": "sed --in-place 's/a/b/' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "long form"
+ },
+ {
+  "id": "r3-src-010",
+  "session": "cell",
+  "command": "> src/a.ts echo 'const a = 1;'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the redirect written first"
+ },
+ {
+  "id": "r3-src-011",
+  "session": "cell",
+  "command": "echo 'const a = 1;' | cat > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed text through cat; unsure: one step of evasion"
+ },
+ {
+  "id": "r3-src-012",
+  "session": "cell",
+  "command": "Get-Content tmpl.txt | ForEach-Object { $_ -replace 'NAME','c1' } > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a -replace pipeline ending in a redirect rather than Set-Content"
+ },
+ {
+  "id": "r3-src-013",
+  "session": "cell",
+  "command": "(Get-Content src/a.ts) -replace 'a','b' > src/b.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-replace expression redirected"
+ },
+ {
+  "id": "r3-src-014",
+  "session": "cell",
+  "command": "$f = 'src/a.ts'; (Get-Content $f) -replace 'a','b' | Set-Content $f",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell's usual form: the file in a variable. A bare $f is refused for sed -i"
+ },
+ {
+  "id": "r3-src-015",
+  "session": "cell",
+  "command": "$f = 'src/a.ts'\n$c = Get-Content $f -Raw\n$c = $c -replace 'old','new'\nSet-Content -Path $f -Value $c",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same, multi-line"
+ },
+ {
+  "id": "r3-src-016",
+  "session": "cell",
+  "command": "Set-Content -Path src/a.ts -Value @'\nexport const re = /\\w+/;\n'@",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "here-string as -Value"
+ },
+ {
+  "id": "r3-src-017",
+  "session": "cell",
+  "command": "\"export const a = 1;\" | Out-File -FilePath src\\a.ts -Encoding utf8",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "backslash path"
+ },
+ {
+  "id": "r3-src-018",
+  "session": "cell",
+  "command": "Out-File -FilePath src/a.ts -InputObject 'export const a = 1;'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-InputObject"
+ },
+ {
+  "id": "r3-src-019",
+  "session": "cell",
+  "command": "echo 'const a = 1;' >> src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "append"
+ },
+ {
+  "id": "r3-src-020",
+  "session": "cell",
+  "command": "echo 'const a = 1;' &> src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "&>"
+ },
+ {
+  "id": "r3-src-021",
+  "session": "cell",
+  "command": "printf '%s\\n' 'export const a = 1;' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "printf with a format and typed text"
+ },
+ {
+  "id": "r3-src-022",
+  "session": "cell",
+  "command": "echo \"export const v = '$VERSION';\" > src/version.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed text with a variable in it"
+ },
+ {
+  "id": "r3-src-023",
+  "session": "cell",
+  "command": "bash -c \"echo 'x' > src/a.ts\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "in a shell string"
+ },
+ {
+  "id": "r3-src-024",
+  "session": "cell",
+  "command": "bash <<'SH'\ncat > src/a.ts <<'EOF'\nx\nEOF\nSH",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a heredoc inside a shell heredoc"
+ },
+ {
+  "id": "r3-src-025",
+  "session": "cell",
+  "command": "cat > src/a.ts << \\EOF\nconst a = 1;\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a backslash-quoted tag"
+ },
+ {
+  "id": "r3-src-026",
+  "session": "cell",
+  "command": "cat > src/a.ts <<'END-OF-FILE'\nconst a = 1;\nEND-OF-FILE",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a tag with dashes"
+ },
+ {
+  "id": "r3-src-027",
+  "session": "cell",
+  "command": "cat > \"$CLAUDE_PROJECT_DIR/src/a.ts\" <<'EOF'\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the target through the session's own variable"
+ },
+ {
+  "id": "r3-src-028",
+  "session": "cell",
+  "command": "cd ../.. && cat > cells/c1/src/a.ts <<'EOF'\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "from the worktree's top"
+ },
+ {
+  "id": "r3-src-029",
+  "session": "cell",
+  "command": "cat > <fixture>/proj-cells/c1/cells/c1/src/a.ts <<'EOF'\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "Git Bash absolute path (new world only)"
+ },
+ {
+  "id": "r3-src-030",
+  "session": "cell",
+  "command": "cd /tmp && ls; cd \"$OLDPWD\"; echo 'x' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "back through $OLDPWD: the folder can't be told and the write is let through; unsure"
+ },
+ {
+  "id": "r3-src-031",
+  "session": "cell",
+  "command": "(cd /tmp && ls); echo 'x' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a subshell's cd ends"
+ },
+ {
+  "id": "r3-src-032",
+  "session": "cell",
+  "command": "if [ -d /tmp/x ]; then cd /tmp/x; fi; echo 'x' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "conditional cd then a typed source file"
+ },
+ {
+  "id": "r3-src-033",
+  "session": "cell",
+  "command": "cd src\necho 'x' > a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cd on its own line"
+ },
+ {
+  "id": "r3-src-034",
+  "session": "cell",
+  "command": "echo 'x' > a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the session already in src/",
+  "cwd": "src"
+ },
+ {
+  "id": "r3-src-035",
+  "session": "cell",
+  "command": "cat > ../test/a.test.ts <<'EOF'\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the session already in src/, target by ../",
+  "cwd": "src"
+ },
+ {
+  "id": "r3-src-036",
+  "session": "cell",
+  "command": "tee src/a.ts src/b.ts <<'EOF' >/dev/null\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "tee to two files"
+ },
+ {
+  "id": "r3-src-037",
+  "session": "cell",
+  "command": "cat <<'EOF' | tee src/a.ts\nx\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a heredoc piped to tee"
+ },
+ {
+  "id": "r3-src-038",
+  "session": "cell",
+  "command": "echo x | sudo tee -a src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "sudo tee"
+ },
+ {
+  "id": "r3-src-039",
+  "session": "cell",
+  "command": "xargs -I{} sed -i 's/a/b/' {} < list.txt",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "xargs -I"
+ },
+ {
+  "id": "r3-src-040",
+  "session": "cell",
+  "command": "git ls-files -z '*.ts' | xargs -0 perl -pi -e 's/a/b/'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "xargs -0 perl"
+ },
+ {
+  "id": "r3-src-041",
+  "session": "cell",
+  "command": "echo 'x' > src/a.ts.new && mv src/a.ts.new src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "typed beside the file then moved over it: for the record (a deliberate second step)"
+ },
+ {
+  "id": "r3-src-042",
+  "session": "cell",
+  "command": "cat > /tmp/a.ts <<'EOF'\nexport const re = /\\w+/;\nEOF\ncp /tmp/a.ts src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "typed in the temp folder then copied in, in one command: for the record"
+ },
+ {
+  "id": "r3-src-043",
+  "session": "cell",
+  "command": "echo 'x' > src/a.vue",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "default list"
+ },
+ {
+  "id": "r3-src-044",
+  "session": "cell",
+  "command": "echo 'x' > .github/workflows/ci.yml",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "yaml"
+ },
+ {
+  "id": "r3-src-045",
+  "session": "cell",
+  "command": "echo '{}' > package.json",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "json kept on purpose"
+ },
+ {
+  "id": "r3-ok-001",
+  "session": "cell",
+  "command": "echo 'done' > exit/status.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose"
+ },
+ {
+  "id": "r3-ok-002",
+  "session": "cell",
+  "command": "cat > exit/report.md <<'EOF'\n# Report\nUse `sed -i` and echo x > src/a.ts never.\nEOF",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a report that names the forms"
+ },
+ {
+  "id": "r3-ok-003",
+  "session": "cell",
+  "command": "npm test > test/out.log 2>&1; tail -20 test/out.log",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-004",
+  "session": "cell",
+  "command": "node src/gen.js > src/generated.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program's output"
+ },
+ {
+  "id": "r3-ok-005",
+  "session": "cell",
+  "command": "npx prettier --write src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a formatter"
+ },
+ {
+  "id": "r3-ok-006",
+  "session": "cell",
+  "command": "npx tsc --noEmit -p . 2>&1 | head -30",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-007",
+  "session": "cell",
+  "command": "echo \"error: bad\" >&2",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "to stderr"
+ },
+ {
+  "id": "r3-ok-008",
+  "session": "cell",
+  "command": "echo \"error: bad\" 1>&2; exit 1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "to stderr"
+ },
+ {
+  "id": "r3-ok-009",
+  "session": "cell",
+  "command": "echo '---' && cat src/a.ts && echo '---'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading"
+ },
+ {
+  "id": "r3-ok-010",
+  "session": "cell",
+  "command": "grep -rn \"sed -i\" src/ | head",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a search for the phrase"
+ },
+ {
+  "id": "r3-ok-011",
+  "session": "cell",
+  "command": "find . -name '*.ts' -not -path './node_modules/*' | xargs grep -il sed",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "sed as a search word, -il"
+ },
+ {
+  "id": "r3-ok-012",
+  "session": "cell",
+  "command": "find src -name '*.ts' | xargs wc -l | sort -n | tail -5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-013",
+  "session": "cell",
+  "command": "perl -ne 'print if /export/i' src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "perl reading; /i in the script"
+ },
+ {
+  "id": "r3-ok-014",
+  "session": "cell",
+  "command": "perl -lane 'print $F[0]' test/fixtures/data.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "perl reading"
+ },
+ {
+  "id": "r3-ok-015",
+  "session": "cell",
+  "command": "perl tools/report.pl -input test/fixtures/a.json -o exit/out.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a script's own -input option; unsure it matters"
+ },
+ {
+  "id": "r3-ok-016",
+  "session": "cell",
+  "command": "sed -n '1,40p' src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading"
+ },
+ {
+  "id": "r3-ok-017",
+  "session": "cell",
+  "command": "sed -E 's/a/b/i' src/a.ts | head",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading; i flag in the script"
+ },
+ {
+  "id": "r3-ok-018",
+  "session": "cell",
+  "command": "sed -i 's/TODO/DONE/' exit/report.md MODEL.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose edited in place"
+ },
+ {
+  "id": "r3-ok-019",
+  "session": "cell",
+  "command": "sed -i '1d' test/fixtures/data.csv",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "data edited in place"
+ },
+ {
+  "id": "r3-ok-020",
+  "session": "cell",
+  "command": "for f in test/fixtures/*.csv; do echo \"$f\"; wc -l < \"$f\"; done > exit/sizes.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a loop's output to prose"
+ },
+ {
+  "id": "r3-ok-021",
+  "session": "cell",
+  "command": "for f in src/*.ts; do node tools/check.js \"$f\"; done > exit/check.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a loop of a program's output to json"
+ },
+ {
+  "id": "r3-ok-022",
+  "session": "cell",
+  "command": "{ node a.js; node b.js; } > exit/both.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a group of programs"
+ },
+ {
+  "id": "r3-ok-023",
+  "session": "cell",
+  "command": "echo \"$(date -u +%FT%TZ)\" > exit/stamp.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a computed value"
+ },
+ {
+  "id": "r3-ok-024",
+  "session": "cell",
+  "command": "date > exit/stamp.json; ls -la > exit/files.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "programs' output"
+ },
+ {
+  "id": "r3-ok-025",
+  "session": "cell",
+  "command": "echo node_modules >> .gitignore",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "not source"
+ },
+ {
+  "id": "r3-ok-026",
+  "session": "cell",
+  "command": "mkdir -p /tmp/c1 && cd /tmp/c1 && echo '{\"a\":1}' > in.json && node \"$CLAUDE_PROJECT_DIR/src/a.ts\" in.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "scratch in /tmp"
+ },
+ {
+  "id": "r3-ok-027",
+  "session": "cell",
+  "command": "T=$(mktemp -d); echo 'console.log(1)' > \"$T/p.js\"; node \"$T/p.js\"; rm -rf \"$T\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "scratch in mktemp"
+ },
+ {
+  "id": "r3-ok-028",
+  "session": "cell",
+  "command": "cd \"$(mktemp -d)\" && cat > p.mjs <<'EOF'\nconsole.log(1)\nEOF\nnode p.mjs",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "scratch by cd to mktemp"
+ },
+ {
+  "id": "r3-ok-029",
+  "session": "cell",
+  "command": "Get-ChildItem src -Recurse -Filter *.ts | Select-String -Pattern 'replace' | Select-Object -First 5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a search for the word replace"
+ },
+ {
+  "id": "r3-ok-030",
+  "session": "cell",
+  "command": "(Get-Content src/a.ts) -replace 'a','b' | Select-Object -First 3",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "-replace to the screen"
+ },
+ {
+  "id": "r3-ok-031",
+  "session": "cell",
+  "command": "$n = (Get-Content test/out.log | Measure-Object -Line).Lines; \"lines: $n\" | Out-File exit/count.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose"
+ },
+ {
+  "id": "r3-ok-032",
+  "session": "cell",
+  "command": "node tools/gen.js | Set-Content src/generated.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program's output, PowerShell"
+ },
+ {
+  "id": "r3-ok-033",
+  "session": "cell",
+  "command": "Get-Content src/a.ts | Set-Content src/b.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a copy"
+ },
+ {
+  "id": "r3-ok-034",
+  "session": "cell",
+  "command": "Copy-Item src/a.ts src/b.ts; Move-Item src/b.ts src/c.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "copies"
+ },
+ {
+  "id": "r3-ok-035",
+  "session": "cell",
+  "command": "New-Item -ItemType Directory -Force exit/out | Out-Null; New-Item src/empty.ts -ItemType File",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "an empty file"
+ },
+ {
+  "id": "r3-ok-036",
+  "session": "cell",
+  "command": "touch src/new.ts && git add src/new.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "an empty file"
+ },
+ {
+  "id": "r3-ok-037",
+  "session": "cell",
+  "command": "echo \"replace the echo with printf\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "words"
+ },
+ {
+  "id": "r3-ok-038",
+  "session": "cell",
+  "command": "npm run build -- --outDir dist > /dev/null && echo built",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-039",
+  "session": "cell",
+  "command": "node --test test/ 2>&1 | tee test/out.log | tail -30",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "tee of a program's output"
+ },
+ {
+  "id": "r3-ok-040",
+  "session": "cell",
+  "command": "node -e \"console.log(JSON.stringify({a:1}))\" > exit/a.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program's output"
+ },
+ {
+  "id": "r3-ok-041",
+  "session": "cell",
+  "command": "jq -n '{ok: true}' > state/out/metrics.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "metrics by a program"
+ },
+ {
+  "id": "r3-ok-042",
+  "session": "cell",
+  "command": "echo '{\"tests\": 12}' > state/out/metrics.json",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "the brief tells a cell to publish numbers in state/out/metrics.json: typed json is refused by the default list; unsure (json kept on purpose)"
+ },
+ {
+  "id": "r3-ok-043",
+  "session": "cell",
+  "command": "cd ../../kernel && npm test 2>&1 | tail -20",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the brief's own command"
+ },
+ {
+  "id": "r3-ok-044",
+  "session": "cell",
+  "command": "node ../../kernel/src/cli.ts fold --cell . && node ../../kernel/src/cli.ts lint --cell .",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the brief's own commands"
+ },
+ {
+  "id": "r3-ok-045",
+  "session": "cell",
+  "command": "ls -la && cat MODEL.md | head -40 && wc -l src/*.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-046",
+  "session": "cell",
+  "command": "python3 - <<'EOF'\nimport json\nprint(json.dumps({'a': 1}))\nEOF",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "code heredoc printing"
+ },
+ {
+  "id": "r3-ok-047",
+  "session": "cell",
+  "command": "node - <<'EOF' > exit/out.json\nconsole.log(JSON.stringify({a: 1}))\nEOF",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program fed by heredoc, output to a file"
+ },
+ {
+  "id": "r3-ok-048",
+  "session": "cell",
+  "command": "diff <(sort a.txt) <(sort b.txt) > exit/diff.txt || true",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "process substitution"
+ },
+ {
+  "id": "r3-ok-049",
+  "session": "cell",
+  "command": "while read -r line; do echo \"$line\"; done < test/fixtures/in.txt > exit/out.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "computed echo in a loop"
+ },
+ {
+  "id": "r3-ok-050",
+  "session": "cell",
+  "command": "echo todo: do the tests; node gen.js > src/gen.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the word do in prose, then a program's output"
+ },
+ {
+  "id": "r3-ok-051",
+  "session": "cell",
+  "command": "echo 'step { 1 }'; node gen.js > src/gen.ts; echo '}' ",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "braces in quoted prose"
+ },
+ {
+  "id": "r3-ok-052",
+  "session": "cell",
+  "command": "echo start; for i in 1 2 3; do node step.js $i; done > src/steps.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "typed echo before the loop, the loop's programs to json"
+ },
+ {
+  "id": "r3-ok-053",
+  "session": "cell",
+  "command": "echo do it; npm run gen; done=1; node gen.js > src/gen.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "do as an argument"
+ },
+ {
+  "id": "r3-ok-054",
+  "session": "cell",
+  "command": "echo do; done > src/x.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "nonsense, but a stray do must not arm a later done"
+ },
+ {
+  "id": "r3-ok-055",
+  "session": "root",
+  "command": "cat > src/a.ts <<'EOF'\nexport const a = 1;\nEOF",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "root, no source.root: not judged"
+ },
+ {
+  "id": "r3-ok-056",
+  "session": "root",
+  "command": "sed -i 's/a/b/' src/a.ts kernel/src/shell.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "root, no source.root"
+ },
+ {
+  "id": "r3-ok-057",
+  "session": "root",
+  "command": "git status && git log --oneline -5 && npm test --prefix kernel 2>&1 | tail -5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-058",
+  "session": "root",
+  "command": "node kernel/src/cli.ts lint && node kernel/src/cli.ts fold",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-059",
+  "session": "root",
+  "command": "node kernel/src/mail.ts send --to c1 --body \"Please replace sed -i with Edit; ps and kill are refused together\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "mail whose body names the forms"
+ },
+ {
+  "id": "r3-ok-060",
+  "session": "root",
+  "command": "node kernel/src/cellrun.ts --cell c1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-061",
+  "session": "root",
+  "command": "Get-ChildItem -Recurse -Filter *.md docs | Select-Object FullName",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-062",
+  "session": "root",
+  "command": "Get-Content docs/notes.md -TotalCount 20",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-063",
+  "session": "root",
+  "command": "echo \"## Notes\" >> docs/notes.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose"
+ },
+ {
+  "id": "r3-ok-064",
+  "session": "root",
+  "command": "gh issue comment 84 --body \"$(cat <<'EOF'\ngit branch -f main and cp -r backup/state . are refused now; ps | xargs kill too.\nEOF\n)\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "an issue comment naming the forms"
+ },
+ {
+  "id": "r3-ok-065",
+  "session": "root",
+  "command": "git commit -m \"$(cat <<'EOF'\nguard: refuse cp -r backup/state . and git checkout -B main\n\nAlso taskkill by listing: Get-Process | % { Stop-Process -Id $_.Id }\nEOF\n)\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a commit message naming the forms"
+ },
+ {
+  "id": "r3-ok-066",
+  "session": "root",
+  "command": "grep -rn \"checkout -B\\|branch -f\" kernel/src | head",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a search"
+ },
+ {
+  "id": "r3-ok-067",
+  "session": "root",
+  "command": "rg -n \"Stop-Process|taskkill\" kernel/src --glob '*.ts'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a search"
+ },
+ {
+  "id": "r3-ok-068",
+  "session": "root",
+  "command": "mkdir -p /tmp/w && cd /tmp/w && git init -q && git checkout -B main && echo x > a.ts && git add . && git commit -qm x",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a throwaway repository in /tmp"
+ },
+ {
+  "id": "r3-ok-069",
+  "session": "root",
+  "command": "ls ../proj-cells/c1/cells/c1 && git -C ../proj-cells/c1 status --short && git -C ../proj-cells/c1 log --oneline -3",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "looking at a cell's worktree"
+ },
+ {
+  "id": "r3-ok-070",
+  "session": "root",
+  "command": "git diff main cell/c1 --stat -- cells/c1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-071",
+  "session": "root",
+  "command": "node kernel/src/cli.ts cell land --name c1 --message \"c1: task\" --check \"cd kernel && npm test\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-072",
+  "session": "root",
+  "command": "tasklist | findstr node",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing"
+ },
+ {
+  "id": "r3-ok-073",
+  "session": "root",
+  "command": "node -e \"const {execSync}=require('child_process'); console.log(execSync('git status --short').toString())\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "inline code reading"
+ },
+ {
+  "id": "r3-ok-074",
+  "session": "root",
+  "command": "if [ -f package.json ]; then npm test; else echo none; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "if/else"
+ },
+ {
+  "id": "r3-ok-075",
+  "session": "root",
+  "command": "for c in c1 other; do echo \"== $c\"; ls cells/$c | head -5; done",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a loop"
+ },
+ {
+  "id": "r3-ok-076",
+  "session": "root",
+  "command": "foreach ($c in 'c1','other') { git log --oneline -1 -- \"cells/$c\" }",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "PowerShell loop"
+ },
+ {
+  "id": "r3-ok-077",
+  "session": "root",
+  "command": "try { npm test } catch { Write-Host $_ } finally { Pop-Location }",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "PowerShell try"
+ },
+ {
+  "id": "r3-ok-078",
+  "session": "root",
+  "command": "$env:NODE_ENV = 'test'; npm test",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "PowerShell env"
+ },
+ {
+  "id": "r3-ok-079",
+  "session": "root",
+  "command": "$files = git diff --name-only main; $files | ForEach-Object { Write-Host $_ }",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "PowerShell assignment from git"
+ },
+ {
+  "id": "r3-ok-080",
+  "session": "cell",
+  "command": "$out = node src/a.ts test/fixtures/in.json; $out | Set-Content exit/out.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program's output through a variable"
+ },
+ {
+  "id": "r3-ok-081",
+  "session": "cell",
+  "command": "$v = 'c1'; \"cell: $v\" | Set-Content exit/name.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose"
+ },
+ {
+  "id": "r3-ok-082",
+  "session": "cell",
+  "command": "$json = Get-Content exit/a.json -Raw | ConvertFrom-Json; $json.n = 2; $json | ConvertTo-Json | Set-Content exit/a.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "json changed by a program"
+ },
+ {
+  "id": "r3-ok-083",
+  "session": "cell",
+  "command": "jq '.n = 2' exit/a.json > exit/a.tmp && mv exit/a.tmp exit/a.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "json changed by jq"
+ },
+ {
+  "id": "r3-ok-084",
+  "session": "cell",
+  "command": "curl -s https://example.com/schema.json -o test/fixtures/schema.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "download"
+ },
+ {
+  "id": "r3-ok-085",
+  "session": "cell",
+  "command": "git show main:cells/c1/src/a.ts > src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "git's output"
+ },
+ {
+  "id": "r3-ok-086",
+  "session": "cell",
+  "command": "ls src | Out-File exit/list.txt; Write-Output \"ok\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-087",
+  "session": "cell",
+  "command": "Write-Output \"result: $(node src/a.ts)\" | Tee-Object -FilePath exit/result.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose through Tee-Object"
+ },
+ {
+  "id": "r3-ok-088",
+  "session": "cell",
+  "command": "npm pkg set scripts.test=\"node --test\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "npm writes package.json itself"
+ },
+ {
+  "id": "r3-ok-089",
+  "session": "cell",
+  "command": "npm init -y > /dev/null && npm install --save-dev typescript",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-ok-090",
+  "session": "cell",
+  "command": "echo \"PORT=3000\" > .env.example",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "not source by the default list"
+ },
+ {
+  "id": "r3-ok-091",
+  "session": "cell",
+  "command": "cat src/a.ts | sed 's/const/let/' | head -3",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading"
+ },
+ {
+  "id": "r3-ok-092",
+  "session": "cell",
+  "command": "awk -F, '{print $1}' test/fixtures/data.csv > exit/col.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "awk's output"
+ },
+ {
+  "id": "r3-ok-093",
+  "session": "cell",
+  "command": "sort -u exit/a.txt -o exit/a.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "sort in place on prose"
+ },
+ {
+  "id": "r3-ok-094",
+  "session": "cell",
+  "command": "find . -name '*.md' -newer MODEL.md -exec ls -l {} \\;",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "find -exec ls"
+ },
+ {
+  "id": "r3-ok-095",
+  "session": "cell",
+  "command": "find exit -name '*.md' -exec sed -i 's/TODO/DONE/' {} +",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "sed -i by find on prose in the cell's own exit folder; refused as unnamed (strict on purpose?)"
+ },
+ {
+  "id": "r3-blk-001",
+  "session": "root",
+  "command": "Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like '*mail.ts watch*'} | ForEach-Object {Stop-Process -Id $_.ProcessId}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the COCKPIT incident with PowerShell's usual brace style: no space inside { }"
+ },
+ {
+  "id": "r3-blk-002",
+  "session": "root",
+  "command": "Get-Process node | % {Stop-Process -Id $_.Id -Force}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same, short"
+ },
+ {
+  "id": "r3-blk-003",
+  "session": "root",
+  "command": "Get-Process node | %{ Stop-Process -Id $_.Id }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "%{ written together"
+ },
+ {
+  "id": "r3-blk-004",
+  "session": "root",
+  "command": "foreach ($p in Get-Process node) {Stop-Process -Id $p.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "foreach, no space inside the braces"
+ },
+ {
+  "id": "r3-blk-005",
+  "session": "root",
+  "command": "Get-Process node | % {taskkill /PID $_.Id /F}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "taskkill in a tight block"
+ },
+ {
+  "id": "r3-blk-006",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object { Stop-Process -Id $_.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "only the closing brace tight: the pid word is `$_.Id}`, still unknown"
+ },
+ {
+  "id": "r3-blk-007",
+  "session": "root",
+  "command": "Get-Process node | % {$_.Kill()}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the method form, tight"
+ },
+ {
+  "id": "r3-blk-008",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object {\n  Stop-Process -Id $_.Id\n}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the block on lines of its own"
+ },
+ {
+  "id": "r3-blk-009",
+  "session": "root",
+  "command": "if ($ok) {git branch -f main abc123}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "forced branch move in a tight block"
+ },
+ {
+  "id": "r3-blk-010",
+  "session": "root",
+  "command": "if (Test-Path .git) {git checkout -B main origin/main}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with checkout -B"
+ },
+ {
+  "id": "r3-blk-011",
+  "session": "root",
+  "command": "try {git update-ref refs/heads/main abc123} catch {}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "update-ref in a tight try"
+ },
+ {
+  "id": "r3-blk-012",
+  "session": "cell",
+  "command": "if ($true) {git push . HEAD:main}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's git rule in a tight block"
+ },
+ {
+  "id": "r3-blk-013",
+  "session": "cell",
+  "command": "if ($true) {'const a = 1' | Set-Content src/a.ts}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source in a tight block"
+ },
+ {
+  "id": "r3-blk-014",
+  "session": "cell",
+  "command": "1..3 | ForEach-Object {\"line $_\" | Add-Content src/a.ts}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source appended in a tight block"
+ },
+ {
+  "id": "r3-blk-015",
+  "session": "cell",
+  "command": "1..3 | ForEach-Object { \"line $_\" | Add-Content src/a.ts }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with spaces"
+ },
+ {
+  "id": "r3-blk-016",
+  "session": "cell",
+  "command": "Get-ChildItem src -Filter *.ts | ForEach-Object { (Get-Content $_.FullName) -replace 'a','b' | Set-Content $_.FullName }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell's find | sed -i: every source file rewritten by -replace, the file named by $_"
+ },
+ {
+  "id": "r3-blk-017",
+  "session": "cell",
+  "command": "Get-ChildItem src -Filter *.ts | ForEach-Object {(Get-Content $_.FullName) -replace 'a','b' | Set-Content $_.FullName}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same, tight"
+ },
+ {
+  "id": "r3-blk-018",
+  "session": "cell",
+  "command": "if ($true) {node <fixture>/proj/kernel/src/mail.ts watch --as root}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "root's mail in a tight block"
+ },
+ {
+  "id": "r3-blk-019",
+  "session": "root",
+  "command": "if (Test-Path backup) {Copy-Item backup\\state . -Recurse -Force}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a copy in, tight block"
+ },
+ {
+  "id": "r3-blk-020",
+  "session": "root",
+  "command": "if (Test-Path ..\\proj-cells\\c1) {Remove-Item ..\\proj-cells\\c1 -Recurse -Force}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a worktree removed, tight block"
+ },
+ {
+  "id": "r3-blk-021",
+  "session": "root",
+  "command": "if (Test-Path state\\views) {Remove-Item state\\views -Recurse -Force}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an older check behind a tight block (both hooks?)"
+ },
+ {
+  "id": "r3-blk-022",
+  "session": "root",
+  "command": "if (Test-Path state\\views) { Remove-Item state\\views -Recurse -Force }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with spaces"
+ },
+ {
+  "id": "r3-blk-023",
+  "session": "root",
+  "command": "Get-Process node | Where-Object {$_.StartTime -lt (Get-Date).AddHours(-1)} | Select-Object Id,StartTime",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "listing with a tight filter"
+ },
+ {
+  "id": "r3-blk-024",
+  "session": "root",
+  "command": "git branch | ForEach-Object {$_.Trim()}",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday tight block"
+ },
+ {
+  "id": "r3-blk-025",
+  "session": "root",
+  "command": "git worktree unlock ../proj-cells/c1 && git worktree remove --force ../proj-cells/c1",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "unlock, then one force: the same end as remove -f -f, which is refused; the rm refusal's own text names this way"
+ },
+ {
+  "id": "r3-blk-026",
+  "session": "root",
+  "command": "git worktree remove --force ../proj-cells/c1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "one force alone: git's lock still stops it"
+ },
+ {
+  "id": "r3-blk-027",
+  "session": "root",
+  "command": "find state/views -type f -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "views cleared file by file"
+ },
+ {
+  "id": "r3-blk-028",
+  "session": "root",
+  "command": "find ../proj-cells/c1 -type f -delete",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "a cell's worktree emptied file by file (like the accepted `! -name keep` form)"
+ },
+ {
+  "id": "r3-blk-029",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object {Write-Host $_.Id}; Stop-Process -Id 4242",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a listing printed, a written pid stopped"
+ },
+ {
+  "id": "r3-str-001",
+  "session": "root",
+  "command": "powershell \"Get-Process node | ForEach-Object { Stop-Process -Id $_.Id }\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell run from bash with its command as the first argument (no -Command): the string is not read"
+ },
+ {
+  "id": "r3-str-002",
+  "session": "root",
+  "command": "powershell -NoProfile -Command \"Get-Process node | ForEach-Object { Stop-Process -Id $_.Id }\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "with -Command: read"
+ },
+ {
+  "id": "r3-str-003",
+  "session": "root",
+  "command": "pwsh -NoProfile -c 'Get-CimInstance Win32_Process | % { Stop-Process -Id $_.ProcessId }'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "pwsh -c"
+ },
+ {
+  "id": "r3-str-004",
+  "session": "root",
+  "command": "bash -lc \"ps aux | grep node | awk '{print \\$2}' | xargs kill\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "bash -lc: flags written together are not read"
+ },
+ {
+  "id": "r3-str-005",
+  "session": "root",
+  "command": "bash -lc \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "forced branch move in bash -lc"
+ },
+ {
+  "id": "r3-str-006",
+  "session": "root",
+  "command": "bash -c \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "bash -c: read"
+ },
+ {
+  "id": "r3-str-007",
+  "session": "root",
+  "command": "powershell \"git checkout -B main origin/main\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell positional command"
+ },
+ {
+  "id": "r3-str-008",
+  "session": "root",
+  "command": "cmd //c \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "Git Bash's cmd //c"
+ },
+ {
+  "id": "r3-str-009",
+  "session": "root",
+  "command": "cmd.exe /d /c \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cmd /d /c: read"
+ },
+ {
+  "id": "r3-str-010",
+  "session": "cell",
+  "command": "bash -lc \"echo 'const a = 1;' > src/a.ts\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source in bash -lc"
+ },
+ {
+  "id": "r3-str-011",
+  "session": "cell",
+  "command": "powershell \"Set-Content src/a.ts 'const a = 1'\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source, PowerShell positional command"
+ },
+ {
+  "id": "r3-str-012",
+  "session": "cell",
+  "command": "powershell -Command \"Set-Content src/a.ts 'const a = 1'\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "with -Command: read"
+ },
+ {
+  "id": "r3-str-013",
+  "session": "cell",
+  "command": "bash -lc \"git push . HEAD:main\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's git rule in bash -lc"
+ },
+ {
+  "id": "r3-str-014",
+  "session": "cell",
+  "command": "sh -ec 'git push . HEAD:main'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "sh -ec"
+ },
+ {
+  "id": "r3-str-015",
+  "session": "root",
+  "command": "bash -lc \"cp -r backup/state .\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a copy in, bash -lc"
+ },
+ {
+  "id": "r3-str-016",
+  "session": "root",
+  "command": "powershell \"Remove-Item ..\\proj-cells\\c1 -Recurse -Force\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a worktree removed, PowerShell positional command"
+ },
+ {
+  "id": "r3-str-017",
+  "session": "root",
+  "command": "bash -lc \"npm test\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r3-str-018",
+  "session": "root",
+  "command": "powershell \"Get-Process node | Select-Object Id, Path\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday listing"
+ },
+ {
+  "id": "r3-str-019",
+  "session": "root",
+  "command": "powershell -File tools/report.ps1",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a script"
+ },
+ {
+  "id": "r3-str-020",
+  "session": "root",
+  "command": "(git branch -f main abc123)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "subshell"
+ },
+ {
+  "id": "r3-str-021",
+  "session": "root",
+  "command": "x=$(git checkout -B main origin/main 2>&1); echo \"$x\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "substitution"
+ },
+ {
+  "id": "r3-str-022",
+  "session": "root",
+  "command": "true && git checkout -B main origin/main 2>&1 | tail -2",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "chain and pipe"
+ },
+ {
+  "id": "r3-str-023",
+  "session": "root",
+  "command": "if true;then git branch -f main abc123;fi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "no spaces round the semicolons"
+ },
+ {
+  "id": "r3-str-024",
+  "session": "root",
+  "command": "winpty git branch -f main abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "winpty before git (Git Bash): for the record"
+ },
+ {
+  "id": "r3-str-025",
+  "session": "root",
+  "command": "FOO=1 rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an assignment before rm (both hooks?)"
+ },
+ {
+  "id": "r3-str-026",
+  "session": "root",
+  "command": "GIT_PAGER=cat git branch -f main abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an assignment before git: read by the new rule"
+ },
+ {
+  "id": "r3-cd-001",
+  "session": "root",
+  "command": "[ -d /tmp/build ] && cd /tmp/build; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "for comparison with r3-reg-001: a cd behind && that may not happen; both hooks follow it"
+ },
+ {
+  "id": "r3-cd-002",
+  "session": "root",
+  "command": "cd /tmp/nope 2>/dev/null; git reset --hard",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "for comparison: a cd that fails; both hooks follow it"
+ },
+ {
+  "id": "r3-cd-003",
+  "session": "root",
+  "command": "if [ -d build ]; then cd build; fi; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a relative conditional cd: still refused (the path stays relative)"
+ },
+ {
+  "id": "r3-cd-004",
+  "session": "cell",
+  "command": "grep -rl foo exit | xargs sed -i 's/foo/bar/'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "default world: unnamed edit refused (compare the empty-list world)"
+ }
+]

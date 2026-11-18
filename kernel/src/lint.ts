@@ -86,10 +86,39 @@ export function lintCellWorktrees(root: string): { errors: string[]; warnings: s
   return { errors, warnings };
 }
 
+// The log against git (#54): every entry committed in HEAD is still here, and unchanged. The chain check below can't
+// see this: an older state/ copied over the log (`cp -r backup/state .`), or its last entries deleted, is a shorter
+// chain that is whole. Entries not committed yet are new, and fine. Outside a repository there is nothing to compare.
+export function lintLogInHead(cellDir: string): string[] {
+  // --no-optional-locks: a lint never takes the index lock from a land running beside it
+  const git = (...a: string[]) => spawnSync('git', ['--no-optional-locks', '-C', cellDir, '-c', 'core.quotepath=off', ...a], { encoding: 'utf8' });
+  const r = git('status', '--porcelain=v1', '-z', '--no-renames', '--', 'state/log');
+  if (r.status !== 0 || r.error) return [];
+  const top = git('rev-parse', '--show-toplevel').stdout.trim();           // the paths are from the checkout's top, wherever this runs
+  const out: string[] = [];
+  for (const line of r.stdout.split('\0').filter(Boolean)) {
+    const xy = line.slice(0, 2), path = line.slice(3), name = path.replace(/^.*\//, '');
+    if (xy === '??' || !/[DMTU]/.test(xy) || name === '.gitkeep') continue; // .gitkeep is no entry: gone once the folder has some
+    const staged = xy[0] === 'A';                                          // never committed: staged, then changed or deleted
+    // git's "modified" also says a mode bit or a line ending differs (a CRLF copy of an LF entry, a copy from WSL):
+    // changed means its text is not what was committed (review 3)
+    if (!xy.includes('D')) {
+      const was = spawnSync('git', ['--no-optional-locks', '-C', cellDir, 'show', `${staged ? '' : 'HEAD'}:${path}`], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      let now: string | null = null;
+      try { now = readFileSync(join(top, path), 'utf8'); } catch { /* unreadable: reported */ }
+      const lf = (s: string) => s.replace(/\r\n/g, '\n');
+      if (was.status === 0 && now !== null && lf(was.stdout) === lf(now)) continue;
+    }
+    out.push(`${name}: a log entry ${staged ? 'staged for commit' : 'committed in HEAD'} is ${xy.includes('D') ? 'missing' : 'changed'} here. The log is append-only: an older copy of state/ was put over it, or an entry was deleted or edited by hand. The operator restores it from their prompt: ! git -C "${top}" checkout ${staged ? '' : 'HEAD '}-- ${path}`);
+  }
+  return out;
+}
+
 export function lint(cellDir: string): LintResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const dir = logDir(cellDir);
+  errors.push(...lintLogInHead(cellDir));
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => f !== '.gitkeep').sort() : [];
   let prev: string | null = null;
   const kinds = new Map<string, string>();

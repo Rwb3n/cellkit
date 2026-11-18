@@ -76,6 +76,195 @@ test('shell guard: a cell session writes inside its folder only, from the shell 
   assert.equal(shellIn(root, `cp a.ts ${root}/kernel/src/a.ts`), 0);                         // root session: no cell boundary
 });
 
+// #82 (COCKPIT): two cells wrote source files through heredocs and sed; the shell ate backslashes, and a secret-mask
+// regex came out with a gap no test covered.
+test('shell guard: a cell\'s session types no source file through the shell (heredoc, echo, printf, sed -i, a literal Set-Content); a program\'s output is fine; root only if the project says so (#82)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-typed-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(`${root}/state/bedrock`, { recursive: true });
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  const typed = [
+    `cat > src/mask.ts <<'EOF'\nexport const re = /\\w+@[\\w.]+/;\nEOF`, `cat <<EOF > src/mask.ts\nx\nEOF`, `cat <<EOF | tee src/mask.ts\nx\nEOF`, `tee src/mask.ts <<'EOF'\nx\nEOF`,
+    `printf '%s\\n' 'const a = 1;' > src/a.ts`, `echo 'export const a = 1' >> src/a.ts`, `echo x >src/a.py && npm test`, `echo '{"n": 1}' > state/out/metrics.json`,
+    `sed -i 's/\\\\w/\\\\d/' src/mask.ts`, `sed -i.bak -e 's/a/b/' src/a.ts`, `sed --in-place 's/a/b/' adapters/in.py`, `perl -pi -e 's/a/b/' src/a.ts`,
+    `'const a = 1' | Set-Content src/a.ts`, `Set-Content -Path src/a.ts -Value 'const a = 1'`, `Add-Content src/a.ts -Value "x"`, `"x" | Out-File -FilePath src/a.ts`,
+    `@'\nconst a = 1\n'@ | Set-Content src/a.ts`, `echo x | tee src/a.ts`, `bash -c "echo x > src/a.ts"`, `echo x > ${cell}/src/a.ts`, `"const a = 1" > src/a.ts`,
+    // the same acts, spelled otherwise (review 1): a space after <<, none before it, a value by position, PowerShell's
+    // sed -i and its variables, a loop, a group, a subshell, a cd, sed on files a pipe names
+    `cat > src/mask.ts << 'EOF'\nx\nEOF`, `cat << 'EOF' > src/mask.ts\nx\nEOF`, `cat >src/mask.ts<<EOF\nx\nEOF`, `Set-Content src/a.ts 'const a = 1'`, `Add-Content src/a.ts "x"`,
+    `(Get-Content src/a.ts) -replace 'foo','bar' | Set-Content src/a.ts`, `(Get-Content src/a.ts -Raw).Replace('foo','bar') | Set-Content src/a.ts -NoNewline`,
+    `$c = (Get-Content src/a.ts) -replace 'a','b'; $c | Out-File src/a.ts`, `$c = Get-Content src/a.ts -Raw; $c = $c -replace 'a', 'x'; Set-Content src/a.ts $c`,
+    `$code = @'\nconst a = 1\n'@\n$code | Set-Content src/a.ts`, `New-Item -Path src/a.ts -Value 'const a = 1'`, `'x' | Tee-Object -FilePath src/a.ts`,
+    `for f in a b; do echo 'x' >> src/a.ts; done`, `if true; then echo x > src/a.ts; fi`, `{ echo a; echo b; } > src/a.ts`, `(cd src && echo 'x' > a.ts)`, `cd src && echo x > a.ts`,
+    `grep -rl foo src | xargs sed -i 's/foo/bar/'`, `find src -name '*.ts' -exec sed -i 's/a/b/' {} +`, `gawk -i inplace '{print}' src/a.ts`, `echo FROM node > Dockerfile`,
+    // review 2: back from another folder (popd, cd -, a subshell's close); -replace anywhere up the pipeline or in the
+    // value; a file only a loop's variable names; perl through xargs and find; a here-string
+    'pushd /tmp; ls; popd; echo x > src/a.ts', 'cd /tmp && ls && cd - && echo x > src/a.ts', '(cd /tmp && ls); echo x > src/a.ts',
+    `Get-Content src/a.ts | ForEach-Object { $_ -replace 'a','b' } | Set-Content src/a.ts`, `Set-Content -Path src/a.ts -Value ((Get-Content src/a.ts) -replace 'a','b')`,
+    `[regex]::Replace((Get-Content src/a.ts -Raw), 'a', 'b') | Set-Content src/a.ts`, `for f in src/*.ts; do sed -i 's/a/b/' "$f"; done`, `for f in src/*.ts; do perl -pi -e 's/a/b/' $f; done`,
+    `find src -name '*.ts' -exec perl -pi -e 's/a/b/' {} +`, `grep -rl foo src | xargs perl -pi -e 's/foo/bar/'`, `cat <<< 'const a = 1' > src/a.ts`,
+  ];
+  for (const c of typed) assert.equal(shellIn(cell, c), 2, c);
+  const said = spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: cell, tool_input: { command: `cat > src/mask.ts <<'EOF'\nx\nEOF` } }), env: { ...process.env, CLAUDE_PROJECT_DIR: cell }, encoding: 'utf8' }).stderr;
+  assert.match(said, /^Blocked: src\/mask\.ts is a source file, and that command types its content through the shell \(a heredoc redirected to it\).*a quoted heredoc too.*Write tool.*Edit/);
+  const unnamed = spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: cell, tool_input: { command: `grep -rl foo src | xargs sed -i 's/foo/bar/'` } }), env: { ...process.env, CLAUDE_PROJECT_DIR: cell }, encoding: 'utf8' }).stderr;
+  assert.match(unnamed, /^Blocked: that command edits files in place through the shell \(sed -i run by xargs\) without naming them.*Or name the files/);
+  for (const c of [
+    'node gen.js > src/generated.ts', 'git show HEAD:cells/c1/src/a.ts > src/a.ts', 'npx prettier src/a.ts > src/a.formatted.ts', 'cp src/a.ts src/b.ts', 'npm test > test/out.json 2>&1',
+    'python tools/build.py | tee exit/table.json', 'cat src/a.ts src/b.ts > src/all.ts',                    // a program's output, a copy, a join of files
+    `echo 'done' > exit/report.md`, `cat > exit/notes.txt <<'EOF'\nfree text\nEOF`, `echo x >> test/run.log`, `printf 'a,b\\n' > exit/rows.csv`,   // prose and data
+    `echo x > ${tmpdir().replaceAll('\\', '/')}/scratch.ts`, 'echo x > /tmp/probe.py', 'echo x > /dev/null', 'echo x > $OUT',   // not in the repository; can't be judged
+    `sed -n '1,5p' src/a.ts`, `sed 's/a/b/' src/a.ts`, `grep -n "echo x > a.ts" src/a.ts`, `git commit -m "never echo x > src/a.ts"`,
+    `node ../../kernel/src/mail.ts send --to root --kind question --body "may I echo x > src/a.ts?"`,
+    // review 1: the folder a cd names; a program, a variable or an expression is not typed text; stderr's file; perl -M
+    `cd /tmp && cat > p.mjs <<'EOF'\nx\nEOF`, `pushd /tmp; sed -i 's/a/b/' copy.ts; popd`, 'cd $SOMEWHERE && echo x > a.ts', `"./tools/gen.sh" > src/generated.ts`,
+    `echo "$(node gen.js)" > src/a.json`, `printf '%s\\n' "$OUT" > exit/result.json`, 'Set-Content -Path exit/b.json -Value $c', 'Set-Content -Path exit/out.json -Value ($j | ConvertTo-Json)',
+    `perl -Mstrict -ne 'print' src/a.ts src/b.ts`, 'echo x > exit/notes.txt 2> exit/err.json', 'Get-Content src/a.ts | Set-Content src/b.ts', `sed -i 's/a/b/' exit/notes.md`,
+    '$c = Get-Content src/a.ts -Raw; Set-Content src/b.ts $c', 'New-Item -ItemType File src/a.ts',
+    // review 2: unnamed files that are plainly not the repository's; a program at a path with a space; Push-Location
+    `cd /tmp/x && find . -name '*.txt' -exec sed -i 's/a/b/' {} +`, `find /tmp/x -name '*.txt' -exec sed -i 's/a/b/' {} +`, `"C:\\Program Files\\tool\\gen.exe" > src/gen.ts`,
+    `Push-Location /tmp; 'x' | Set-Content probe.ps1; Pop-Location`, 'pushd /tmp; echo x > probe.js; popd',
+  ]) assert.equal(shellIn(cell, c), 0, c);
+
+  for (const c of [typed[0], typed[4], typed[8]]) assert.equal(shellIn(root, c.replaceAll('src/', 'kernel/src/')), 0, `${c} (root)`);   // root: not unless the project says so
+  const guards = `${root}/state/bedrock/guards.json`, withGuards = (g: object, who: string, c: string) => { writeFileSync(guards, JSON.stringify(g)); return shellIn(who, c, { CELLKIT_CONFIG: guards }); };
+  assert.equal(withGuards({ source: { root: true } }, root, `echo x > kernel/src/a.ts`), 2);
+  assert.equal(withGuards({ source: { root: true } }, root, `node gen.js > kernel/src/a.ts`), 0);
+  assert.equal(withGuards({ source: { files: ['cells/*/exit/**'] } }, cell, `echo x > src/a.ts`), 0);     // the project's list replaces the default
+  assert.equal(withGuards({ source: { files: ['cells/*/exit/**'] } }, cell, `echo x > exit/report.md`), 2);
+  assert.equal(withGuards({ source: { files: ['cells/*/exit/**'] } }, cell, `cd exit && echo x > report.md`), 2);   // from the folder the command is in by then
+  assert.equal(withGuards({ source: { root: 'yes' } }, cell, 'ls'), 2);
+  assert.equal(withGuards({ source: { files: ['../elsewhere/**'] } }, cell, 'ls'), 2);
+  assert.equal(withGuards({ source: { files: [] } }, cell, `echo x > src/a.ts`), 0);                      // an empty list switches it off
+  assert.equal(withGuards({ source: { files: 'all' } }, cell, 'ls'), 2);                                    // a list of globs, or nothing runs
+  assert.equal(withGuards({ source: { roots: true } }, cell, 'ls'), 2);
+});
+
+// #54: what #49 left open. A copy or move INTO a folder lands its sources under their own names; and a cell's worktree
+// is outside the repository, where the kernel-owned anchors don't reach.
+test('shell guard: a whole state, docs or cells folder copied or moved in is refused, and a cell\'s worktree removed from outside; files by name are fine (#54)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-copy-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  const at = (c: string, cwd = root) => shellIn(root, c, {}, cwd);
+  for (const c of ['cp -r backup/state .', 'cp -r ../backup/state/ ./', 'mv old/docs .', 'cp -R /tmp/x/cells .', 'cp -r backup/log state/', 'cp -r backup/bedrock state', 'mv /tmp/views state/',
+    'cp -r backup/* .', 'cp -r backup/st* .', 'Copy-Item -Recurse backup/state .', 'Move-Item old/docs .', 'cd .. && cp -r backup/state ' + root.replace(/^.*\//, ''),
+    'cp -r backup/state cells/c1', 'cp -r a/log cells/c1/state', `bash -c "cp -r backup/state ."`, 'robocopy_placeholder_never && mv x/state .',
+    // review 1: the target named by an option, a line continued, alternatives in braces
+    'cp -r -t . backup/state', 'cp -r --target-directory=. backup/state', 'Copy-Item -Destination . -Path backup/state -Recurse', 'cp -r backup/state \\\n  .', 'cp -r backup/{state,docs} .',
+    // review 2, each refused before this batch and to stay so: a file called like a keyword hides nothing after it, -T
+    // is not -t, and a comment continues nothing
+    'cp done "state/log/000001.x.json"', 'touch fi "state/log/x"', 'cp -T x.json "state/bedrock/guards.json"', '# tidy up \\\nrm -rf "state/views"', 'if [ ! -d x ]; then rm -rf "state/views"; fi',
+    'if ($true) { Remove-Item "state\\log" -Recurse }', 'find state -delete', 'find . -delete'])
+    assert.equal(at(c), 2, c);
+  for (const c of [`find . -name '*.tmp' -delete`, `find . -type f -name '*.log' -delete`, 'echo todo: do rm -rf scratch later', 'mv -t docs a.md b.md'])
+    assert.equal(at(c), 0, c);
+  // a glob, `dir/.`, cp -T, rsync's `dir/` and robocopy bring what the folder holds: read from the disk
+  mkdirSync(`${root}/kept/state/log`, { recursive: true });
+  mkdirSync(`${root}/dist/assets`, { recursive: true });
+  writeFileSync(`${root}/dist/index.html`, '');
+  for (const c of ['cp -r kept/* .', 'cp -r kept/st* .', 'cp -r kept/[s]tate .', 'cp -r kept/. .', 'cp -r kept/state/. state/', 'cp -rT kept/state state', 'cp -r -T kept/state state', 'cp -T -r kept/state state',
+    'rsync -a kept/state/ state/', 'rsync -a kept/state .',
+    'robocopy kept\\state state /E /MIR', 'xcopy /E /Y kept\\state state\\', 'unzip -q b.zip -d fresh && cp -r fresh/* .'])
+    assert.equal(at(c), 2, c);
+  for (const c of ['cp -r dist/* .', 'mv dist/* .', 'cp -r dist/. .', 'Copy-Item dist\\* . -Recurse', 'rsync -a dist/ .', 'cp -r kept/*.md .', `cp 'notes[.md' docs/`, 'cp a[z-a].md docs/'])
+    assert.equal(at(c), 0, c);
+  assert.match(spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: root, tool_input: { command: 'cp -r fresh/* .' } }), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8' }).stderr,
+    /What fresh\/\* holds can't be read before the command runs\. If it holds no state, run this copy as a command of its own once the folder is there/);
+  assert.match(spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: root, tool_input: { command: 'cp -r backup/state .' } }), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8' }).stderr,
+    /^Blocked: that command brings backup\/state in as state, which is or holds kernel-owned paths/);
+  assert.equal(at('cp -r backup/*.md docs/'), 2);                            // a folder not there yet may hold an assumptions.md (review 3)
+  for (const c of ['cp notes.md docs/', 'cp a.md b.md docs/', 'mv draft.md docs/plan.md', 'cp -r backup/state /tmp/elsewhere', 'cp -r src/state lib/', 'cp -r fixtures/docs cells/c1/test/fixtures',
+    'cp -r assets docs/', 'cp kernel/package.json .', 'cp -r kept/*.md docs/', 'cp -r backup/state-old .', 'mv tmp/statement.txt .', 'git commit -m "cp -r backup/state . is refused"',
+    'cp -r cells/c1/exit/reports docs/'])
+    assert.equal(at(c), 0, c);
+
+  // a cell's worktree: <repo>-cells/<cell> by default, or where guards.json worktrees.home says
+  const home = `${root}-cells`;
+  for (const c of [`rm -rf ../${home.replace(/^.*\//, '')}/c1`, `rm -rf ${home}/c1`, `rm -rf ${home}`, `Remove-Item -Recurse -Force ${home}/c1`, `rm -rf ${home}/*`, `cd .. && rm -rf ${home.replace(/^.*\//, '')}/c1`,
+    `mv ${home}/c1 /tmp/gone`, `rm -rf ${home}/c1/*`, `rm -rf ${home}/c1/.git`, `rm -rf ${home}/c1/cells`, `rm -rf ${home}/c1/cells/c1`, `find ${home}/c1 -delete`])
+    assert.equal(at(c), 2, c);
+  for (const c of [`rm -rf ${home}/c1/cells/c1/test/tmp`, `rm ${home}/c1/cells/c1/exit/old.md`, `rm -rf ${root}-old`, 'rm -rf /tmp/scratch', 'rm -rf node_modules'])
+    assert.equal(at(c), 0, c);
+  mkdirSync(`${root}/state/bedrock`, { recursive: true });
+  writeFileSync(`${root}/state/bedrock/guards.json`, JSON.stringify({ worktrees: { home: '../.cells/proj' } }));
+  const placed = resolve(root, '../.cells/proj').replaceAll('\\', '/');
+  assert.equal(shellIn(root, `rm -rf ${placed}/c1`, { CELLKIT_CONFIG: `${root}/state/bedrock/guards.json` }), 2);
+  assert.equal(shellIn(root, `rm -rf ${home}/c1`, { CELLKIT_CONFIG: `${root}/state/bedrock/guards.json` }), 0);   // no longer where its cells are
+});
+
+// #54: a branch moved by force loses the commits it held, as reset --hard does. #84 (from the reviews of #72 and #101):
+// a cell's session changing what the landing compares against, or running root's mail as root.
+test('shell guard: no session moves a branch by force; a cell\'s session moves no other branch, changes no git setting, and runs only its own mail.ts (#54, #84)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-git-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  const forced = ['git checkout -B main HEAD~3', 'git switch -C main abc123', 'git switch --force-create main abc123', 'git branch -f cell/c1 abc123', 'git branch --force main HEAD~1',
+    'git -C . branch -M old main', 'git branch -C old main', 'git checkout -qB main abc123', `bash -c "git branch -f main HEAD~2"`,
+    // review 1: by another command, after a keyword or in a block, on a continued line, abbreviated, through xargs
+    'git update-ref refs/heads/main abc123', 'git push . +abc123:main', 'git fetch . +abc123:main', 'git push -f . abc123:main', 'if git rev-parse x; then git checkout -B main abc123; fi',
+    'for b in a b; do git branch -f $b main; done', 'if ($ok) { git branch -f main abc123 }', 'git branch \\\n  -f main abc123', 'git branch --forc main abc123', 'xargs git branch -f main < sha.txt',
+    'git worktree remove -f -f ../x', 'git worktree remove --force --force ../x',
+    // review 2: back in this repository after another folder; the branch that is checked out; this repository as ./
+    'pushd /tmp; ls; popd; git branch -f main abc123', 'cd /tmp && ls && cd - && git checkout -B main abc123', 'git update-ref HEAD abc123', 'git push ./ +abc123:main',
+    '$r = git branch -f main abc123', '! git branch -f main abc123', 'while git branch -f main abc123; do sleep 1; done'];
+  for (const c of forced) for (const who of [root, cell]) assert.equal(shellIn(who, c), 2, `${c} (${who === root ? 'root' : 'cell'})`);
+  for (const c of ['git checkout -b feature', 'git switch -c feature', 'git branch feature', 'git branch -d merged', 'git checkout main', 'git commit -m "never git branch -f main"',
+    'git push origin main', 'git config user.name t', 'git tag -a v1.0.0 -m x', 'git gc', 'git fetch origin main:main', 'git worktree prune', `node kernel/src/mail.ts send --to c1 --body x`,
+    `node kernel/src/mail.ts watch --root ${root} --as root`, 'git push . HEAD:main', 'git worktree remove ../x', 'git branch -m old new', 'git branch --format "%(refname)"',
+    // another repository's branches are its own
+    'cd /tmp/elsewhere && git init && git branch -M main', 'git -C /tmp/newrepo branch -M main', 'git -C /tmp/newrepo checkout -B main abc123'])
+    assert.equal(shellIn(root, c), 0, `${c} (root)`);                        // root's own acts: unaffected
+  const said9 = (who: string, c: string) => spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: who, tool_input: { command: c } }), env: { ...process.env, CLAUDE_PROJECT_DIR: who }, encoding: 'utf8' }).stderr;
+  assert.match(said9(root, 'git branch -M main'), /^Blocked: git branch with -M or -C renames or copies over a branch that already has the new name.*they run it from their prompt/);
+  assert.match(said9(cell, 'git branch -f main abc123'), /^Blocked: git branch with -f moves a branch that exists.*with it\. If this is truly needed, say what and why in your reply\.\n$/);   // a headless cell has no operator's prompt
+  assert.doesNotMatch(said9(cell, 'git branch -f main abc123'), /A new branch needs no force/);   // nor may it make a branch (rule 10)
+
+  const cellOnly = [
+    'git push . HEAD:main', 'git push origin HEAD', 'git update-ref refs/heads/main HEAD', 'git branch main2 HEAD', 'git branch -D other', 'git fetch . HEAD:main',   // another branch moved
+    'git config diff.external ./d.sh', 'git config --local filter.x.clean cat', 'git config set diff.x.textconv cat', 'git config --unset core.autocrlf', 'git config -e',
+    'git replace abc123 def456', 'git update-index --assume-unchanged test/a.test.ts', 'git update-index --skip-worktree test/a.test.ts',                               // settings and marks
+    'git gc --prune=now', 'git prune', 'git reflog expire --expire=now --all', 'git worktree add ../x', 'git remote set-url origin x', 'git tag -d v1', 'git tag mine',
+    'git symbolic-ref HEAD refs/heads/main', 'cd ../.. && git -C . push . HEAD:main', `sh -c 'git update-ref refs/heads/main HEAD'`,
+    // root's mail, run as root
+    `node ${root}-main/kernel/src/mail.ts watch`, 'cd ../../../repo && node kernel/src/mail.ts watch --as root', 'node ../../kernel/src/mail.ts watch --root ../../../repo',
+    'node ../../kernel/src/mail.ts status --root=D:/x', 'cd $MAIN && node kernel/src/mail.ts send --to c2 --body x', 'node ../../../other/kernel/src/mail.ts send --to c2 --body x',
+    // review 1
+    'git pull . HEAD:main', 'git fetch origin main:main', 'git repack -ad', 'git tag -l -d v1', 'git tag --delete v1', 'if true; then git push . HEAD:main; fi', 'git branch -m old new', 'git branch -c old new',
+    'git branch --delete other', 'git branch --move old new', 'git branch -u origin/main', 'git remote prune origin', 'git remote add up x', 'git remote rename a b', 'git reflog delete HEAD@{1}',
+    'git filter-branch --tree-filter x HEAD', 'git pack-refs --all', 'git fast-import', 'git worktree remove ../x', 'git worktree lock ../x', 'git update-index --add f.ts', 'git update-index f.ts',
+    'git config --type bool core.autocrlf true', 'git push --dry-run', 'node ../../kernel/src/mail.ts send --root ../.. --to root --body x',
+    // review 2: flags that do not make git list (checked with git: each of these creates main2, or the tag)
+    'git branch -v main2 HEAD', 'git branch --sort=refname main2', 'git branch --color main2', 'git branch --format=x main2', 'git tag --sort=refname mine', 'git tag --color mine',
+    'pushd /tmp; ls; popd; git push . HEAD:main', 'cd /tmp && ls; cd -; git update-ref refs/heads/other HEAD', 'git fetch --depth 1 . HEAD:main',
+    // the cell boundary, refused before this batch and to stay so (as the kernel-owned ones above)
+    'cp done ../../kernel/src/x.ts', 'rm -rf done ../../docs', 'mkdir -p done ../../newdir', 'cp -T src/a.ts ../../kernel/src/a.ts', '# note \\\ncp src/a.ts ../../kernel/src/a.ts',
+  ];
+  for (const c of cellOnly) assert.equal(shellIn(cell, c), 2, c);
+  const said = spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: cell, tool_input: { command: 'git push . HEAD:main' } }), env: { ...process.env, CLAUDE_PROJECT_DIR: cell }, encoding: 'utf8' }).stderr;
+  assert.match(said, /^Blocked: a cell's session doesn't run git push this way: it changes what root's landing compares your work against/);
+  for (const c of [
+    'git status', 'git diff', 'git log --oneline -5', 'git show HEAD:cells/c1/x.ts', 'git branch', 'git branch -a -v', 'git branch --show-current', 'git tag -l', 'git tag --list "v*"',
+    'git config --get core.autocrlf', 'git config user.name', 'git config --list', 'git config get core.autocrlf', 'git fetch origin', 'git remote -v', 'git worktree list', 'git reflog',
+    'git ls-files --eol', 'git symbolic-ref HEAD', 'echo "git push . HEAD:main is refused" > exit/notes.md',
+    'node ../../kernel/src/mail.ts send --to root --kind question --body "which sheet?"', 'node ../../kernel/src/mail.ts status',
+    `node ${root}/kernel/src/mail.ts send --to root --kind blocked --body x`, 'cd exit && node ../../../kernel/src/mail.ts status', 'cat ../../kernel/src/mail.ts | head -5',
+    'echo "never mail.ts --root, nor another checkout\'s mail.ts" > exit/notes.md',
+    // review 1: what only reads; another repository; a file that is only named, or the cell's own of that name
+    `git branch --list 'cell/*'`, 'git branch --contains HEAD', 'git branch --merged main', 'git branch --points-at HEAD', 'git branch -a --sort -committerdate', 'git branch -r', 'git branch -vv',
+    'git tag --contains HEAD', 'git tag -n 5', 'git tag -n5', 'git config --type bool core.autocrlf', 'git config --type=bool --get core.autocrlf', 'git fetch https://github.com/x/y.git', 'git remote update',
+    'git update-index --refresh', 'git update-index -q --refresh', 'git update-index --chmod=+x tools/run.sh', 'cd /tmp/other && git branch -a --contains abc123; git tag v1', 'git -C /tmp/other push origin main',
+    'grep -n "release" ../../kernel/src/mail.ts', `diff ../../kernel/src/mail.ts ${root}-main/kernel/src/mail.ts`, 'wc -l src/mail.ts', 'node --test src/mail.ts', 'npx tsc --noEmit src/mail.ts',
+    'node src/mail.ts --root x', 'node "$CLAUDE_PROJECT_DIR/../../kernel/src/mail.ts" send --to root --kind question --body x',
+    `cat ${root}-main/kernel/src/mail.ts | head -3`, 'git fetch origin --upload-pack ssh:x', 'git branch --format "%(refname)"', 'git branch --sort -committerdate --list "cell/*"', 'git tag -l "v*" --sort=refname',
+  ]) assert.equal(shellIn(cell, c), 0, c);
+  assert.match(said9(cell, 'cd $MAIN && node kernel/src/mail.ts status'), /which checkout's mail\.ts that is can't be told from the command/);
+  assert.match(said9(cell, `node ${root}-main/kernel/src/mail.ts status`), /is not this worktree's own mail\.ts/);
+});
+
 test('guards.json: a project adds operator-only commands and protected paths without editing the kernel', () => {
   const root = mkdtempSync(join(tmpdir(), 'cellkit-config-')).replaceAll('\\', '/');
   mkdirSync(`${root}/state/bedrock`, { recursive: true });
@@ -314,6 +503,53 @@ test('shell guard: nobody kills processes by name (other projects\' runners die 
     assert.equal(tryShell(c), 2, c);
   for (const c of ['taskkill /PID 4242 /T /F', 'kill 4242', 'Stop-Process -Id 4242', 'git commit -m "never taskkill /IM python.exe"'])
     assert.equal(tryShell(c), 0, c);
+  assert.equal(tryShell('powershell -NoProfile -Command "Stop-Process -Name node -Force"'), 2);   // in what a shell string runs, too
+});
+
+// #97 (COCKPIT): root stopped every node whose command line held "mail.ts watch", machine-wide, in one command. None of
+// the by-name forms: it listed processes, filtered them, and stopped each by pid.
+test('shell guard: one command that lists processes and stops some is a kill by name; listing, or stopping a pid, alone is fine (#97)', () => {
+  const said = (c: string) => spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ tool_input: { command: c } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '' }, encoding: 'utf8' }).stderr;
+  for (const c of [
+    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*mail.ts watch*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`,   // the 7 Nov shape
+    `(Get-WmiObject Win32_Process -Filter "name='node.exe'").Terminate()`,
+    `Get-Process node | ForEach-Object { $_.Kill() }`,
+    `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Invoke-CimMethod -MethodName Terminate`,
+    `for /f %i in ('wmic process where "name='node.exe'" get processid') do taskkill /PID %i /F`,
+    `ps aux | grep cellrun | awk '{print $2}' | xargs kill -9`, `ps aux | grep x | awk '{print $2}' | xargs -r /bin/kill`,
+    `powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' } | ForEach-Object { Stop-Process -Id $_.ProcessId }"`,   // sent from bash
+    // review 1: the pid comes from the listing by a variable, a substitution, a file, a port, another cmdlet
+    'pids=$(pgrep -f watch); kill $pids', 'ps aux | grep node; kill $(cat server.pid)', 'kill -9 $(pidof node)', 'kill $(lsof -t -i:3000)', '$p = Get-Process node; Stop-Process -Id $p.Id',
+    'Get-NetTCPConnection -LocalPort 3000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }', 'Get-CimInstance `\n  Win32_Process | % { Stop-Process -Id $_.ProcessId }',
+    `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Remove-CimInstance`, '[System.Diagnostics.Process]::GetProcessesByName("node") | ForEach-Object { $_.Kill() }',
+    'tasklist | findstr node && taskkill /F', 'ps -ef | grep node\nkill -s TERM $victim',
+    // by name outright, in spellings rule 6 lacked
+    'taskkill /F /FI "IMAGENAME eq node.exe"', `wmic process where "name='node.exe'" call terminate`, 'npx fkill node', 'tskill node',
+    // review 2: a listing in a substitution, parens in it or not; after a keyword; assigned in PowerShell
+    `kill -9 $(ps aux | grep "node (server)" | awk '{print $2}')`, '! ps aux | grep -q watch || kill $victim', 'while ps aux | grep -q watch; do kill $victim; done', '$l = tasklist; taskkill /F',
+    'lsof -ti:3000 | xargs kill -9',
+  ]) assert.match(said(c), /^Blocked: (one command both lists processes and stops what the listing gives it|killing processes by name)/, c);
+  assert.match(said(`ps aux | grep cellrun | awk '{print $2}' | xargs kill -9`), /List first, read the pid and its command line, then stop that pid, written out as a number, in a command of its own/);
+  for (const c of [
+    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*mail.ts watch*' } | Select-Object ProcessId, CommandLine`,
+    'ps aux | grep node', 'tasklist | findstr node', 'Stop-Process -Id 4242 -Force', 'kill -9 4242', 'taskkill /PID 4242 /T /F',
+    'git commit -m "never Get-Process | Stop-Process; list with ps, then kill the pid"',
+    'docker ps -q && docker kill web', 'tmux ls; tmux kill-session -t work',  // a tool's own subcommands
+    'ps aux | grep -v killed', 'cat notes/ps.txt; kill 4242', 'npm run ps-report && npm run kill-switch-test', 'ls .claude/skills && echo done',
+    `node -e "const c=require('child_process').spawn('node',['x.js']); setTimeout(()=>c.kill(),100)"`,   // its own child
+    // review 1: a pid written out, or a process this command started, is no filter, whatever is listed beside it
+    'tasklist | findstr node && taskkill /PID 4242 /F', 'ps -ef | grep node\nkill 4242', `bash -c 'ps aux | grep watch; kill 4242'`, 'kill 4242 && sleep 1 && ps -p 4242', 'kill -9 4242 4243; ps aux',
+    `Stop-Process -Id 47448 -Force; Start-Sleep -Milliseconds 500; Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*watch*' } | Select-Object ProcessId, CommandLine`,
+    'Stop-Process -Id 4242,4243; Get-Process node', 'node server.js &\nPID=$!\nsleep 2\ncurl -s localhost:3000/health\nkill $PID\nps aux | grep server.js', 'node server.js & sleep 1; kill $!; ps',
+    '$p = Start-Process node -ArgumentList server.js -PassThru; Start-Sleep 2; Stop-Process -Id $p.Id; Get-Process node',
+    // prose and data that only say the words; a tool's own subcommands, however deep
+    `cat > exit/report.md <<'EOF'\nI listed with ps and did not kill anything.\nEOF`, `python - <<'EOF'\nopen('notes.txt','w').write('checked with tasklist, then kill -0')\nEOF`,
+    'docker compose -f docker-compose.yml ps; docker compose -f docker-compose.yml kill web', 'docker container ps && docker container kill web', 'npm run ps && npm run kill',
+    // review 2: a redirect is no pid; kill -0 only asks; a job; its own process's method; a word that is only mentioned
+    'kill 4242 2>/dev/null || true; ps -p 4242', 'kill -9 4242 >/dev/null 2>&1; ps -p 4242', 'Stop-Process -Id 4242 -Force 2>$null; Get-Process node',
+    'while kill -0 $pid 2>/dev/null; do sleep 1; done; ps aux | grep x', 'sleep 100 &\nkill %1; ps', '$p = Start-Process node -ArgumentList s.js -PassThru; Start-Sleep 2; $p.Kill(); Get-Process node',
+    'grep -rn fkill package.json', 'tskill 4242', 'netstat -ano | findstr :3000; taskkill /PID 1234 /F',
+  ]) assert.equal(tryShell(c), 0, c);
 });
 
 test('boundary: a cell may write the temp folder (outside the repo) from Write/Edit, as from the shell', () => {
@@ -366,4 +602,135 @@ test('guards: a hook that can\'t load refuses; one that loads allows and blocks 
     assert.equal(status(dir, cmd, 'process.exit(0);\n'), 0, `${cmd}: allowed`);
     assert.equal(status(dir, cmd, 'process.exit(2);\n'), 2, `${cmd}: blocked`);
   }
+});
+
+// The third review of the v0.7 guard batch (cases: maintainer/cases/2026-11-18-v0.7-guards-review3.json).
+test('shell guard: blocks written against their braces, a cd that may not happen, shell strings and prefixes hide no command (review 3)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-r3-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  for (const d of ['old/cells/c9', 'old/docs', 'plain', 'dist/assets']) mkdirSync(`${root}/${d}`, { recursive: true });
+  writeFileSync(`${root}/old/docs/assumptions.md`, '');
+  writeFileSync(`${root}/plain/notes.md`, '');
+  const said = (who: string, c: string) => spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: who, tool_input: { command: c } }), env: { ...process.env, CLAUDE_PROJECT_DIR: who }, encoding: 'utf8' }).stderr;
+  for (const c of [
+    // a PowerShell block against its braces: the #97 command as it is usually written, and the other rules alike
+    `Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like '*mail.ts watch*'} | ForEach-Object {Stop-Process -Id $_.ProcessId}`,
+    'Get-Process node | % {Stop-Process -Id $_.Id -Force}', 'Get-Process node | %{ Stop-Process -Id $_.Id }', 'if ($ok) {git branch -f main abc123}', 'if ($ok){git checkout -B main abc123}',
+    'try {git update-ref refs/heads/main abc123} catch {}', 'if (Test-Path backup) {Copy-Item backup\\state . -Recurse -Force}',
+    // a cd behind a keyword or in a block may not happen: what follows is judged from this folder too (refused before the batch)
+    'if [ -d build ]; then cd build; fi; rm -rf state/views', 'if [ -d /tmp/build ]; then cd /tmp/build; fi; git reset --hard', 'if [ -d /tmp/build ]; then cd /tmp/build; fi; git clean -fdx',
+    'for d in a b; do cd /tmp/$d; done; rm -rf docs', 'build() { cd /tmp/b && make; }; rm -rf state/views', '{ cd /tmp; ls; }; rm -rf state/views',
+    'if (Test-Path C:/temp/x) { Set-Location C:/temp/x }; Remove-Item -Recurse -Force state', '! cd /tmp/nope; rm -rf state/views',
+    // the listing named in a quoted argument, a member call without parens, fuser
+    `Get-CimInstance -Query "SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%mail.ts watch%'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`,
+    `Get-CimInstance -ClassName 'Win32_Process' | Where-Object { $_.Name -eq 'node.exe' } | ForEach-Object { Stop-Process -Id $_.ProcessId }`,
+    `Get-WmiObject -Query "select * from Win32_Process where name='node.exe'" | ForEach-Object { $_.Terminate() }`, 'Get-CimInstance CIM_Process | % { Stop-Process -Id $_.ProcessId }',
+    'Get-Process node | ForEach-Object Kill', 'fuser -k 3000/tcp',
+    // a shell's string behind -lc, //c, or as PowerShell's first argument
+    'powershell "Get-Process node | ForEach-Object { Stop-Process -Id $_.Id }"', 'bash -lc "git branch -f main abc123"', 'cmd //c "git branch -f main abc123"', 'powershell "git checkout -B main origin/main"',
+    'bash -lc "rm -rf state/views"', 'sh -ec "cp -r backup/state ."', 'powershell -NoProfile -ExecutionPolicy Bypass "Remove-Item state\\views -Recurse"',
+    // what a cells or docs folder holds, and a mirror, which deletes what the target has and the source lacks
+    'cp -r old/cells/. cells/', 'cp -r old/cells/* cells/', 'cp -rT old/cells cells', 'cp -r old/cells/c9 cells/', 'cp -r old/docs/. docs/', 'rsync -a old/docs/ docs/',
+    'rsync -a --delete plain/ docs/', 'robocopy plain docs /MIR',
+    // a forced fetch from any remote; an empty option value; a verb behind a prefix; find's narrowed delete in the log
+    'git fetch origin +main:main', 'git fetch -f origin main:main', 'cp --target-directory= x.json "state/bedrock/guards.json"',
+    'FOO=1 rm -rf state/views', 'sudo rm -rf state/views', 'winpty git branch -f main abc123', `find state/log -name '*.json' -delete`,
+  ]) assert.match(said(root, c), /^Blocked: /, c);
+  for (const c of [
+    // a pid written out, however the shell spells the flag or holds the number; a process this command started
+    'taskkill //PID 4242 //F && tasklist //FI "PID eq 4242"', 'tasklist | grep node; taskkill //F //PID 4242', 'PID=4242; kill $PID; sleep 1; ps -p $PID',
+    'node server.js &\nSERVER_PID="$!"\nsleep 1\nkill "$SERVER_PID"\nps aux | grep server',
+    '$p = Start-Process node -ArgumentList s.js -PassThru; Start-Sleep 2; Stop-Process -InputObject $p; Get-Process node',
+    '$p = (Start-Process node -ArgumentList server.js -PassThru); Stop-Process -Id $p.Id; Get-Process node',
+    // the remote's own record is no branch; a folder that holds none of the kernel's names; the cd's folder is judged too
+    `git fetch origin '+refs/heads/*:refs/remotes/origin/*'`, 'cp -r plain/. docs/', 'rsync -a --exclude state dist/ .', 'cp -r dist/* .',
+    'if [ -d /tmp/b ]; then cd /tmp/b; fi; rm -rf out', 'cp {a,b}.txt notes/', 'echo ${HOME} > notes.txt', `find . -name '*.pyc' -delete`,
+    'powershell -File tools/report.ps1 state/views', 'bash -c "ls state/views"',
+  ]) assert.equal(said(root, c), '', c);
+  // a cell's session: the same readers under its rules
+  for (const c of [
+    `if ($true) {'const a = 1' | Set-Content src/a.ts}`, 'ForEach-Object {"line $_" | Add-Content src/a.ts}', 'if ($true) {git push . HEAD:main}',
+    `sed -i 's/foo/bar/g' $(grep -rl foo src)`, 'sed -i \'s/foo/bar/g\' `grep -rl foo src`', `perl -pi -e 's/foo/bar/' $(git grep -l foo)`,
+    `$f = 'src/a.ts'; (Get-Content $f) -replace 'a','b' | Set-Content $f`, `f=src/a.ts; sed -i 's/a/b/' $f`,
+    `Get-ChildItem src -Filter *.ts | ForEach-Object { (Get-Content $_.FullName) -replace 'a','b' | Set-Content $_.FullName }`,
+    `(Get-Content src/a.ts) -replace 'a','b' > src/b.ts`, `Get-Content tmpl.txt | ForEach-Object { $_ -replace 'NAME','c1' } > src/a.ts`,
+    `sed -i --expression='s/a/b/' src/a.ts`, 'sed -i -es/a/b/ src/a.ts', `> src/a.ts echo 'const a = 1;'`, `echo 'const a = 1;' | cat > src/a.ts`,
+    `if [ -d /tmp/x ]; then cd /tmp/x; fi; echo 'x' > src/a.ts`, `bash -lc "echo 'const a = 1;' > src/a.ts"`, `powershell "Set-Content src/a.ts 'const a = 1'"`,
+    'Copy-Item -Dest ../../kernel/src/a.ts -Path src/a.ts', 'if [ -d /tmp/a/b ]; then cd /tmp/a/b; fi; rm -rf ../../kernel', 'if [ -d /tmp/a/b ]; then cd /tmp/a/b; fi; cp notes.md ../../x.md',
+  ]) assert.match(said(cell, c), /^Blocked: /, c);
+  for (const c of [`f=notes.md; sed -i 's/a/b/' $f`, 'perl tools/report.pl -input test/fixtures/a.json -o exit/out.md', 'git tag -v v1', `sed -i 's/a/b/' notes.md`,
+    `if [ -d /tmp/x ]; then cd /tmp/x; fi; echo 'x' > notes.md`, `Get-Content a.txt | ForEach-Object { $_.Trim() } > exit/b.txt`])
+    assert.equal(said(cell, c), '', c);
+  // what a refusal says: a cell is not sent to git revert; a folder that can't be read is said to be the reason
+  assert.doesNotMatch(said(cell, 'git branch -f main abc123'), /git revert/);
+  assert.doesNotMatch(said(cell, 'git update-ref refs/heads/main abc123'), /git revert/);
+  assert.match(said(root, 'git branch -f main abc123'), /undo a commit with git revert/);
+  assert.match(said(root, 'git -C ~/projects/other checkout -B main origin/main'), /Which repository this git runs in can't be told from the command.*name its folder written out: git -C <path>/);
+  assert.doesNotMatch(said(root, 'git checkout -B main origin/main'), /can't be told/);
+  assert.match(said(cell, `sed -i 's/foo/bar/g' $(grep -rl foo src)`), /sed -i on files a substitution names\) without naming them/);
+  // a command of thousands of continued lines is judged in seconds, not minutes (a hook out of time judges nothing)
+  const long = `curl -s https://example.com/api \\\n${Array.from({ length: 4000 }, (_, k) => `  -H "X-${k}: v" \\`).join('\n')}\n  -o out.json`;
+  const started = Date.now();
+  assert.equal(said(root, long), '');
+  assert.ok(Date.now() - started < 8000, `${Date.now() - started} ms`);
+  assert.match(said(root, `git branch \\\n${Array.from({ length: 60 }, () => '  -v \\').join('\n')}\n  -f main abc123`), /^Blocked: git branch with -f/);   // and the first line still joins them all
+});
+
+// The fourth review (cases: maintainer/cases/2026-11-18-v0.7-guards-review4.json).
+test('shell guard: a compound command over several lines, a comment with an apostrophe, a cd behind a prefix (review 4)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cellkit-r4-')).replaceAll('\\', '/');
+  const cell = `${root}/cells/c1`;
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(`${cell}/binding.json`, '{}');
+  const said = (who: string, c: string) => spawnSync(process.execPath, [bashHook], { input: JSON.stringify({ cwd: who, tool_input: { command: c } }), env: { ...process.env, CLAUDE_PROJECT_DIR: who }, encoding: 'utf8' }).stderr;
+  for (const c of [
+    // the cd on a line of its own inside an if, a loop, a function or a block: it may not happen
+    'if [ -d build ]; then\n  cd build\nfi\nrm -rf state/views', 'if [ -d /tmp/build ]\nthen\n  cd /tmp/build\nfi\ngit reset --hard', 'if [ -d /tmp/b ]; then\n  cd /tmp/b\nelse\n  echo none\nfi\ngit clean -fdx',
+    'for d in a b; do\n  cd /tmp/none\ndone\nrm -rf docs', 'build() {\n  cd /tmp/b\n}\nrm -rf state/views', 'if (Test-Path C:/temp/x) {\n  Set-Location C:/temp/x\n}\nRemove-Item -Recurse -Force state',
+    // a comment's apostrophe opens no quote: the lines after it are read (in every hook before this one)
+    `# what's in views\nrm -rf state/views`, `# don't stop the others\nGet-Process node | % {Stop-Process -Id $_.Id}`, `ls # it's here\ngit branch -f main abc123`,
+    // a prefix that moves no folder
+    'sudo cd /tmp/x; rm -rf state/views', 'env cd /tmp/x; git reset --hard', 'nohup cd /tmp/x; rm -rf docs',
+    // a block with nothing before its brace; the listing inside another command; the member named
+    'Get-Process node | ForEach-Object{Stop-Process -Id $_.Id}', '(Get-Process node).ForEach({Stop-Process -Id $_.Id})', 'try{git branch -f main abc123}catch{}', 'if ($a) {ls} else{git checkout -B main abc123}',
+    `Stop-Process -Id (Get-CimInstance -Query "select ProcessId from Win32_Process where name='node.exe'").ProcessId -Force`,
+    `foreach ($p in Get-CimInstance -ClassName 'Win32_Process' -Filter "Name='node.exe'") { Stop-Process -Id $p.ProcessId }`, 'Get-Process node | ForEach-Object -MemberName Kill',
+  ]) assert.match(said(root, c), /^Blocked: /, c);
+  for (const c of [`git fetch origin '+refs/tags/*:refs/tags/*'`, 'time npm test', `# it's a note\nls`, 'cp file{1,2}.txt notes/', 'if [ -d /tmp/b ]; then\n  cd /tmp/b\nfi\nrm -rf out',
+    `git commit -m "don't # not a comment" && ls`, 'echo "a # b" > notes.txt', 'curl -s http://localhost:3000/#top'])
+    assert.equal(said(root, c), '', c);
+  for (const c of [
+    `if [ -d /tmp/x ]; then\n  cd /tmp/x\nfi\necho 'x' > src/a.ts`, 'if [ -d /tmp/a/b ]; then\n  cd /tmp/a/b\nfi\ncp notes.md ../../x.md', 'if [ -d /tmp/x ]; then\n  cd /tmp/x\nfi\ngit push . HEAD:main',
+    `# don't touch the kernel\necho 'const a = 1;' > src/a.ts`, 'sudo cd /tmp/a/b; cp notes.md ../../x.md',
+    `Get-ChildItem src -Filter *.ts | % { (Get-Content $_.FullName) -replace 'a','b' > $_.FullName }`, `Get-ChildItem src -Filter *.ts | % { $c = (Get-Content $_) -replace 'a','b'; $c | Out-File $_ }`,
+    `f=src/a.ts; echo 'const a = 1;' > "$f"`, `f=src/a.ts; echo 'x' | tee "$f"`, 'ls src | ForEach-Object{"x" | Add-Content src/a.ts}', `f=exit/notes.md; for f in src/*.ts; do sed -i 's/a/b/' "$f"; done`,
+  ]) assert.match(said(cell, c), /^Blocked: /, c);
+  for (const c of [`echo todo: do the tests later; cd /tmp/w && echo 'x' > probe.js`, 'node tools/gen.js --replace-all -replace x > src/gen.ts', `mkdir -p /tmp/w && cd /tmp/w && cat > p.mjs <<'EOF'\nx\nEOF`,
+    `f=exit/notes.md; echo 'done' > "$f"`, `if (Test-Path exit) { 'ok' | Set-Content exit/ok.txt }\ncd /tmp/w; echo 'x' > probe.js`])
+    assert.equal(said(cell, c), '', c);
+  // review 5: the replaced text held in a variable and given to the writer as its value; a comment after a heredoc
+  // whose text has an apostrophe
+  for (const c of [
+    `Get-ChildItem src -Filter *.ts | ForEach-Object { $c = (Get-Content $_.FullName) -replace 'a','b'; Set-Content $_.FullName $c }`,
+    `Get-ChildItem src -Filter *.ts | ForEach-Object { $c = (Get-Content $_.FullName -Raw).Replace('a','b'); Set-Content -Path $_.FullName -Value $c -NoNewline }`,
+    `foreach ($f in Get-ChildItem src -Filter *.ts) { $c = (Get-Content $f) -replace 'a','b'; Set-Content $f $c }`,
+    `cat > exit/report.md <<'EOF'\nIt's done.\nEOF\n# now the kernel's copy\ncp src/a.ts ../../kernel/src/a.ts`,
+    `cat > exit/a.md <<EOF\nIt's one.\nEOF\ncat > exit/b.md <<-'END'\n\tdon't\n\tEND\n# and the kernel's\nrm -rf ../../kernel`,
+  ]) assert.match(said(cell, c), /^Blocked: /, c);
+  // review 6: a script a shell reads from a heredoc has comments too; a here-string and a shift are no heredoc; a command
+  // sent with CRLF line ends reads the same
+  for (const c of [`bash <<'SH'\n# what's in views\nrm -rf state/views\nSH`, `sh <<EOF\n# don't keep the old build\nrm -rf state/views\nEOF`,
+    `base64 -d <<< payload\n# what's here\nrm -rf state/views`, `n=$(( 1 << shift ))\n# what's next\nrm -rf state/views`,
+    `cat > notes.md <<'EOF'\r\nIt's done.\r\nEOF\r\n# what's left\r\nrm -rf state/views`])
+    assert.match(said(root, c), /^Blocked: /, c);
+  for (const c of ['node kernel/src/cli.ts amend --doc guards --file state/bedrock/proposed/guards.json && git add -A && git status',
+    'node kernel/src/mail.ts send --to c1 --body "see state/log/000001.x.json"; rm -f /tmp/note.txt', 'git rm --cached state/views/x.json', 'node kernel/src/cli.ts fold && node kernel/src/cli.ts lint',
+    'node kernel/src/cli.ts fold && cp state/views/summary.json /tmp/summary-before.json', `cat > notes.md <<'EOF'\r\nIt's done.\r\nEOF\r\nls`,
+    `node kernel/src/mail.ts send --to c1 --body-file - <<'EOF'\nPlease read state/log/000001.x.json > then reply.\nEOF`])
+    assert.equal(said(root, c), '', c);
+  for (const c of [`cat > exit/report.md <<'EOF'\nIt's done. # not a comment's start\nEOF\n# the cell's own copy\ncp src/a.ts exit/a.ts`,
+    `$c = (Get-Content exit/report.md) -replace 'a','b'; Set-Content exit/report.md $c`, `$c = Get-Content src/a.ts -Raw; Set-Content $env:TEMP/a.txt $c`])
+    assert.equal(said(cell, c), '', c);
 });

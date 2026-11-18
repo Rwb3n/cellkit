@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import { delivered, status } from './mail.ts';
 import { configPath, loadConfig } from './config.ts';
 import { globRe } from './glob.ts';
+import { lintLogInHead } from './lint.ts';
 import { refoldPresent } from './refold.ts';
 import { blobName, compareTests, forgetWeaker, goneData, weakerDuring, type Compared, type Was } from './weaker.ts';
 import { cellAudit, cellBranch, cellWorktree, currentBranch, inMain, WorktreeError } from './worktree.ts';
@@ -296,6 +297,13 @@ export function cellLand(root: string, o: LandOptions): Landed {
     throw new WorktreeError(`root has uncommitted work of its own: ${mine.join(', ')} (commit or stash it first${foreign.length
       ? `; an untracked file that isn't the project's, such as editor settings, can be ignored on this machine instead: add its path to .git/info/exclude (untracked here: ${foreign.join(', ')})` : ''})`);
   }
+  // root's log as git holds it (#54): a land ends by committing root's log, and would make a missing or changed entry
+  // HEAD's own, where lint no longer sees it
+  const broken = lintLogInHead(main);
+  if (broken.length) throw new WorktreeError(`root's log differs from what is committed, and a land would commit that:\n${broken.join('\n')}`);
+  // and the cell's own, in its worktree: step 1 commits the cell's folder, a deleted entry with it (review 4)
+  const cellBroken = lintLogInHead(join(wt, 'cells', name));
+  if (cellBroken.length) throw new WorktreeError(`cell ${name}'s log differs from what its branch holds, and a land would commit that:\n${cellBroken.join('\n')}`);
   const bad = cellAudit(main, name);
   if (bad.length) throw new WorktreeError(`cell ${name} changed paths outside cells/${name}/: ${bad.join(', ')}`);
   const left = leftovers(main, wt, name);
@@ -446,7 +454,14 @@ export function cellLand(root: string, o: LandOptions): Landed {
 // Commit what the kernel wrote in root's checkout (mail and sync entries, the generated assumptions), and nothing else.
 export function commitRootLog(root: string, message: string): string | null {
   const main = inMain(root);
-  const paths = dirty(main).filter((p) => /^state\/log\//.test(p) || p === 'docs/assumptions.md');
+  // of the log, only entries git doesn't hold yet: one it holds whose bytes differ and whose text doesn't (a CRLF copy)
+  // stays as committed (review 4)
+  const held = new Set(git(main, ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'state/log'], false).out.split(/\r?\n/).filter(Boolean));
+  const paths = dirty(main).filter((p) => (/^state\/log\//.test(p) && !held.has(p)) || p === 'docs/assumptions.md');
+  // Never a deletion or an edit of a committed entry (#54; review 3: with an entry deleted, this commit made the shorter
+  // chain HEAD's own, and lint, which compares the log with HEAD, then found nothing).
+  const broken = lintLogInHead(main);
+  if (broken.length) throw new WorktreeError(`root's log is not committed, since entries it holds in git are missing or changed:\n${broken.join('\n')}`);
   if (!paths.length) return null;
   git(main, ['add', '--', ...paths]);
   git(main, ['commit', '-q', '-m', message, '--', ...paths]);

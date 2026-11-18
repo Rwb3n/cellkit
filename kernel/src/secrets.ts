@@ -160,6 +160,8 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
       if (to) cwd = /[$%~`]/.test(to) ? session : absPath(to, cwd);
       return null;
     }
+    // past the words that open a compound command: `if cat .env; then`, `! grep -r KEY .`, `{ cat .env; }` (review 3)
+    raw = raw.replace(/^(\s*(if|then|else|elif|do|while|until|!|\{)\s+)+/, '');
     const unquoted = raw.replace(quoted, '""');
     if (!startsRead.test(unquoted) && !readPrimitive.test(unquoted)) return null;
     const tokens = tokensOf(withoutPattern(raw));

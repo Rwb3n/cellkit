@@ -4,6 +4,44 @@
 import { tmpdir } from 'node:os';
 import { posix } from 'node:path';
 
+// A command with the quote marks inside its comments taken out (`# what's in views` on a line of its own): a comment's
+// apostrophe opened a quote for every reader here and hid the lines after it (review 4, in every hook since the first).
+// A comment starts at a # where a word starts, outside quotes, and ends with its line; its words stay, so what is
+// judged of them is as before. Done once, on what the hook is given.
+// A heredoc's body is passed on as it is and opens no quote here (review 5: "It's done." in a report written by
+// heredoc kept the comment after it from being seen).
+export function uncomment(s: string): string {
+  let out = '', q = '', comment = false;
+  const tags: string[] = [];             // heredocs opened on this line: their bodies start at its end
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\n' && !q && tags.length) {
+      comment = false;
+      out += c;
+      for (const tag of tags.splice(0)) {
+        for (;;) {
+          const end = s.indexOf('\n', i + 1), line = s.slice(i + 1, end < 0 ? s.length : end);
+          out += line + (end < 0 ? '' : '\n');
+          i = end < 0 ? s.length : end;
+          if (end < 0 || line.trim() === tag) break;
+        }
+      }
+      continue;
+    }
+    if (comment) { if (c === '\n') comment = false; else if (c === '"' || c === "'" || c === '`') continue; out += c; continue; }
+    if (q) { if (c === q) q = ''; out += c; continue; }
+    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+      const m = /^<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1/.exec(s.slice(i, i + 200));
+      // a heredoc only if its tag comes back as a line of its own (`$(( 1 << n ))` shifts)
+      if (m && new RegExp(`\\n[ \\t]*${m[2]}[ \\t]*(\\r?\\n|$)`).test(s.slice(i))) { tags.push(m[2]); out += m[0]; i += m[0].length - 1; continue; }
+    }
+    if (c === '"' || c === "'") q = c;
+    else if (c === '#' && (i === 0 || /[\s;|&(]/.test(s[i - 1]))) comment = true;
+    out += c;
+  }
+  return out;
+}
+
 // A subshell opens and closes: marker commands simpleCommands puts where its parens stand.
 export const OPEN = '\u0000(', CLOSE = '\u0000)';
 export const isMark = (words: string[]) => words.length === 1 && (words[0] === OPEN || words[0] === CLOSE);
@@ -51,9 +89,11 @@ export function simpleCommands(command: string): string[][] {
   return out.filter((w) => w.length);
 }
 
-const LAST = /^(cp|mv|copy|move|cpi|mi|copy-item|move-item|ln)$/i;
+const LAST = /^(cp|mv|copy|move|cpi|mi|copy-item|move-item|ln|rsync|robocopy|xcopy)(\.exe)?$/i;
 const ALL = /^(rm|rmdir|touch|mkdir|tee|truncate|del|erase|rd|ri|remove-item|ni|new-item|sc|set-content|ac|add-content|clear-content|out-file|ren|rename|rename-item|unlink)$/i;
-export const CD = /^(cd|set-location|sl|chdir|pushd)$/i;
+export const CD = /^(cd|set-location|sl|chdir|pushd|push-location)$/i;
+// Of those, the ones popd undoes; and popd itself.
+export const PUSH = /^(pushd|push-location)$/i, POP = /^(popd|pop-location)$/i;
 // Of those, the verbs that delete or move their paths away: a folder they name goes, with whatever it holds (#49).
 const REMOVES = /^(rm|rmdir|del|erase|rd|ri|remove-item|ren|rename|rename-item|unlink)$/i;
 const MOVES = /^(mv|move|mi|move-item)$/i;
@@ -94,16 +134,69 @@ export function gitGlobals(args: string[]): { rest: string[]; bases: string[] } 
 // `node script.ts <<EOF`, which reads it as data). What runs wherever it stands: command substitution ($(…), backticks;
 // not in single quotes), a shell's -c / -Command / cmd's /c string, eval's arguments, an interpreter's -e / -c code.
 const SHELLS = /^(bash|sh|zsh|dash|ksh|fish|pwsh|powershell|cmd|eval)(\.exe)?$/i;
-const INTERPRETERS = /^(node|nodejs|deno|bun|tsx|ts-node|python[\d.]*|py|pythonw|ruby|perl|php|rscript|osascript)(\.exe)?$/i;
+export const INTERPRETERS = /^(node|nodejs|deno|bun|tsx|ts-node|python[\d.]*|py|pythonw|ruby|perl|php|rscript|osascript)(\.exe)?$/i;
 const REMOTE = /^(ssh|wsl|docker|podman|kubectl)(\.exe)?$/i;                  // their heredoc runs as commands elsewhere
 export const PATTERNED = /^(grep|egrep|fgrep|rg|findstr|sed|awk|gawk|select-string|sls)(\.exe)?$/i;
-const PREFIX = /^(sudo|env|time|command|nice|nohup|exec|npx|bunx|pnpx|[A-Za-z_]\w*=.*)$/i;
+const PREFIX = /^(sudo|env|time|command|nice|nohup|exec|npx|bunx|pnpx|winpty|[A-Za-z_]\w*=.*)$/i;
+// Words that open or join a compound command, never its verb: `then git …`, `do echo …`, `! grep …`, `{ echo …`.
+const KEYWORD = /^(if|then|else|elif|fi|do|done|while|until|!|\{|\})$/;
 
 // The verb of a simple command's words, past prefixes (sudo, env, npx, X=y), without its folder.
 export function verbOf(words: string[]): { verb: string; i: number } {
   let i = 0;
-  while (i < words.length - 1 && PREFIX.test(words[i])) i++;
+  while (i < words.length - 1 && (PREFIX.test(words[i]) || KEYWORD.test(words[i]))) i++;
+  if (i < words.length - 2 && /^\$[\w:.]+$/.test(words[i]) && words[i + 1] === '=') i += 2;   // PowerShell: $p = Get-Process …
   return { verb: (words[i] ?? '').replace(/^.*[\\/]/, ''), i };
+}
+// The commands in a simple command's words: the words themselves, less the keywords they start with (`then git …`,
+// `do echo …`, `! grep …`), and, as well, the command in each block (`ForEach-Object { Stop-Process … }`, `if ($ok) {
+// git … }`). More commands to judge, never fewer: the whole is always there, so a file called `done` or a `}` among
+// the arguments hides nothing that comes after it (`cp done ../../kernel/x.ts`).
+// CONDITIONAL: the commands found behind a keyword or in a block. They may not run where they stand (`if [ -d build ];
+// then cd build; fi`, a function never called), so a `cd` among them moves nothing for sure: what follows is judged
+// from the folder it names and from the one before it (review 3: followed outright, `…; fi; rm -rf state/views` was
+// read as the build folder's).
+export const CONDITIONAL = new WeakSet<string[]>();
+export function clauses(words: string[]): string[][] {
+  if (isMark(words)) return [words];
+  let i = 0;
+  while (i < words.length && /^(if|then|else|elif|fi|do|done|while|until|!)$/.test(words[i])) i++;
+  const whole = words.slice(i), out = whole.length ? [whole] : [];
+  if (i) CONDITIONAL.add(whole);
+  let cur: string[] = [], inside = false;
+  const block = () => { if (inside && cur.length) { CONDITIONAL.add(cur); out.push(cur); } };
+  for (const w of whole) {
+    if (w !== '{' && w !== '}') { cur.push(w); continue; }
+    block();
+    inside = true; cur = [];
+  }
+  block();
+  return out;
+}
+// A block written against its braces (`ForEach-Object {Stop-Process -Id $_.Id}`, `%{ … }`, `if ($ok) {git …}`: how
+// PowerShell is usually written, and the #97 command itself) with its braces set apart, so the command inside has its
+// own words. Only a block: never `${x}`, and holding a space, which bash's `{a,b}` and `file{1,2}` don't. Read as well as the text as written, never instead of it.
+export function blocksApart(s: string): string {
+  const open: { at: number; starts: boolean }[] = [], before = new Set<number>(), after = new Set<number>();
+  let q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { if (c === q) q = ''; continue; }
+    if (c === '"' || c === "'") { q = c; continue; }
+    if (c === '{') open.push({ at: i, starts: i === 0 || s[i - 1] !== '$' });      // never ${x}; `ForEach-Object{…}`, `try{…}catch{…}`, `.ForEach({…})`
+    else if (c === '}') {
+      const o = open.pop();
+      if (!o || !o.starts || !/\S\s+\S/.test(s.slice(o.at + 1, i))) continue;
+      if (!/\s/.test(s[o.at + 1])) after.add(o.at);
+      if (o.at > 0 && !/\s/.test(s[o.at - 1])) before.add(o.at);               // `%{ … }`, `if ($ok){ … }`
+      if (!/\s/.test(s[i - 1])) before.add(i);
+      if (i + 1 < s.length && !/[\s;|&)]/.test(s[i + 1])) after.add(i);
+    }
+  }
+  if (!before.size && !after.size) return s;
+  let out = '';
+  for (let i = 0; i < s.length; i++) out += `${before.has(i) ? ' ' : ''}${s[i]}${after.has(i) ? ' ' : ''}`;
+  return out;
 }
 
 // Simple commands as written (quotes kept), split at ; & | and newlines outside quotes.
@@ -156,7 +249,7 @@ export function parts(command: string): { text: string; shell: string[]; code: s
   const heredoc = /<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2[ \t]*(?=\n|$)/g;
   const text = command.replace(heredoc, (m: string, _q: string, _tag: string, body: string, off: number, all: string) => {
     const kind = reader(all.slice(all.lastIndexOf('\n', off) + 1, off));
-    if (kind === 'shell') shell.push(body); else if (kind === 'code') code.push(body);
+    if (kind === 'shell') shell.push(uncomment(body)); else if (kind === 'code') code.push(body);   // a script's comments, as the command's own (review 6)
     return m.slice(0, m.indexOf('\n'));
   });
   const unsingle = text.replace(/'[^']*'/g, (q) => ' '.repeat(q.length));
@@ -166,8 +259,17 @@ export function parts(command: string): { text: string; shell: string[]; code: s
     const { verb, i } = verbOf(words);
     if (/^eval$/i.test(verb)) { shell.push(words.slice(i + 1).join(' ')); continue; }
     if (SHELLS.test(verb)) {
-      const k = words.findIndex((w, j) => j > i && /^(-c|-command|\/c|\/k)$/i.test(w));
-      if (k > 0) shell.push(words.slice(k + 1).join(' '));
+      // the string a shell runs: after -c, -Command (any length git-style: -com), cmd's /c and /k (Git Bash writes //c),
+      // a POSIX shell's -c among other letters (`bash -lc`, `sh -ec`); and PowerShell's first plain argument when it
+      // names no -File (`powershell "Get-Process node | …"`), which is its -Command (review 3)
+      const ps = /^(pwsh|powershell)(\.exe)?$/i.test(verb), posixShell = /^(bash|sh|zsh|dash|ksh|fish)(\.exe)?$/i.test(verb);
+      const k = words.findIndex((w, j) => j > i && (/^(-c|\/c|\/k|\/\/c|\/\/k)$/i.test(w) || (ps && /^-c(o(m(m(a(nd?)?)?)?)?)?$/i.test(w)) || (posixShell && /^-[a-zA-Z]*c$/.test(w))));
+      let from = k < 0 ? -1 : k + 1;
+      if (k < 0 && ps && !words.some((w, j) => j > i && /^-(f|fi|fil|file|e|ec|enc|encodedcommand)$/i.test(w))) {
+        const VALUED = /^-(ex|ep|exec|executionpolicy|w|windowstyle|wd|workingdirectory|config|configurationname|inputformat|if|outputformat|of|psconsolefile|version|v|custompipename|settingsfile|settings)$/i;
+        from = words.findIndex((w, j) => j > i && !w.startsWith('-') && !VALUED.test(words[j - 1]));
+      }
+      if (from > 0) shell.push(words.slice(from).join(' '));
       continue;
     }
     if (PATTERNED.test(verb) || /^git(\.exe)?$/i.test(verb)) continue;    // grep -e, sed -e, git commit -c: not code
@@ -203,7 +305,7 @@ export function actUnits(command: string, depth = 0): string[] {
 // The write targets of a command, and the cwd changes (`cd x`) in order: [{ cwd?, target? }]. `git` marks a path that
 // git's checkout, restore, rm or mv writes, already joined to the folder git's own options name; `removes` one deleted
 // or moved away (rm, mv's sources). Data heredocs are text (#2); what runs in a shell string or a shell-fed heredoc counts.
-export interface WriteTarget { cd?: string; target?: string; git?: boolean; removes?: boolean; reset?: string; sub?: 'open' | 'close' }
+export interface WriteTarget { cd?: string; maybe?: boolean; target?: string; git?: boolean; removes?: boolean; reset?: string; sub?: 'open' | 'close'; from?: string[]; into?: boolean }
 // A git command's pathspecs: its arguments that aren't options (nor the value of one in `valued`), or all after `--`;
 // none means the whole checkout ('.').
 function pathspecs(args: string[], valued: string[]): string[] {
@@ -217,10 +319,11 @@ export function writeTargets(command: string): WriteTarget[] {
     if (isMark(words)) { out.push({ sub: words[0] === OPEN ? 'open' : 'close' }); continue; }   // a subshell: its cd is undone at the close
     for (let i = 0; i < words.length; i++) if (/^(\d|&)?>>?$/.test(words[i]) && words[i + 1]) out.push({ target: words[i + 1] });
     const ws = words.filter((w, i) => !/^(\d|&)?>>?$/.test(w) && !/^(\d|&)?>>?$/.test(words[i - 1] ?? ''));
-    const [verb, ...args] = ws;
+    // the verb past its prefixes (`FOO=1 rm -rf state/views`, `sudo rm …`, `winpty git …`: read as the prefix's until review 3)
+    const lead = verbOf(ws).i, verb = (ws[lead] ?? '').replace(/^.*[\\/](?=[^\\/]+$)/, ''), args = ws.slice(lead + 1);
     if (!verb) continue;
     const plain = args.filter((a) => !/^-/.test(a));
-    if (CD.test(verb) && plain[0]) out.push({ cd: plain[0] });
+    if (CD.test(verb) && plain[0]) out.push({ cd: plain[0], ...(CONDITIONAL.has(words) || lead > 0 ? { maybe: true } : {}) });   // behind a keyword, or a prefix that moves no folder (`sudo cd x`)
     else if (/^git(\.exe)?$/i.test(verb)) {
       const { rest, bases } = gitGlobals(args);
       const [sub = '', ...gargs] = rest;
@@ -249,11 +352,45 @@ export function writeTargets(command: string): WriteTarget[] {
         for (const t of at('.')) out.push({ target: t, git: true, reset: back ? `${mode} ${commit}` : mode });
     }
     else if (LAST.test(verb) && plain.length) {
-      out.push({ target: plain.at(-1)! });
-      if (MOVES.test(verb)) for (const a of plain.slice(0, -1)) out.push({ target: a, removes: true });   // mv's sources go
+      // `from`: what a copy or move brings into the target, by name (#54: `cp -r backup/state .` lands ./state). The
+      // target is the last path, or the one an option names (cp -t <dir>, --target-directory=, Copy-Item -Destination);
+      // `into`: with cp -T the sources' contents land in the target itself.
+      // robocopy and xcopy: <source folder> <target folder>, options written /E; what the source holds lands in the target
+      if (/^(robocopy|xcopy)/i.test(verb)) {
+        const ps = args.filter((a) => !/^\/[A-Za-z]+(:\S*)?$/.test(a) && !/^-/.test(a));
+        if (ps.length > 1) out.push({ target: ps[1], from: [ps[0]], into: true });
+        // /MIR and /PURGE delete what the target holds and the source doesn't
+        if (ps.length > 1 && args.some((a) => /^\/(MIR|PURGE)$/i.test(a))) out.push({ target: ps[1], removes: true });
+        continue;
+      }
+      const valueOf = (re: RegExp) => { const k = args.findIndex((a) => re.test(a)); return k < 0 ? undefined : /=/.test(args[k]) ? args[k].slice(args[k].indexOf('=') + 1) : args[k + 1]; };
+      const named = valueOf(/^(-t|--target-directory(=.*)?|-[Dd]est(i(n(a(t(i(on?)?)?)?)?)?)?)$/) || undefined;   // -T is another option (below); an empty value names nothing
+      // rsync's own valued options name no path (`--exclude state` brings nothing called state in)
+      const RSYNC_VALUED = /^--(exclude|include|filter|exclude-from|include-from|files-from|log-file|backup-dir|suffix|chmod|chown|compare-dest|copy-dest|link-dest|temp-dir|partial-dir|max-size|min-size|port|timeout|out-format|password-file|rsh|rsync-path|bwlimit)$/;
+      const mine = /^rsync/i.test(verb) ? args.filter((a, k) => !/^-/.test(a) && !RSYNC_VALUED.test(args[k - 1] ?? '')) : plain;
+      const paths = named === undefined ? mine : mine.filter((a) => a !== named);
+      if (!paths.length && named === undefined) continue;
+      const target = named ?? paths.at(-1)!;
+      // rsync's `dir/` is what dir holds, as cp's `dir/.` is
+      const sources = (named === undefined ? paths.slice(0, -1) : paths).map((a) => (/^rsync/i.test(verb) && /[\\/]$/.test(a) ? `${a}.` : a));
+      const into = args.some((a) => /^(-[a-zA-Z]*T[a-zA-Z]*|--no-target-directory)$/.test(a));
+      out.push({ target, ...(sources.length && !/^ln$/i.test(verb) ? { from: sources, ...(into ? { into: true } : {}) } : {}) });
+      if (MOVES.test(verb)) for (const a of sources) out.push({ target: a, removes: true });   // mv's sources go
+      // rsync --delete takes away what the target holds and the source doesn't
+      if (/^rsync/i.test(verb) && args.some((a) => /^--del(ete)?(-|$)/.test(a))) out.push({ target, removes: true });
     }
     else if (ALL.test(verb)) for (const a of plain) out.push({ target: a, ...(REMOVES.test(verb) ? { removes: true } : {}) });
     else if (verb === 'sed' && args.some((a) => /^-i/.test(a)) && plain.length) out.push({ target: plain.at(-1)! });
+    // find <paths> -delete removes them whole; with a test that narrows it (-name '*.tmp') it removes files in them
+    else if (/^find$/i.test(verb) && args.includes('-delete') && !args.some((a) => /^-(i?name|i?path|i?regex|type|newer|mtime|mmin|size|empty|user)$/.test(a))) {
+      const k = args.findIndex((a) => /^[-(!]/.test(a));
+      for (const a of k > 0 ? args.slice(0, k) : ['.']) out.push({ target: a, removes: true });
+    }
+    // narrowed, it removes files in them: a write there (`find state/log -name '*.json' -delete`), not the folders' end
+    else if (/^find$/i.test(verb) && args.includes('-delete')) {
+      const k = args.findIndex((a) => /^[-(!]/.test(a));
+      for (const a of k > 0 ? args.slice(0, k) : ['.']) out.push({ target: a });
+    }
   }
   return out;
 }
@@ -266,9 +403,188 @@ export function codeTargets(code: string): WriteTarget[] {
   return [...code.matchAll(CODE_CALL)].map((m) => ({ target: m[3], ...(/^(writeFileSync|appendFileSync)$/.test(m[1]) ? {} : { removes: true }) }));
 }
 
+// Files whose content a command types out itself (#82; COCKPIT: two cells wrote source through heredocs and sed, the
+// shell ate backslashes on the way, and a secret-mask regex came out with a gap no test covered: `\w` becomes `w` and
+// still reads as code). A heredoc's body or an echo/printf sent to a file (by redirect, or piped to tee or a
+// Set-Content), a literal string piped or given as -Value to one, and an edit in place (sed -i, perl -i). Not a
+// program's output sent to a file (`node gen.js > out.ts`, `git show HEAD:a.ts > a.ts`), nor a copy: nothing there
+// passed through shell quoting. `how` names the form, for the refusal.
+const TYPED = /^(echo|printf|write-output|write-host)$/i;
+const PS_WRITERS = /^(set-content|add-content|out-file|sc|ac|tee-object|new-item|ni)$/i;
+// A value the shell did not type: a variable, a command's output, an expression (`$c`, `"$(node gen.js)"`, `(Get-Date)`).
+const COMPUTED = /^(\$\([^()]*\)|\$\{?[\w:.]+\}?|\([^()]*\)|\s)+$/;
+// `cd`s and subshell marks are passed on in order, as writeTargets does, so the caller knows the folder a target is in;
+// a target of null is one the command doesn't name (`… | xargs sed -i`).
+export interface TypedWrite { target?: string | null; how?: string; dirs?: string[]; cd?: string; maybe?: boolean; push?: boolean; pop?: boolean; sub?: 'open' | 'close' }
+const REPLACES = /\s-c?replace\b|[.:]Replace\s*\(/i;                       // PowerShell's sed: -replace, .Replace(, [regex]::Replace(
+const BARE = /^\$\{?\w+\}?$/;                                               // a file a variable names: `sed -i … "$f"` in a loop
+export function typedWrites(command: string, depth = 0): TypedWrite[] {
+  const p = parts(command), out: TypedWrite[] = [];
+  const redirect = /^(\d|&)?>>?$/, stdout = /^(1|&)?>>?$/;
+  const operands = (words: string[]) => words.filter((w, k, a) => !redirect.test(w) && !redirect.test(a[k - 1] ?? '') && !/^<<-?/.test(w) && !/^<<[<-]?$/.test(a[k - 1] ?? ''));
+  const blanked = (s: string) => s.replace(/"[^"]*"|'[^']*'/g, '""');
+  // a command's words past the redirects written before it (`> src/a.ts echo x`)
+  const past = (w: string[]) => { let k = 0; while (redirect.test(w[k] ?? '') && k + 1 < w.length) k += 2; return w.slice(k); };
+  const tainted = new Map<string, string>();   // PowerShell variables that hold typed text, and how: $c = @'…'@, $c = $c -replace 'a','b'
+  // How a segment types text, if it does: null when what it sends on is a program's output or a file's content.
+  const typed = (seg: string): string | null => {
+    const held = tainted.get((/^\s*\$(\w+)\s*$/.exec(seg)?.[1] ?? '').toLowerCase());
+    if (held) return held === 'a -replace' ? held : 'a value typed earlier';
+    const words = past(firstCommand(seg)), { verb, i } = verbOf(words), args = operands(words.slice(i + 1));
+    // a quoted string standing as the command: PowerShell's `'text' > f`, `@'…'@ | Set-Content f`. A quoted path is a
+    // program (`"./tools/gen.sh" > f`), as in bash.
+    // (a path: it starts as one, `./x`, `C:\Program Files\x.exe`, or has a separator and no space)
+    if (/^\s*@?['"]/.test(seg) && !args.length) return !/^\s*@/.test(seg) && /^(\.{0,2}[\\/]|[a-zA-Z]:[\\/])|^\S*[\\/]\S*$/.test(words[0] ?? '') ? null : 'a literal string';
+    if (/^\s*[($[]/.test(seg) && REPLACES.test(blanked(seg))) return 'a -replace';   // PowerShell's sed -i
+    if (TYPED.test(verb)) {
+      const said = args.filter((a) => !/^-[a-zA-Z]+$/.test(a));
+      const rest = /^printf$/i.test(verb) && /^(%[-+ 0#]*\d*(\.\d+)?[a-zA-Z]|\\[a-z0-9]+|\s)*$/.test(said[0] ?? '') ? said.slice(1) : said;   // printf '%s\n' "$OUT"
+      return rest.length && COMPUTED.test(rest.join(' ')) ? null : verb.toLowerCase();
+    }
+    if (/^cat$/i.test(verb) && words.some((w) => /<</.test(w)) && !args.some((w) => !w.startsWith('-'))) return 'a heredoc';
+    return null;
+  };
+  const groups: boolean[] = [];          // open { … } and loops: whether anything typed text inside
+  let nest = 0;                          // open if and case (a loop is counted by its do … done, above)
+  const lits = new Map<string, string>();   // variables set to a path written out: `f=src/a.ts`, `$f = 'src/a.ts'`
+  const one = (seg: string, written: string[], up: string[], all: string[]) => {
+    const words = past(written), { verb, i } = verbOf(words), args = words.slice(i + 1);
+    // `do` and `done` where a command starts (`echo todo: do it later` opens nothing: review 4); a brace anywhere
+    const lead = words.slice(0, i + 1);
+    const opens = words.filter((w) => w === '{').length + (lead.includes('do') ? 1 : 0), closes = words.filter((w) => w === '}').length + (lead.includes('done') ? 1 : 0);
+    for (let k = 0; k < opens; k++) groups.push(false);
+    // an if, a loop or a case begun on an earlier line (`if …; then` and `cd build` on the next: review 4)
+    const wasIn = nest > 0;
+    nest = Math.max(0, nest + (/^(if|case)$/.test(words[0] ?? '') && !words.includes('{') ? 1 : 0) - (/^(fi|esac)$/.test(words[0] ?? '') ? 1 : 0));
+    // behind a keyword or a prefix, or inside a group, a loop or an if, a cd may not happen: what follows is judged from both folders
+    const maybe = groups.length > 0 || wasIn || i > 0;
+    const loop = /^\s*for\s+\$?\(?\$?([A-Za-z_]\w*)\s+in\b/.exec(seg);          // a loop's variable is no path written out
+    if (loop) lits.delete(loop[1].toLowerCase());
+    if (POP.test(verb) || CD.test(verb)) {
+      const d = args.find((a) => a === '-' || !a.startsWith('-'));
+      if (POP.test(verb)) out.push({ pop: true }); else if (d) out.push({ cd: d.replace(/[;}]+$/, ''), ...(PUSH.test(verb) ? { push: true } : {}), ...(maybe ? { maybe: true } : {}) });
+      for (let k = 0; k < closes; k++) groups.pop();
+      return;
+    }
+    // (also where a block opens: `% { $c = (Get-Content $_) -replace 'a','b'; $c | Out-File $_ }`)
+    const set = /^\s*\$(\w+)\s*=(?!=)\s*([\s\S]+)$/.exec(seg.replace(/^[^{}'"]*\{\s*(?=\$\w+\s*=)/, ''));   // `foreach ($f in …) { $c = …`
+    if (set && typed(set[2])) tainted.set(set[1].toLowerCase(), typed(set[2])!);
+    const lit = /^\s*\$?([A-Za-z_]\w*)\s*=\s*(['"]?)([^'"\s$()`;]+)\2\s*$/.exec(seg), assigned = /^\s*\$?([A-Za-z_]\w*)\s*=(?!=)/.exec(seg);
+    if (lit) lits.set(lit[1].toLowerCase(), lit[3]); else if (assigned) lits.delete(assigned[1].toLowerCase());
+    const named = (t: string) => lits.get((/^\$\{?(\w+)\}?$/.exec(t)?.[1] ?? '\u0000').toLowerCase());
+    // a redirect's target, less a heredoc written against it (`>src/a.ts<<EOF`) and the `)` that closed a subshell around
+    // it; read in all the segment's words, since a `(…)` that opens it is cut off as a subshell (`(gc a) -replace … > b`)
+    const targets = all.flatMap((w, k) => (stdout.test(w) && all[k + 1] ? [all[k + 1].replace(/<<.*$/, '').replace(/^([^()]*)\)+$/, '$1')] : []));
+    const plain = operands(args).filter((a) => !a.startsWith('-'));
+    // what feeds a writer: the segment before it, or a -replace anywhere up the pipeline (`gc f | % { $_ -replace … } | sc f`)
+    const fed = (up.length ? typed(up.at(-1)!) : null) ?? (up.some((u) => REPLACES.test(blanked(u))) ? 'a -replace' : null);
+    // a -replace whose result is redirected, wherever in the segment it stands (`… | % { $_ -replace 'a','b' } > f`)
+    // (in an expression or a block, not a program's own option: `node gen.js -replace x > f`)
+    const own = typed(seg) ?? (targets.length && REPLACES.test(blanked(seg)) && (/^\s*[($[]/.test(seg) || /^(foreach-object|foreach|%|where-object|\?)$/i.test(verb)) ? 'a -replace' : null);
+    // `{ echo a; echo b; } > f`, `for … do echo x; done > f`: the group's redirect carries what was typed inside
+    if (own && groups.length) groups[groups.length - 1] = true;
+    let group = false;
+    for (let k = 0; k < closes; k++) group = (groups.pop() ?? false) || group;
+    const run = (name: RegExp) => { const k = args.findIndex((a) => name.test(a.replace(/^.*[\\/]/, ''))); return k < 0 ? null : args.slice(k + 1); };
+    const inPlace = (a: string[]) => a.some((x) => /^(-[a-zA-Z]*i|--in-place)/.test(x));
+    // perl's own options stand before its script: `perl tools/report.pl -input x` has none (review 3)
+    const perlInPlace = (a: string[]) => { const s = a.findIndex((x, k) => !x.startsWith('-') && !/^-[a-zA-Z0-9]*[eE]$/.test(a[k - 1] ?? '')); return a.some((x, k) => (s < 0 || k < s) && /^-[a-zA-Z0-9]*i/.test(x) && !/^-[MI]/.test(x)); };
+    // a file a variable names is the one the command set it to (`f=src/a.ts; sed -i … $f`); one it didn't write out (a
+    // loop's variable, a substitution's output: `sed -i … $(grep -rl x src)`) can't be told: no target, and the folders
+    // it may be in are the command's own
+    const edits = (files: string[], how: string) => {
+      if (files.some((t) => /\$\(|`/.test(t))) { out.push({ target: null, how: `${how} on files a substitution names` }); return; }
+      for (const t of files) out.push(BARE.test(t) ? (named(t) ? { target: named(t)!, how } : { target: null, how: `${how} on a file a variable names` }) : { target: t, how });
+    };
+    // sed's files: every plain argument after its script, or all of them when the script is an option's (-e, --expression=, -f)
+    const sedScripted = args.some((a) => /^(--expression|--file)(=|$)/.test(a) || /^-[a-df-hj-zA-Z]*[ef]/.test(a));
+    const sedFiles = sedScripted ? plain.filter((a) => !/^(-[a-zA-Z]*[ef]|--expression|--file)$/.test(args[args.indexOf(a) - 1] ?? '')) : plain.slice(1);
+    const through = fed && /^cat$/i.test(verb) && !plain.length ? `${fed} passed through cat and` : null;   // `echo x | cat > f`
+    if (targets.length && (own || through || (group && /^(\}|done)$/.test(words[0] ?? '')))) {
+      for (const t of targets) out.push(own === 'a -replace' && /^\$/.test(t) && !named(t) ? { target: null, how: 'a -replace redirected to a file a variable names' } : { target: named(t) ?? t, how: `${own ?? through ?? 'what the group types'} redirected to it` });
+    }
+    else if (/^tee$/i.test(verb) && (fed || words.some((w) => /^<<-?/.test(w)))) for (const t of plain) out.push({ target: named(t) ?? t, how: `${fed ?? 'a heredoc'} piped to tee` });
+    else if (/^sed$/i.test(verb) && inPlace(args) && sedFiles.length) edits(sedFiles, 'sed -i');
+    else if (/^g?awk$/i.test(verb) && args.some((a, k) => a === '-i' && args[k + 1] === 'inplace') && plain.length > 2) for (const t of plain.slice(2)) out.push({ target: t, how: 'awk -i inplace' });
+    else if (/^perl$/i.test(verb) && perlInPlace(args) && plain.length > 1) edits(plain.slice(1), 'perl -i');
+    // sed -i or perl -i run on files the command doesn't name: `grep -rl x src | xargs sed -i …`, `find <dirs> … -exec
+    // sed -i … {} +` (find's folders are where they are)
+    else if (/^(xargs|find)$/i.test(verb) && (inPlace(run(/^sed$/i) ?? []) || perlInPlace(run(/^perl$/i) ?? []))) {
+      const k = args.findIndex((a) => /^[-(!]/.test(a));
+      out.push({ target: null, how: `${run(/^sed$/i) ? 'sed' : 'perl'} -i run by ${verb.toLowerCase()}`, ...(/^find$/i.test(verb) && k > 0 ? { dirs: args.slice(0, k) } : {}) });
+    }
+    else if (PS_WRITERS.test(verb)) {
+      const flag = (re: RegExp) => { const k = args.findIndex((a) => re.test(a)); return k >= 0 ? args[k + 1] : undefined; };
+      const isNew = /^(new-item|ni)$/i.test(verb), tee = /^tee-object$/i.test(verb);
+      // positional arguments: not an option, nor the value of one (every PowerShell parameter but a switch takes one)
+      const SWITCH = /^-(Force|Recurse|NoNewline|PassThru|Append|NoClobber|Confirm|WhatIf|Verbose|AsByteStream)$/i;
+      const placed = args.filter((a, k) => !a.startsWith('-') && !redirect.test(a) && !redirect.test(args[k - 1] ?? '') && !(/^-/.test(args[k - 1] ?? '') && !SWITCH.test(args[k - 1])));
+      const byName = flag(/^-(Path|LiteralPath|FilePath)$/i);
+      const given = byName ?? placed[0];
+      const path = given === undefined ? undefined : named(given) ?? given;      // `$f = 'src/a.ts'; … | Set-Content $f`
+      const value = flag(/^-(Value|InputObject)$/i) ?? (isNew || tee ? undefined : placed[byName === undefined ? 1 : 0]);   // Set-Content f 'text'
+      // an expression or a variable is computed (`-Value ($j | ConvertTo-Json)`, `$c`), unless the variable holds typed text
+      const literal = value !== undefined && (!/^[($]/.test(value) || tainted.has((/^\$(\w+)$/.exec(value)?.[1] ?? '').toLowerCase()));
+      const replaced = !isNew && value !== undefined && REPLACES.test(blanked(seg));   // -Value ((Get-Content f) -replace 'a','b')
+      // an edit in place (-replace) written back to a file only a variable names (`… | Set-Content $_.FullName`, a loop
+      // over the source files): which file can't be told, as with sed -i through xargs
+      // (piped in, standing in the writer's own words, or held in the variable given as its value: review 5)
+      const edit = (fed === 'a -replace' && !isNew) || replaced || (!isNew && tainted.get((/^\$(\w+)$/.exec(value ?? '')?.[1] ?? '').toLowerCase()) === 'a -replace');
+      if (path && /^\$/.test(path) && edit) out.push({ target: null, how: `a -replace written by ${verb} to a file a variable names` });
+      else if (path && ((fed && !isNew) || literal || replaced)) out.push({ target: path, how: `${fed && !isNew ? fed : replaced ? 'a -replace' : 'a literal value'} written by ${verb}` });
+    }
+  };
+  for (const { seg, up } of piped(p.text, true)) {
+    let seen = false;
+    const cmds = simpleCommands(seg), all = cmds.filter((w) => !isMark(w)).flat();
+    for (const words of cmds) {
+      if (isMark(words)) out.push({ sub: words[0] === OPEN ? 'open' : 'close' });
+      else if (!seen) { seen = true; one(seg, words, up, all); }
+    }
+    // a `)` the segment closes without having opened: the end of a subshell begun in an earlier one (`(cd src && echo x > a.ts)`)
+    const bare = seg.replace(/"[^"]*"|'[^']*'/g, '');
+    for (let k = (bare.match(/\)/g) ?? []).length - (bare.match(/\(/g) ?? []).length; k > 0; k--) out.push({ sub: 'close' });
+  }
+  return [...out, ...(depth < 4 ? p.shell.flatMap((s) => typedWrites(s, depth + 1)) : [])];
+}
+
 export function commandsRun(command: string, depth = 0): string[][] {
   const p = parts(command);
-  return [...simpleCommands(p.text), ...(depth < 4 ? p.shell.flatMap((s) => commandsRun(s, depth + 1)) : [])];
+  // A line continued with ` \` or `` ` `` is one command (`git branch \` then `-f main` on the next line): the two
+  // lines' words together, and the second line on its own after it, since a comment or PowerShell's `cd \` continues
+  // nothing (`# tidy up \` then `rm -rf state/views`). Both readings are judged.
+  // A line in the middle of a long continued command joins at most the next JOINED lines (the first line joins them
+  // all): every line of a 4,000-line curl joined to all after it took the hook minutes, and a hook that runs out of
+  // time judges nothing (review 3).
+  const JOINED = 20;
+  const simple = simpleCommands(p.text), own: string[][] = [];
+  const tail = (w: string[]) => /^[\\`]$/.test(w.at(-1) ?? '');
+  for (let k = 0; k < simple.length; k++) {
+    const middle = k > 0 && simple[k - 1].length > 1 && tail(simple[k - 1]), cd = CD.test(verbOf(simple[k]).verb);
+    const lines: string[][] = [simple[k]];
+    for (let j = k + 1; !cd && tail(lines.at(-1)!) && (lines.length > 1 || simple[k].length > 1) && j < simple.length && !isMark(simple[j]) && !(middle && lines.length > JOINED); j++) lines.push(simple[j]);
+    own.push(lines.length === 1 ? simple[k] : lines.flatMap((l, n) => (n < lines.length - 1 ? l.slice(0, -1) : l)));
+  }
+  // Inside an if, a loop, a case, a function or a block that an earlier command opened (`if [ -d build ]; then` and
+  // `cd build` on the next line), a command may not run: CONDITIONAL, as behind a keyword (review 4). Counted by the
+  // word a command starts with, and a lone { or } anywhere in it.
+  const within: string[][] = [];
+  let nest = 0;
+  for (const w of own) {
+    const first = w[0] ?? '';
+    const braces = w.filter((x) => x === '{' || /[^$]\{$/.test(x)).length;       // PowerShell's `if (…) {` opens once, by its brace
+    const opens = braces || (/^(if|for|while|until|case|select|function)$/.test(first) ? 1 : 0);
+    const closes = (/^(fi|done|esac)$/.test(first) ? 1 : 0) + w.filter((x) => x === '}' || /^\}[^}]/.test(x)).length;
+    const inside = nest > 0 && !isMark(w);
+    nest = Math.max(0, nest + opens - closes);
+    const cs = clauses(w);
+    if (inside) for (const c of cs) CONDITIONAL.add(c);
+    within.push(...cs);
+  }
+  // and the command inside each block written against its braces (blocksApart): the blocks' commands only, after the rest
+  const apart = blocksApart(p.text);
+  const blocks = apart === p.text ? [] : simpleCommands(apart).flatMap(clauses).filter((c) => CONDITIONAL.has(c) && !isMark(c));
+  return [...within, ...blocks, ...(depth < 4 ? p.shell.flatMap((s) => commandsRun(s, depth + 1)) : [])];
 }
 
 const norm = (p: string) => {
@@ -285,18 +601,26 @@ const isAbs = (p: string) => /^[a-zA-Z]:\//.test(p) || p.startsWith('/');
 export function outside(command: string, cwd: string, dir: string, owned: RegExp[] = []): string | null {
   const home = norm(dir), tmp = norm(tmpdir()), repo = norm(`${home}/../..`);
   const under = (p: string, d: string) => p === d || p.startsWith(d + '/');
-  let here = norm(cwd);
-  const resolveIn = (p: string) => { const n = norm(p); return isAbs(n) ? n : norm(`${here}/${n}`); };
-  const saved: string[] = [];
-  for (const { cd, target, sub } of writeTargets(command)) {
-    if (sub) { if (sub === 'open') saved.push(here); else here = saved.pop() ?? here; continue; }
-    if (cd) { if (!/[$%~`]/.test(cd)) here = resolveIn(cd); continue; }
+  // the folders the command may be in by now: one, or more after a cd that may not have happened (`then cd /tmp/x; fi`)
+  let heres = [norm(cwd)];
+  const resolveIn = (here: string, p: string) => { const n = norm(p); return isAbs(n) ? n : norm(`${here}/${n}`); };
+  const saved: string[][] = [];
+  for (const { cd, maybe, target, sub } of writeTargets(command)) {
+    if (sub) { if (sub === 'open') saved.push(heres); else heres = saved.pop() ?? heres; continue; }
+    if (cd) {
+      if (/[$%~`]/.test(cd)) continue;
+      const moved = heres.map((h) => resolveIn(h, cd));
+      heres = maybe ? [...new Set([...heres, ...moved])].slice(0, 16) : moved;
+      continue;
+    }
     const t = target!;
     if (/[$%~`]/.test(t) || t.startsWith('&') || /^(\/dev\/(null|stdout|stderr)|nul|\$null)$/i.test(t)) continue;
-    const abs = resolveIn(t);
-    if (under(abs, repo) && abs !== repo && owned.some((r) => r.test(abs.slice(repo.length + 1)))) continue;
-    if (under(abs, home) || ((under(abs, tmp) || under(abs, '/tmp')) && !under(abs, repo))) continue;   // /tmp: Git Bash's temp too
-    return t;
+    for (const here of heres) {
+      const abs = resolveIn(here, t);
+      if (under(abs, repo) && abs !== repo && owned.some((r) => r.test(abs.slice(repo.length + 1)))) continue;
+      if (under(abs, home) || ((under(abs, tmp) || under(abs, '/tmp')) && !under(abs, repo))) continue;   // /tmp: Git Bash's temp too
+      return t;
+    }
   }
   return null;
 }

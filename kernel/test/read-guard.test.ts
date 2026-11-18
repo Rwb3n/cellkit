@@ -164,8 +164,11 @@ test('read guard: prose in a script\'s strings is text; Select-String reads text
     'Microsoft.PowerShell.Management\\Get-ChildItem -r | Select-String KEY', 'gci -r -Filter *v | Select-String KEY', 'echo (gci -r) | Select-String KEY',
     // strict on purpose: a listing feeds files, narrowed or not; give Select-String the files with -Path instead
     'gci -r -Filter *.ts | Select-String KEY',
-    'Get-Command .\\.env | Get-Content', 'gcm ./.env | Select-Object Path | gc'])   // a command's object carries a Path (fifth review)
+    'Get-Command .\\.env | Get-Content', 'gcm ./.env | Select-Object Path | gc',   // a command's object carries a Path (fifth review)
+    // review 3 of the v0.7 guards: a read behind the word that opens a compound command, or in a shell's -lc string
+    'if cat .env; then echo yes; fi', '! grep -r SECRET .env', '{ cat .env; }', 'while read l; do cat .env; done', 'bash -lc "cat .env"', 'powershell "Get-Content .env"'])
     assert.equal(sh(c), 2, c);
+  for (const c of ['if grep -q x kernel/src/a.ts; then echo yes; fi', '! grep -q x kernel/src/a.ts', 'bash -lc "cat kernel/src/a.ts"']) assert.equal(sh(c), 0, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
   assert.equal(sh('Select-String -Path src/*.ts -Pattern KEY'), 0);
   // #114 (apify-actor-dev): fed by a command the list doesn't know, or one with a variable in it, it is still refused,

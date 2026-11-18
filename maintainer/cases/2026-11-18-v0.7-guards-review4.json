@@ -1,0 +1,1610 @@
+[
+ {
+  "id": "r4-pre-001",
+  "session": "root",
+  "command": "sudo cd /tmp/x; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the verb read past a prefix makes this a cd; sudo cd moves nothing, the rm runs here"
+ },
+ {
+  "id": "r4-pre-002",
+  "session": "root",
+  "command": "env cd /tmp/x; git reset --hard",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "env cd moves nothing"
+ },
+ {
+  "id": "r4-pre-003",
+  "session": "root",
+  "command": "nohup cd /tmp/x; rm -rf docs",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "nohup cd moves nothing"
+ },
+ {
+  "id": "r4-pre-004",
+  "session": "root",
+  "command": "npx cd /tmp/x; git checkout -- .",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "npx cd moves nothing"
+ },
+ {
+  "id": "r4-pre-005",
+  "session": "cell",
+  "command": "sudo cd /tmp/a/b; cp notes.md ../../x.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary behind sudo cd"
+ },
+ {
+  "id": "r4-pre-006",
+  "session": "root",
+  "command": "time cd /tmp/x; rm -rf state/views",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "time cd does move (as a plain cd; judged from /tmp/x)"
+ },
+ {
+  "id": "r4-pre-007",
+  "session": "root",
+  "command": "FOO=1 rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-pre-008",
+  "session": "root",
+  "command": "sudo rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-pre-009",
+  "session": "root",
+  "command": "NODE_ENV=test DEBUG=1 git checkout -- docs/assumptions.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "two assignments"
+ },
+ {
+  "id": "r4-pre-010",
+  "session": "root",
+  "command": "/usr/bin/rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "verb by its path"
+ },
+ {
+  "id": "r4-pre-011",
+  "session": "root",
+  "command": "$r = Remove-Item state\\views -Recurse -Force -PassThru",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell assignment"
+ },
+ {
+  "id": "r4-pre-012",
+  "session": "cell",
+  "command": "sudo cp src/a.ts ../../kernel/src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary behind sudo"
+ },
+ {
+  "id": "r4-pre-013",
+  "session": "cell",
+  "command": "LC_ALL=C mv ../../docs/notes.md exit/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary behind an assignment"
+ },
+ {
+  "id": "r4-pre-014",
+  "session": "cell",
+  "command": "time rm -rf node_modules dist",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-pre-015",
+  "session": "cell",
+  "command": "env NODE_ENV=test npm test 2>&1 | tail -5",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-pre-016",
+  "session": "cell",
+  "command": "nohup node src/server.js > /tmp/server.log 2>&1 &",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-pre-017",
+  "session": "cell",
+  "command": "npx rimraf dist && npx mkdirp exit/out && npx tsc -p .",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-pre-018",
+  "session": "cell",
+  "command": "$null = New-Item -ItemType Directory -Force exit/out; $n = Copy-Item src/a.ts exit/out/ -PassThru",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday PowerShell assignments"
+ },
+ {
+  "id": "r4-pre-019",
+  "session": "root",
+  "command": "command -v rm && time npm test",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-pre-020",
+  "session": "root",
+  "command": "cp --target-directory= x.json \"state/bedrock/guards.json\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer: an empty value names nothing"
+ },
+ {
+  "id": "r4-join-001",
+  "session": "root",
+  "command": "npm run build \\\n  && rm -rf \\\n  t01 \\\n  t02 \\\n  t03 \\\n  t04 \\\n  t05 \\\n  t06 \\\n  t07 \\\n  t08 \\\n  t09 \\\n  t10 \\\n  t11 \\\n  t12 \\\n  t13 \\\n  t14 \\\n  t15 \\\n  t16 \\\n  t17 \\\n  t18 \\\n  t19 \\\n  t20 \\\n  t21 \\\n  t22 \\\n  state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a command that starts in the middle of a continued line (after &&) joins at most 20 lines: its 24th line is not its argument any more"
+ },
+ {
+  "id": "r4-join-002",
+  "session": "root",
+  "command": "npm run build \\\n  && rm -rf \\\n  t01 \\\n  t02 \\\n  t03 \\\n  state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same, short: within the cap"
+ },
+ {
+  "id": "r4-join-003",
+  "session": "root",
+  "command": "# clean up \\\ngit branch \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -q \\\n  -f main abc123",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "after a comment that ends in a backslash, 23 lines on: constructed, for the record"
+ },
+ {
+  "id": "r4-join-004",
+  "session": "cell",
+  "command": "cat a.txt \\\n  | node fmt.js \\\n  --a 1 \\\n  --b 2 \\\n  --c 3 \\\n  --d 4 \\\n  --e 5 \\\n  --f 6 \\\n  --g 7 \\\n  --h 8 \\\n  --i 9 \\\n  --j 10 \\\n  --k 11 \\\n  --l 12 \\\n  --m 13 \\\n  --n 14 \\\n  --o 15 \\\n  --p 16 \\\n  --q 17 \\\n  --r 18 \\\n  --s 19 \\\n  --t 20 \\\n  --u 21 \\\n  --v 22 \\\n  > ../../kernel/out.json",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a redirect past the cap: still read (the first line joins all)"
+ },
+ {
+  "id": "r4-join-005",
+  "session": "root",
+  "command": "git checkout \\\n  -- docs/assumptions.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "ordinary continuation"
+ },
+ {
+  "id": "r4-cd-001",
+  "session": "root",
+  "command": "if [ -d build ]; then\n  cd build\nfi\nrm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the round 3 regression's command written over lines, as an if usually is: the cd stands on a line of its own and is followed outright"
+ },
+ {
+  "id": "r4-cd-002",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]\nthen\n  cd /tmp/build\nfi\ngit reset --hard",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with then on its own line"
+ },
+ {
+  "id": "r4-cd-003",
+  "session": "root",
+  "command": "if [ -d /tmp/build ]; then\n  cd /tmp/build\nelse\n  echo none\nfi\ngit clean -fdx",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with an else"
+ },
+ {
+  "id": "r4-cd-004",
+  "session": "root",
+  "command": "for d in /tmp/none/*; do\n  cd /tmp/none\ndone\nrm -rf docs",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a loop body on its own lines"
+ },
+ {
+  "id": "r4-cd-005",
+  "session": "root",
+  "command": "build() {\n  cd /tmp/b\n  make\n}\nrm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a function body on its own lines, never called"
+ },
+ {
+  "id": "r4-cd-006",
+  "session": "root",
+  "command": "if (Test-Path C:/temp/x) {\n  Set-Location C:/temp/x\n}\nRemove-Item -Recurse -Force state",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell block on its own lines"
+ },
+ {
+  "id": "r4-cd-007",
+  "session": "cell",
+  "command": "if [ -d /tmp/a/b ]; then\n  cd /tmp/a/b\nfi\ncp notes.md ../../x.md",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cell boundary, the if over lines"
+ },
+ {
+  "id": "r4-cd-008",
+  "session": "cell",
+  "command": "if [ -d /tmp/x ]; then\n  cd /tmp/x\nfi\necho 'x' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source, the if over lines"
+ },
+ {
+  "id": "r4-cd-009",
+  "session": "cell",
+  "command": "if [ -d /tmp/x ]; then\n  cd /tmp/x\nfi\ngit push . HEAD:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's git rule, the if over lines"
+ },
+ {
+  "id": "r4-cd-010",
+  "session": "root",
+  "command": "if [ -d /tmp/x ]; then\n  cd /tmp/x\nfi\ngit branch -f main abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "forced branch move, the if over lines"
+ },
+ {
+  "id": "r4-cd-011",
+  "session": "root",
+  "command": "if [ -d build ]; then cd build; fi; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer, on one line"
+ },
+ {
+  "id": "r4-cd-012",
+  "session": "root",
+  "command": "if [ -d build ]; then cd build; else cd dist; fi; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "else cd"
+ },
+ {
+  "id": "r4-cd-013",
+  "session": "root",
+  "command": "if ($x) { ls } else { Set-Location C:/temp/other }; Remove-Item -Recurse state",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell else block"
+ },
+ {
+  "id": "r4-cd-014",
+  "session": "root",
+  "command": "case $1 in a) cd /tmp/a ;; esac; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cd in a case arm (case writes are an accepted gap; the cd is the question)"
+ },
+ {
+  "id": "r4-cd-015",
+  "session": "root",
+  "command": "if [ -d a ]; then cd a; fi; if [ -d b ]; then cd b; fi; if [ -d c ]; then cd c; fi; if [ -d d ]; then cd d; fi; if [ -d e ]; then cd e; fi; rm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "five conditional cds: 32 folders, capped at 16; the session's own stays"
+ },
+ {
+  "id": "r4-cd-016",
+  "session": "cell",
+  "command": "mkdir -p /tmp/w && cd /tmp/w && echo 'console.log(1)' > probe.js && node probe.js",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday scratch: a plain cd is followed"
+ },
+ {
+  "id": "r4-cd-017",
+  "session": "cell",
+  "command": "if [ ! -d /tmp/w ]; then mkdir -p /tmp/w; fi; cd /tmp/w; echo 'x' > probe.js",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the cd after the if is plain"
+ },
+ {
+  "id": "r4-cd-018",
+  "session": "cell",
+  "command": "for i in 1 2 3; do node step.js $i; done; cd /tmp/w && echo 'x' > probe.js",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a loop closed before the cd"
+ },
+ {
+  "id": "r4-cd-019",
+  "session": "cell",
+  "command": "echo todo: do the tests later; cd /tmp/w && echo 'x' > probe.js",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the word do in prose leaves a group open: the later cd reads as one that may not happen; unsure it matters"
+ },
+ {
+  "id": "r4-cd-020",
+  "session": "root",
+  "command": "pushd /tmp/w > /dev/null || exit 1; rm -rf state; popd",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a plain pushd"
+ },
+ {
+  "id": "r4-cd-021",
+  "session": "root",
+  "command": "if ($ok) {git branch -f main abc123}; Set-Location C:/temp/other",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a tight block's command is judged after the whole command's cds: a cd written after it moves it; unsure it matters"
+ },
+ {
+  "id": "r4-cd-022",
+  "session": "root",
+  "command": "Get-ChildItem | ForEach-Object {Remove-Item state\\views -Recurse}; Set-Location C:/temp/other",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "the same for an older check"
+ },
+ {
+  "id": "r4-blk-001",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object{Stop-Process -Id $_.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "no space before the brace either (PowerShell takes it)"
+ },
+ {
+  "id": "r4-blk-002",
+  "session": "root",
+  "command": "Get-Process node|%{Stop-Process -Id $_.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "all tight"
+ },
+ {
+  "id": "r4-blk-003",
+  "session": "root",
+  "command": "Get-Process|?{$_.Name -eq 'node'}|%{kill $_.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "all tight, kill"
+ },
+ {
+  "id": "r4-blk-004",
+  "session": "root",
+  "command": "foreach($p in Get-Process node){Stop-Process -Id $p.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "foreach(...){...}"
+ },
+ {
+  "id": "r4-blk-005",
+  "session": "root",
+  "command": "Get-Process | % {if ($_.Name -eq 'node') {Stop-Process -Id $_.Id}}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "nested tight blocks"
+ },
+ {
+  "id": "r4-blk-006",
+  "session": "root",
+  "command": "(Get-Process node).ForEach({Stop-Process -Id $_.Id})",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the .ForEach({…}) method"
+ },
+ {
+  "id": "r4-blk-007",
+  "session": "root",
+  "command": "try{git branch -f main abc123}catch{}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "try{…} with no space"
+ },
+ {
+  "id": "r4-blk-008",
+  "session": "root",
+  "command": "if ($a) {ls} else{git checkout -B main abc123}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "else{…}"
+ },
+ {
+  "id": "r4-blk-009",
+  "session": "root",
+  "command": "if($ok){git update-ref refs/heads/main abc123}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "if(...){...}"
+ },
+ {
+  "id": "r4-blk-010",
+  "session": "root",
+  "command": "# don't stop the others\nGet-Process node | % {Stop-Process -Id $_.Id}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an apostrophe in a comment before it"
+ },
+ {
+  "id": "r4-blk-011",
+  "session": "root",
+  "command": "# what's in views\nrm -rf state/views",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "an apostrophe in a comment hides the next line from the word readers (all three hooks?)"
+ },
+ {
+  "id": "r4-blk-012",
+  "session": "cell",
+  "command": "# don't touch the kernel\necho 'const a = 1;' > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same for typed source"
+ },
+ {
+  "id": "r4-blk-013",
+  "session": "cell",
+  "command": "ls src | ForEach-Object{\"x\" | Add-Content src/a.ts}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source, ForEach-Object{"
+ },
+ {
+  "id": "r4-blk-014",
+  "session": "cell",
+  "command": "if(Test-Path src){'const a = 1' | Set-Content src/a.ts}",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "typed source, if(){}"
+ },
+ {
+  "id": "r4-blk-015",
+  "session": "root",
+  "command": "curl -s -o /dev/null -w %{http_code} http://localhost:3000/health",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "curl's %{…}"
+ },
+ {
+  "id": "r4-blk-016",
+  "session": "root",
+  "command": "git log -3 --format=%h HEAD@{1 day ago} && git stash show stash@{0}",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "git's @{…}"
+ },
+ {
+  "id": "r4-blk-017",
+  "session": "root",
+  "command": "Get-ChildItem docs | Select-Object @{n='Name';e={$_.Name}}, Length | Format-Table",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a calculated property"
+ },
+ {
+  "id": "r4-blk-018",
+  "session": "root",
+  "command": "git ls-files | xargs -I{} sh -c 'wc -l {}' | sort -n | tail -3",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "xargs -I{}"
+ },
+ {
+  "id": "r4-blk-019",
+  "session": "cell",
+  "command": "Get-ChildItem src | % {\"$($_.Name)\"} | Out-File exit/list.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "tight block, prose"
+ },
+ {
+  "id": "r4-blk-020",
+  "session": "cell",
+  "command": "node -e \"const o={a:1}; if (o.a) {console.log('x > y')}\" > exit/a.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "braces in quoted code"
+ },
+ {
+  "id": "r4-blk-021",
+  "session": "cell",
+  "command": "cat > exit/notes.md <<'EOF'\nit's {a b} and if (x) {git branch -f main y}\nEOF",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "braces and an apostrophe in a data heredoc"
+ },
+ {
+  "id": "r4-blk-022",
+  "session": "root",
+  "command": "node kernel/src/mail.ts send --to c1 --body \"don't run: Get-Process | % {Stop-Process -Id $_.Id}\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a mail body that names it"
+ },
+ {
+  "id": "r4-blk-023",
+  "session": "root",
+  "command": "awk '{print $1}' docs/notes.md | sort | uniq -c",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "awk"
+ },
+ {
+  "id": "r4-blk-024",
+  "session": "root",
+  "command": "f(){ git status --short; }; f",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a bash function"
+ },
+ {
+  "id": "r4-str-001",
+  "session": "root",
+  "command": "bash -l -c \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-l -c"
+ },
+ {
+  "id": "r4-str-002",
+  "session": "root",
+  "command": "zsh -ic 'rm -rf state/views'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "zsh -ic"
+ },
+ {
+  "id": "r4-str-003",
+  "session": "root",
+  "command": "sh -euxc 'cp -r backup/state .'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "sh -euxc"
+ },
+ {
+  "id": "r4-str-004",
+  "session": "root",
+  "command": "powershell -NoProfile -ExecutionPolicy Bypass \"Get-Process node | % { Stop-Process -Id $_.Id }\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "first plain argument after valued options"
+ },
+ {
+  "id": "r4-str-005",
+  "session": "root",
+  "command": "powershell.exe -nop -c \"Remove-Item state\\views -Recurse\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-nop -c"
+ },
+ {
+  "id": "r4-str-006",
+  "session": "root",
+  "command": "pwsh -Com \"git checkout -B main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-Com"
+ },
+ {
+  "id": "r4-str-007",
+  "session": "root",
+  "command": "\"C:\\Program Files\\Git\\bin\\bash.exe\" -lc \"git branch -f main abc123\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "bash by its quoted path"
+ },
+ {
+  "id": "r4-str-008",
+  "session": "root",
+  "command": "cmd.exe //d //c \"rmdir /s /q state\\views\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "//d //c"
+ },
+ {
+  "id": "r4-str-009",
+  "session": "root",
+  "command": "bash -lc 'cat .env'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard in -lc"
+ },
+ {
+  "id": "r4-str-010",
+  "session": "root",
+  "command": "powershell \"Get-Content .env\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read guard, PowerShell first argument"
+ },
+ {
+  "id": "r4-str-011",
+  "session": "root",
+  "command": "powershell -File tools/build.ps1 -Clean",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a script"
+ },
+ {
+  "id": "r4-str-012",
+  "session": "root",
+  "command": "powershell ./tools/build.ps1 -Out dist",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a script as the first argument"
+ },
+ {
+  "id": "r4-str-013",
+  "session": "root",
+  "command": "powershell -NoProfile -Command \"Get-ChildItem docs | Select-Object Name\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-str-014",
+  "session": "root",
+  "command": "bash scripts/build.sh -c release",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a script with its own -c"
+ },
+ {
+  "id": "r4-str-015",
+  "session": "root",
+  "command": "bash -lc \"npm test 2>&1 | tail -5\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-str-016",
+  "session": "cell",
+  "command": "powershell -NoProfile \"node src/a.ts | Set-Content exit/out.json\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program's output, in a PowerShell string"
+ },
+ {
+  "id": "r4-str-017",
+  "session": "cell",
+  "command": "bash -lc \"cd /tmp && echo 'x' > probe.js\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "scratch in a -lc string"
+ },
+ {
+  "id": "r4-str-018",
+  "session": "cell",
+  "command": "pwsh -c \"cat > src/a.ts\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "nonsense, harmless"
+ },
+ {
+  "id": "r4-rd-001",
+  "session": "root",
+  "command": "if cat .env; then echo x; fi",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-rd-002",
+  "session": "root",
+  "command": "while read l; do cat .env; done < list.txt",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "do cat"
+ },
+ {
+  "id": "r4-rd-003",
+  "session": "root",
+  "command": "if [ -f .env ]; then echo present; else echo missing; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a test of presence is no read"
+ },
+ {
+  "id": "r4-rd-004",
+  "session": "root",
+  "command": "if grep -q TODO docs/notes.md; then echo yes; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-rd-005",
+  "session": "root",
+  "command": "if ! grep -q \"\\.env\" .gitignore; then echo add it; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a pattern that names .env"
+ },
+ {
+  "id": "r4-rd-006",
+  "session": "root",
+  "command": "for f in docs/*.md; do head -3 \"$f\"; done",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-rd-007",
+  "session": "root",
+  "command": "if [ -n \"$(cat docs/notes.md)\" ]; then echo nonempty; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-rd-008",
+  "session": "cell",
+  "command": "if grep -rq TODO src; then echo todo; fi",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a recursive search of src behind if"
+ },
+ {
+  "id": "r4-rd-009",
+  "session": "root",
+  "command": "{ head -5 docs/notes.md; tail -5 docs/notes.md; } > /tmp/ends.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday group"
+ },
+ {
+  "id": "r4-kill-001",
+  "session": "root",
+  "command": "Stop-Process -Id (Get-CimInstance -Query \"select ProcessId from Win32_Process where name='node.exe'\").ProcessId -Force",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the quoted WMI listing as Stop-Process's own argument: the listing's cmdlet is not a command's verb"
+ },
+ {
+  "id": "r4-kill-002",
+  "session": "root",
+  "command": "foreach ($p in Get-CimInstance -ClassName 'Win32_Process' -Filter \"Name='node.exe'\") { Stop-Process -Id $p.ProcessId }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the quoted WMI listing in a foreach header"
+ },
+ {
+  "id": "r4-kill-003",
+  "session": "root",
+  "command": "$procs = Get-CimInstance -Query \"SELECT * FROM Win32_Process WHERE CommandLine LIKE '%mail.ts%'\"; $procs | ForEach-Object { Stop-Process -Id $_.ProcessId }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "listing into a variable first"
+ },
+ {
+  "id": "r4-kill-004",
+  "session": "root",
+  "command": "(Get-CimInstance -ClassName 'Win32_Process' | Where-Object { $_.CommandLine -match 'mail' }).ProcessId | ForEach-Object { Stop-Process -Id $_ }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "in parentheses"
+ },
+ {
+  "id": "r4-kill-005",
+  "session": "root",
+  "command": "gwmi -Class \"win32_process\" -Filter \"name='node.exe'\" | % { $_.Terminate() }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "alias, lower case"
+ },
+ {
+  "id": "r4-kill-006",
+  "session": "root",
+  "command": "Get-Process node | ForEach-Object -MemberName Kill",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the member form with its parameter named"
+ },
+ {
+  "id": "r4-kill-007",
+  "session": "root",
+  "command": "Get-Process node | % Kill",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-kill-008",
+  "session": "root",
+  "command": "fuser -vk 3000/tcp",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "fuser -vk"
+ },
+ {
+  "id": "r4-kill-009",
+  "session": "root",
+  "command": "fuser 3000/tcp",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "fuser listing"
+ },
+ {
+  "id": "r4-kill-010",
+  "session": "root",
+  "command": "MSYS_NO_PATHCONV=1 taskkill /PID 4242 /F; tasklist | grep node",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "Git Bash's other spelling"
+ },
+ {
+  "id": "r4-kill-011",
+  "session": "root",
+  "command": "taskkill //F //T //PID 4242; sleep 1; tasklist //FI \"PID eq 4242\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer, another order"
+ },
+ {
+  "id": "r4-kill-012",
+  "session": "root",
+  "command": "node s.js & pid=\"$!\"; sleep 1; kill \"${pid}\"; ps -p \"$pid\"",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "quoted, braces"
+ },
+ {
+  "id": "r4-kill-013",
+  "session": "root",
+  "command": "$id = 4242; Stop-Process -Id $id -Force; Get-Process node -ErrorAction SilentlyContinue",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "PowerShell variable set to a number"
+ },
+ {
+  "id": "r4-kill-014",
+  "session": "root",
+  "command": "$p = Start-Process node -ArgumentList s.js -PassThru; Start-Sleep 1; Stop-Process -InputObject $p -Force; Get-Process node",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-kill-015",
+  "session": "root",
+  "command": "Stop-Process -InputObject (Get-Process node)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-InputObject of a listing"
+ },
+ {
+  "id": "r4-kill-016",
+  "session": "root",
+  "command": "PORT=3000; kill $(lsof -ti:$PORT)",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a number variable that is no pid"
+ },
+ {
+  "id": "r4-kill-017",
+  "session": "root",
+  "command": "echo \"PID=1234 started\"; ps aux | grep node | awk '{print $2}' | xargs kill",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a number in prose changes nothing"
+ },
+ {
+  "id": "r4-kill-018",
+  "session": "root",
+  "command": "ps aux | grep '[n]ode server'; kill 4242 4243",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-src-001",
+  "session": "cell",
+  "command": "f=src/a.ts; echo 'const a = 1;' > \"$f\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a variable set to a path written out is read for sed -i and Set-Content now, not for a redirect; unsure (a variable target was let through by design)"
+ },
+ {
+  "id": "r4-src-002",
+  "session": "cell",
+  "command": "OUT=src/gen.ts\ncat > $OUT <<'EOF'\nexport const a = 1;\nEOF",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with a heredoc"
+ },
+ {
+  "id": "r4-src-003",
+  "session": "cell",
+  "command": "f=src/a.ts; echo 'x' | tee \"$f\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the same with tee"
+ },
+ {
+  "id": "r4-src-004",
+  "session": "cell",
+  "command": "f=src/a.ts; sed -i 's/a/b/' \"$f\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-src-005",
+  "session": "cell",
+  "command": "f=exit/notes.md; sed -i 's/TODO/DONE/' $f",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the round 2 known false refusal: prose by variable"
+ },
+ {
+  "id": "r4-src-006",
+  "session": "cell",
+  "command": "f=exit/notes.md; for f in src/*.ts; do sed -i 's/a/b/' \"$f\"; done",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a loop variable of the same name as an earlier literal: constructed, for the record"
+ },
+ {
+  "id": "r4-src-007",
+  "session": "cell",
+  "command": "FILES=\"src/a.ts src/b.ts\"; sed -i 's/a/b/' $FILES",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "two files in one variable"
+ },
+ {
+  "id": "r4-src-008",
+  "session": "cell",
+  "command": "sed -i 's/a/b/' \"$(git ls-files 'src/*.ts')\"",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "substitution, quoted"
+ },
+ {
+  "id": "r4-src-009",
+  "session": "cell",
+  "command": "sed -i -E 's/(a)/\\1b/' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-E"
+ },
+ {
+  "id": "r4-src-010",
+  "session": "cell",
+  "command": "sed -ie 's/a/b/' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-ie"
+ },
+ {
+  "id": "r4-src-011",
+  "session": "cell",
+  "command": "sed -n -e '/export/p' src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading with -e"
+ },
+ {
+  "id": "r4-src-012",
+  "session": "cell",
+  "command": "sed -e 's/a/b/' -e 's/c/d/' src/a.ts > /tmp/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "reading with two -e"
+ },
+ {
+  "id": "r4-src-013",
+  "session": "cell",
+  "command": "sed -i -e 's/TODO/DONE/' -e 's/WIP/OK/' exit/report.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose in place with -e"
+ },
+ {
+  "id": "r4-src-014",
+  "session": "cell",
+  "command": "perl -0pi -e 's/a/b/g' src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "perl -0pi"
+ },
+ {
+  "id": "r4-src-015",
+  "session": "cell",
+  "command": "perl -pe 's/a/b/' -i src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "-i after the code"
+ },
+ {
+  "id": "r4-src-016",
+  "session": "cell",
+  "command": "perl tools/report.pl -input test/fixtures/a.json -o exit/out.md",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-src-017",
+  "session": "cell",
+  "command": "perl -ne 'print if /x/i' src/a.ts > exit/x.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "perl reading"
+ },
+ {
+  "id": "r4-src-018",
+  "session": "cell",
+  "command": "$f = \"src/a.ts\"; (Get-Content $f -Raw) -replace 'a','b' | Set-Content $f -NoNewline",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer, double quotes"
+ },
+ {
+  "id": "r4-src-019",
+  "session": "cell",
+  "command": "$f = 'exit/report.md'; (Get-Content $f) -replace 'TODO','DONE' | Set-Content $f",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prose by a variable set to a path"
+ },
+ {
+  "id": "r4-src-020",
+  "session": "cell",
+  "command": "$out = Join-Path $env:TEMP 'r.txt'; (Get-Content exit/report.md) -replace 'a','b' | Set-Content $out",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a -replace written to a temp file a variable names: refused as unnamed; unsure (strict as xargs sed -i is)"
+ },
+ {
+  "id": "r4-src-021",
+  "session": "cell",
+  "command": "foreach ($f in Get-ChildItem src -Filter *.ts) { (Get-Content $f) -replace 'a','b' | Set-Content $f }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the loop form"
+ },
+ {
+  "id": "r4-src-022",
+  "session": "cell",
+  "command": "Get-ChildItem src -Filter *.ts | % { $c = (Get-Content $_) -replace 'a','b'; $c | Out-File $_ }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "through a variable holding the replaced text, written to $_"
+ },
+ {
+  "id": "r4-src-023",
+  "session": "cell",
+  "command": "Get-ChildItem src -Filter *.ts | % { (Get-Content $_.FullName) -replace 'a','b' > $_.FullName }",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "redirected to $_.FullName"
+ },
+ {
+  "id": "r4-src-024",
+  "session": "cell",
+  "command": "(Get-Content tmpl.txt) -replace 'NAME','c1' > exit/readme.txt",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "-replace redirected to prose"
+ },
+ {
+  "id": "r4-src-025",
+  "session": "cell",
+  "command": "node tools/gen.js --replace-all -replace x > src/gen.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program with its own -replace option; unsure it matters"
+ },
+ {
+  "id": "r4-src-026",
+  "session": "cell",
+  "command": "echo 'const a = 1;' | cat - > src/a.ts",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cat - ; for the record"
+ },
+ {
+  "id": "r4-src-027",
+  "session": "cell",
+  "command": "2> /tmp/err.log node gen.js > src/gen.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a redirect written first, a program's output"
+ },
+ {
+  "id": "r4-src-028",
+  "session": "cell",
+  "command": "> src/a.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "truncating a file types nothing"
+ },
+ {
+  "id": "r4-src-029",
+  "session": "cell",
+  "command": "cat exit/a.json | cat > exit/b.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a copy through cat"
+ },
+ {
+  "id": "r4-src-030",
+  "session": "cell",
+  "command": "(node gen.js) > src/gen.ts",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a program in parentheses"
+ },
+ {
+  "id": "r4-src-031",
+  "session": "cell",
+  "command": "(node a.js; node b.js) > src/both.json",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "two programs in a subshell"
+ },
+ {
+  "id": "r4-src-032",
+  "session": "cell",
+  "command": "if (Test-Path C:/temp/w) {Set-Location C:/temp/w; 'x' | Set-Content probe.js}",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "scratch inside a block after a cd inside it: judged from the cell's folder too; unsure it matters"
+ },
+ {
+  "id": "r4-src-033",
+  "session": "cell",
+  "command": "grep -rl foo exit | xargs sed -i 's/foo/bar/'",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "unnamed, default world"
+ },
+ {
+  "id": "r4-copy-001",
+  "session": "root",
+  "command": "cp notes.md cells/",
+  "expect": "allow",
+  "verdict": "REFUSE",
+  "note": "a file put into cells/ is no cell folder; refused as holding kernel-owned paths; unsure it is ordinary"
+ },
+ {
+  "id": "r4-copy-002",
+  "session": "root",
+  "command": "cp docs/notes.md cells/c1/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a file handed to a cell"
+ },
+ {
+  "id": "r4-copy-003",
+  "session": "root",
+  "command": "cp -r cells/c1/exit/. docs/reports/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a cell's output collected into docs"
+ },
+ {
+  "id": "r4-copy-004",
+  "session": "root",
+  "command": "cp -r dist/. site/ && cp -r build/* docs/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "built files into docs"
+ },
+ {
+  "id": "r4-copy-005",
+  "session": "root",
+  "command": "cp -r . /tmp/proj-backup",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the whole checkout copied out"
+ },
+ {
+  "id": "r4-copy-006",
+  "session": "root",
+  "command": "cp -r ../kit/kernel/. kernel/",
+  "expect": "REFUSE",
+  "verdict": "allow",
+  "note": "the kit's kernel copied over this one from a folder that is not there (untold: accepted); read the text"
+ },
+ {
+  "id": "r4-copy-007",
+  "session": "root",
+  "command": "cp -r <fixture>/proj-cells/c1/kernel/. kernel/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a kernel folder that is there, copied over this one"
+ },
+ {
+  "id": "r4-copy-008",
+  "session": "root",
+  "command": "rsync -a --delete <fixture>/proj-cells/c1/kernel/ kernel/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "rsync --delete into kernel/"
+ },
+ {
+  "id": "r4-copy-009",
+  "session": "root",
+  "command": "rsync -a --delete dist/ site/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-copy-010",
+  "session": "root",
+  "command": "rsync -a --delete dist/ ./",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--delete into the repository's top takes state/ away"
+ },
+ {
+  "id": "r4-copy-011",
+  "session": "root",
+  "command": "robocopy dist . /MIR",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "/MIR into the top"
+ },
+ {
+  "id": "r4-copy-012",
+  "session": "root",
+  "command": "robocopy dist site /MIR /NFL /NDL",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-copy-013",
+  "session": "root",
+  "command": "rsync -a --delete build/ docs/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "--delete into docs takes assumptions.md"
+ },
+ {
+  "id": "r4-copy-014",
+  "session": "root",
+  "command": "rsync -a --exclude state --exclude .git dist/ .",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer: an exclude's value is no source"
+ },
+ {
+  "id": "r4-copy-015",
+  "session": "root",
+  "command": "rsync -a --exclude=node_modules -e 'ssh -p 22' dist/ host:/srv/site/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "rsync to a host"
+ },
+ {
+  "id": "r4-copy-016",
+  "session": "root",
+  "command": "cp -r <fixture>/proj-cells/c1/cells/c1/. cells/c1/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's folder contents over the cell: its state with them"
+ },
+ {
+  "id": "r4-copy-017",
+  "session": "root",
+  "command": "mv <fixture>/proj-cells/c1/cells/* cells/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "cells by glob, moved"
+ },
+ {
+  "id": "r4-copy-018",
+  "session": "root",
+  "command": "Copy-Item ..\\proj-cells\\c1\\cells\\* cells\\ -Recurse -Force",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "PowerShell"
+ },
+ {
+  "id": "r4-copy-019",
+  "session": "root",
+  "command": "cp -r <fixture>/proj-cells/c1/state/*.md state/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a glob that matches nothing owned: the target folder state/ is not itself kernel-owned"
+ },
+ {
+  "id": "r4-copy-020",
+  "session": "cell",
+  "command": "cp ../../docs/notes.md . && cp -r test/fixtures/. /tmp/w/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday in a cell"
+ },
+ {
+  "id": "r4-copy-021",
+  "session": "cell",
+  "command": "cp -r src/. exit/src-copy/",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday in a cell"
+ },
+ {
+  "id": "r4-copy-022",
+  "session": "root",
+  "command": "mv draft.md docs/ && mv tmp/notes docs/notes-old",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-copy-023",
+  "session": "root",
+  "command": "cp -r templates/cell cells/newcell",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a folder copied to a new name under cells/ (not cell new; for the record)"
+ },
+ {
+  "id": "r4-copy-024",
+  "session": "root",
+  "command": "cp -r ../other/docs/*.md docs/",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a glob from a folder not there: untold; read the text"
+ },
+ {
+  "id": "r4-git-001",
+  "session": "root",
+  "command": "git fetch origin +main:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-git-002",
+  "session": "root",
+  "command": "git pull --force origin main:main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "pull"
+ },
+ {
+  "id": "r4-git-003",
+  "session": "root",
+  "command": "git fetch --force --prune origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "no refspec"
+ },
+ {
+  "id": "r4-git-004",
+  "session": "root",
+  "command": "git fetch -f --tags origin",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "no refspec"
+ },
+ {
+  "id": "r4-git-005",
+  "session": "root",
+  "command": "git fetch origin '+refs/heads/*:refs/remotes/origin/*'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "remote-tracking refs"
+ },
+ {
+  "id": "r4-git-006",
+  "session": "root",
+  "command": "git fetch origin pull/12/head:pr-12 && git checkout pr-12",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a pull request fetched, unforced"
+ },
+ {
+  "id": "r4-git-007",
+  "session": "root",
+  "command": "git fetch origin '+refs/tags/*:refs/tags/*'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "tags fetched by force are no branch move; the text says a branch moves; unsure it matters"
+ },
+ {
+  "id": "r4-git-008",
+  "session": "root",
+  "command": "git fetch --depth 1 origin +main:refs/remotes/origin/main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "valued option before the remote"
+ },
+ {
+  "id": "r4-git-009",
+  "session": "root",
+  "command": "git pull --rebase origin main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-git-010",
+  "session": "cell",
+  "command": "git fetch origin '+refs/heads/*:refs/remotes/origin/*'",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer, in a cell"
+ },
+ {
+  "id": "r4-git-011",
+  "session": "cell",
+  "command": "git tag -v v1.0",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-git-012",
+  "session": "root",
+  "command": "git -C ~/projects/other checkout -B main origin/main",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "strict on purpose; read the text"
+ },
+ {
+  "id": "r4-git-013",
+  "session": "cell",
+  "command": "d=$(mktemp -d) && git -C \"$d\" init -q && git -C \"$d\" config user.email t@t",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "strict on purpose; read the text: what does it tell a cell to do with a mktemp folder"
+ },
+ {
+  "id": "r4-git-014",
+  "session": "cell",
+  "command": "git branch -f main HEAD",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read the text: no git revert for a cell"
+ },
+ {
+  "id": "r4-git-015",
+  "session": "cell",
+  "command": "git --git-dir=../../.git update-ref refs/heads/main HEAD",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "read the text"
+ },
+ {
+  "id": "r4-git-016",
+  "session": "root",
+  "command": "git -C <fixture>/proj-cells/c1 branch -f cell/c1 abc123",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a listed worktree"
+ },
+ {
+  "id": "r4-git-017",
+  "session": "root",
+  "command": "git -C /tmp/elsewhere checkout -B main && git -C /tmp/elsewhere fetch origin +main:main",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "another repository"
+ },
+ {
+  "id": "r4-git-018",
+  "session": "root",
+  "command": "git status --short; git branch -vv; git fetch; git log --oneline -3",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday (asks git for its worktrees?)"
+ },
+ {
+  "id": "r4-find-001",
+  "session": "root",
+  "command": "find state/log -name '*.json' -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer"
+ },
+ {
+  "id": "r4-find-002",
+  "session": "root",
+  "command": "find cells/c1/state/log -type f -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "a cell's log"
+ },
+ {
+  "id": "r4-find-003",
+  "session": "root",
+  "command": "find . -name '*.tmp' -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-find-004",
+  "session": "root",
+  "command": "find . -name '*.pyc' -o -name '__pycache__' -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday"
+ },
+ {
+  "id": "r4-find-005",
+  "session": "root",
+  "command": "find /tmp/w -type f -mtime +7 -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "elsewhere"
+ },
+ {
+  "id": "r4-find-006",
+  "session": "cell",
+  "command": "find . -name '*.log' -delete; find test -name '*.snap' -newer package.json -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "a cell's own files"
+ },
+ {
+  "id": "r4-find-007",
+  "session": "cell",
+  "command": "find ../.. -name '*.md' -delete",
+  "expect": "REFUSE",
+  "verdict": "REFUSE",
+  "note": "the answer: outside the cell"
+ },
+ {
+  "id": "r4-find-008",
+  "session": "cell",
+  "command": "find /tmp/w -name '*.json' -delete && find \"$TMPDIR/x\" -type f -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "temp folders"
+ },
+ {
+  "id": "r4-find-009",
+  "session": "cell",
+  "command": "find . -path ./node_modules -prune -o -name '*.bak' -print -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "prune form"
+ },
+ {
+  "id": "r4-find-010",
+  "session": "root",
+  "command": "find kernel -name '*.orig' -delete",
+  "expect": "allow",
+  "verdict": "allow",
+  "note": "everyday, with the project's guards unset"
+ }
+]

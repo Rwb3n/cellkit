@@ -151,6 +151,10 @@ function main(): number {
           const logged = commitRootLog(cell, `Root log: cell ${name} landed (mail, sync)`);
           if (logged) console.log(`committed root's log: ${logged}`);
           return code;
+        } catch (e) {
+          if (!(e instanceof WorktreeError)) throw e;
+          console.error(`the work is landed; ${e.message}`);
+          return 1;
         } finally { for (const s of steps.after ?? []) console.log(s); }
       }
       if (rest[0] === 'rebind') return write(() => cellRebind(cell, { name: opt('name'), binding: opt('binding') }));

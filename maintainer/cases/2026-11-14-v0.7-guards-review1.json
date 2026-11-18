@@ -1,0 +1,1953 @@
+[
+ {
+  "id": "p97-001",
+  "session": "root",
+  "command": "kill 4242 && sleep 1 && ps -p 4242",
+  "expect": "allow",
+  "note": "stop a pid, then check it is gone: nothing is filtered"
+ },
+ {
+  "id": "p97-002",
+  "session": "root",
+  "command": "taskkill /PID 4242 /T /F; tasklist | findstr node",
+  "expect": "allow",
+  "note": "stop then list"
+ },
+ {
+  "id": "p97-003",
+  "session": "root",
+  "command": "Stop-Process -Id 4242 -Force; Get-Process node -ErrorAction SilentlyContinue",
+  "expect": "allow",
+  "note": "stop then list"
+ },
+ {
+  "id": "p97-004",
+  "session": "root",
+  "command": "node server.js &\nPID=$!\nsleep 2\ncurl -s localhost:3000/health\nkill $PID\nps aux | grep server.js",
+  "expect": "allow",
+  "note": "its own child by $!"
+ },
+ {
+  "id": "p97-005",
+  "session": "root",
+  "command": "$p = Start-Process node -ArgumentList server.js -PassThru; Start-Sleep 2; Stop-Process -Id $p.Id; Get-Process node",
+  "expect": "allow",
+  "note": "its own child"
+ },
+ {
+  "id": "p97-006",
+  "session": "root",
+  "command": "cat > exit/report.md <<'EOF'\nI listed with ps and did not kill anything.\nEOF",
+  "expect": "allow",
+  "note": "prose in a data heredoc"
+ },
+ {
+  "id": "p97-007",
+  "session": "root",
+  "command": "cat > exit/report.md <<'EOF'\nUse Get-Process to find the pid, then Stop-Process -Id <pid>.\nEOF",
+  "expect": "allow",
+  "note": "prose in a data heredoc"
+ },
+ {
+  "id": "p97-008",
+  "session": "root",
+  "command": "node ../../kernel/src/mail.ts send --to root --kind question --body \"$(cat <<'EOF'\nThe watcher's still up: I ran ps to see it; shall root kill it?\nEOF\n)\"",
+  "expect": "allow",
+  "note": "mail body, an apostrophe in it"
+ },
+ {
+  "id": "p97-009",
+  "session": "root",
+  "command": "git commit -m \"$(cat <<'EOF'\nfix: don't use ps and kill in one command\nEOF\n)\"",
+  "expect": "allow",
+  "note": "commit message heredoc with an apostrophe"
+ },
+ {
+  "id": "p97-010",
+  "session": "root",
+  "command": "docker compose -f docker-compose.yml ps; docker compose -f docker-compose.yml kill web",
+  "expect": "allow",
+  "note": "tool subcommands, an option between"
+ },
+ {
+  "id": "p97-011",
+  "session": "root",
+  "command": "docker container ps && docker container kill web",
+  "expect": "allow",
+  "note": "tool subcommands"
+ },
+ {
+  "id": "p97-012",
+  "session": "root",
+  "command": "grep -rn kill src/ ; ps aux | head -3",
+  "expect": "allow",
+  "note": "kill is a search word"
+ },
+ {
+  "id": "p97-013",
+  "session": "root",
+  "command": "npm run ps && npm run kill",
+  "expect": "allow",
+  "note": "script names"
+ },
+ {
+  "id": "p97-014",
+  "session": "root",
+  "command": "wmic process where \"name='node.exe'\" call terminate",
+  "expect": "REFUSE",
+  "note": "kill by name, wmic"
+ },
+ {
+  "id": "p97-015",
+  "session": "root",
+  "command": "wmic process where \"name like '%node%'\" delete",
+  "expect": "REFUSE",
+  "note": "kill by name, wmic"
+ },
+ {
+  "id": "p97-016",
+  "session": "root",
+  "command": "taskkill /F /FI \"IMAGENAME eq node.exe\"",
+  "expect": "REFUSE",
+  "note": "kill by name with a filter"
+ },
+ {
+  "id": "p97-017",
+  "session": "root",
+  "command": "taskkill /F /FI \"WINDOWTITLE eq mail*\"",
+  "expect": "REFUSE",
+  "note": "kill with a filter"
+ },
+ {
+  "id": "p97-018",
+  "session": "root",
+  "command": "kill -9 $(pidof node)",
+  "expect": "REFUSE",
+  "note": "kill by name, pidof"
+ },
+ {
+  "id": "p97-019",
+  "session": "root",
+  "command": "[System.Diagnostics.Process]::GetProcessesByName(\"node\") | ForEach-Object { $_.Kill() }",
+  "expect": "REFUSE",
+  "note": ".NET list by name"
+ },
+ {
+  "id": "p97-020",
+  "session": "root",
+  "command": "[Diagnostics.Process]::GetProcesses() | Where-Object { $_.Name -eq \"node\" } | ForEach-Object { Stop-Process -Id $_.Id }",
+  "expect": "REFUSE",
+  "note": ".NET list"
+ },
+ {
+  "id": "p97-021",
+  "session": "root",
+  "command": "Get-CimInstance -ClassName Win32_Process -Filter \"Name='node.exe'\" | Remove-CimInstance",
+  "expect": "REFUSE",
+  "note": "Remove-CimInstance terminates"
+ },
+ {
+  "id": "p97-022",
+  "session": "root",
+  "command": "Get-CimInstance `\n  Win32_Process | % { Stop-Process -Id $_.ProcessId }",
+  "expect": "REFUSE",
+  "note": "continued line"
+ },
+ {
+  "id": "p97-023",
+  "session": "root",
+  "command": "ps aux | grep node | awk '{print $2}' | xargs -r /bin/kill",
+  "expect": "REFUSE",
+  "note": "/bin/kill"
+ },
+ {
+  "id": "p97-024",
+  "session": "root",
+  "command": "kill $(lsof -t -i:3000)",
+  "expect": "REFUSE",
+  "note": "by port: not by name; informational"
+ },
+ {
+  "id": "p97-025",
+  "session": "root",
+  "command": "Get-NetTCPConnection -LocalPort 3000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }",
+  "expect": "REFUSE",
+  "note": "by port; informational"
+ },
+ {
+  "id": "p97-026",
+  "session": "root",
+  "command": "npx fkill node",
+  "expect": "REFUSE",
+  "note": "fkill by name"
+ },
+ {
+  "id": "p97-027",
+  "session": "root",
+  "command": "pwsh -c \"gps node | % { $_.Kill() }\"",
+  "expect": "REFUSE",
+  "note": "gps"
+ },
+ {
+  "id": "p97-028",
+  "session": "root",
+  "command": "tasklist /FI \"IMAGENAME eq node.exe\" /FO CSV | ConvertFrom-Csv | % { taskkill /PID $_.PID /F }",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r9-029",
+  "session": "root",
+  "command": "cd <fixture>/elsewhere && git init && git add . && git commit -m init && git branch -M main",
+  "expect": "allow",
+  "note": "the standard first-commit recipe, in another repository"
+ },
+ {
+  "id": "r9-030",
+  "session": "root",
+  "command": "git -C /tmp/newrepo branch -M main",
+  "expect": "allow",
+  "note": "another repository"
+ },
+ {
+  "id": "r9-031",
+  "session": "root",
+  "command": "git branch -m old-name new-name",
+  "expect": "allow",
+  "note": "a plain rename"
+ },
+ {
+  "id": "r9-032",
+  "session": "root",
+  "command": "git branch --sort -committerdate",
+  "expect": "allow"
+ },
+ {
+  "id": "r9-033",
+  "session": "root",
+  "command": "git branch -vv --format \"%(refname)\"",
+  "expect": "allow"
+ },
+ {
+  "id": "r9-034",
+  "session": "root",
+  "command": "git checkout \\\n  -B main abc123",
+  "expect": "REFUSE",
+  "note": "a continued line"
+ },
+ {
+  "id": "r9-035",
+  "session": "root",
+  "command": "git branch \\\n  -f main abc123",
+  "expect": "REFUSE",
+  "note": "a continued line"
+ },
+ {
+  "id": "r9-036",
+  "session": "root",
+  "command": "if git rev-parse x; then git checkout -B main abc123; fi",
+  "expect": "REFUSE",
+  "note": "after then"
+ },
+ {
+  "id": "r9-037",
+  "session": "root",
+  "command": "for b in a b; do git branch -f $b main; done",
+  "expect": "REFUSE",
+  "note": "after do"
+ },
+ {
+  "id": "r9-038",
+  "session": "root",
+  "command": "if ($ok) { git branch -f main abc123 }",
+  "expect": "REFUSE",
+  "note": "PowerShell block"
+ },
+ {
+  "id": "r9-039",
+  "session": "root",
+  "command": "try { git checkout -B main abc123 } catch { }",
+  "expect": "REFUSE",
+  "note": "PowerShell block"
+ },
+ {
+  "id": "r9-040",
+  "session": "root",
+  "command": "{ git branch -f main abc123; }",
+  "expect": "REFUSE",
+  "note": "brace group"
+ },
+ {
+  "id": "r9-041",
+  "session": "root",
+  "command": "! git checkout -B main abc123",
+  "expect": "REFUSE",
+  "note": "negation"
+ },
+ {
+  "id": "r9-042",
+  "session": "root",
+  "command": "git update-ref refs/heads/main abc123",
+  "expect": "REFUSE",
+  "note": "same act, plumbing (root)"
+ },
+ {
+  "id": "r9-043",
+  "session": "root",
+  "command": "git push . +abc123:main",
+  "expect": "REFUSE",
+  "note": "same act through push (root)"
+ },
+ {
+  "id": "r9-044",
+  "session": "root",
+  "command": "git push --force . abc123:refs/heads/main",
+  "expect": "REFUSE",
+  "note": "same act through push (root)"
+ },
+ {
+  "id": "r9-045",
+  "session": "root",
+  "command": "git fetch . +abc123:main",
+  "expect": "REFUSE",
+  "note": "same act through fetch (root)"
+ },
+ {
+  "id": "r9-046",
+  "session": "root",
+  "command": "git branch --forc main abc123",
+  "expect": "REFUSE",
+  "note": "abbreviated long option"
+ },
+ {
+  "id": "r9-047",
+  "session": "root",
+  "command": "& git checkout -B main abc123",
+  "expect": "REFUSE",
+  "note": "PowerShell call operator"
+ },
+ {
+  "id": "r9-048",
+  "session": "root",
+  "command": "git.exe checkout -B main abc123",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r9-049",
+  "session": "root",
+  "command": "\"C:\\Program Files\\Git\\bin\\git.exe\" checkout -B main abc123",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r9-050",
+  "session": "root",
+  "command": "cmd /c \"git branch -f main abc123\"",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r9-051",
+  "session": "root",
+  "command": "git --no-pager -c core.x=y checkout -B main abc123",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r9-052",
+  "session": "root",
+  "command": "git checkout -B main abc123\r\n",
+  "expect": "REFUSE",
+  "note": "CRLF"
+ },
+ {
+  "id": "r9-053",
+  "session": "root",
+  "command": "git checkout --force -B trunk origin/trunk",
+  "expect": "REFUSE",
+  "note": "a trunk not called main"
+ },
+ {
+  "id": "r9-054",
+  "session": "root",
+  "command": "xargs git branch -f main < sha.txt",
+  "expect": "REFUSE",
+  "note": "xargs"
+ },
+ {
+  "id": "r9-055",
+  "session": "root",
+  "command": "git checkout main && git reset --soft abc123",
+  "expect": "REFUSE",
+  "note": "reset --soft moves the branch back too"
+ },
+ {
+  "id": "r9-056",
+  "session": "root",
+  "command": "git checkout -B",
+  "expect": "allow",
+  "note": "incomplete"
+ },
+ {
+  "id": "r9-057",
+  "session": "cell",
+  "command": "git branch -f cell/c1 abc123",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-058",
+  "session": "cell",
+  "command": "git branch --list 'cell/*'",
+  "expect": "allow",
+  "note": "a listing with a pattern"
+ },
+ {
+  "id": "r10-059",
+  "session": "cell",
+  "command": "git branch --contains HEAD",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-060",
+  "session": "cell",
+  "command": "git branch -r --contains abc123",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-061",
+  "session": "cell",
+  "command": "git branch --merged main",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-062",
+  "session": "cell",
+  "command": "git branch --no-merged main",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-063",
+  "session": "cell",
+  "command": "git branch --points-at HEAD",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-064",
+  "session": "cell",
+  "command": "git branch -a --sort -committerdate",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-065",
+  "session": "cell",
+  "command": "git branch --format '%(refname:short)'",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-066",
+  "session": "cell",
+  "command": "git tag --contains HEAD",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-067",
+  "session": "cell",
+  "command": "git tag --points-at HEAD",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-068",
+  "session": "cell",
+  "command": "git tag -n 5",
+  "expect": "allow",
+  "note": "read-only"
+ },
+ {
+  "id": "r10-069",
+  "session": "cell",
+  "command": "git config --type bool core.autocrlf",
+  "expect": "allow",
+  "note": "a read with a type"
+ },
+ {
+  "id": "r10-070",
+  "session": "cell",
+  "command": "git config --default false core.autocrlf",
+  "expect": "allow",
+  "note": "a read"
+ },
+ {
+  "id": "r10-071",
+  "session": "cell",
+  "command": "git -c core.quotepath=off status",
+  "expect": "allow"
+ },
+ {
+  "id": "r10-072",
+  "session": "cell",
+  "command": "git fetch https://github.com/x/y.git",
+  "expect": "allow",
+  "note": "a url has a colon"
+ },
+ {
+  "id": "r10-073",
+  "session": "cell",
+  "command": "git fetch git@github.com:x/y.git main",
+  "expect": "allow",
+  "note": "a url has a colon"
+ },
+ {
+  "id": "r10-074",
+  "session": "cell",
+  "command": "git remote update",
+  "expect": "allow",
+  "note": "a fetch"
+ },
+ {
+  "id": "r10-075",
+  "session": "cell",
+  "command": "git update-index --refresh",
+  "expect": "allow",
+  "note": "refreshes stat info only"
+ },
+ {
+  "id": "r10-076",
+  "session": "cell",
+  "command": "git update-index --chmod=+x tools/run.sh",
+  "expect": "allow",
+  "note": "marks a script executable (Windows)"
+ },
+ {
+  "id": "r10-077",
+  "session": "cell",
+  "command": "git push --dry-run",
+  "expect": "allow"
+ },
+ {
+  "id": "r10-078",
+  "session": "cell",
+  "command": "git log --oneline main..HEAD",
+  "expect": "allow"
+ },
+ {
+  "id": "r10-079",
+  "session": "cell",
+  "command": "git diff main...HEAD --stat",
+  "expect": "allow"
+ },
+ {
+  "id": "r10-080",
+  "session": "cell",
+  "command": "git stash list",
+  "expect": "allow"
+ },
+ {
+  "id": "r10-081",
+  "session": "cell",
+  "command": "git config --global --add safe.directory \"*\"",
+  "expect": "allow",
+  "note": "what git itself tells you to run on \"dubious ownership\""
+ },
+ {
+  "id": "r10-082",
+  "session": "cell",
+  "command": "git pull . HEAD:main",
+  "expect": "REFUSE",
+  "note": "same as fetch . HEAD:main"
+ },
+ {
+  "id": "r10-083",
+  "session": "cell",
+  "command": "git pull origin cell/c1:main",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-084",
+  "session": "cell",
+  "command": "git checkout -b other",
+  "expect": "REFUSE",
+  "note": "creates a branch, as branch <name>"
+ },
+ {
+  "id": "r10-085",
+  "session": "cell",
+  "command": "git switch -c other",
+  "expect": "REFUSE",
+  "note": "creates a branch"
+ },
+ {
+  "id": "r10-086",
+  "session": "cell",
+  "command": "git branch \\\n main2 HEAD",
+  "expect": "REFUSE",
+  "note": "continued"
+ },
+ {
+  "id": "r10-087",
+  "session": "cell",
+  "command": "git push \\\n  . HEAD:main",
+  "expect": "REFUSE",
+  "note": "continued"
+ },
+ {
+  "id": "r10-088",
+  "session": "cell",
+  "command": "if true; then git push . HEAD:main; fi",
+  "expect": "REFUSE",
+  "note": "after then"
+ },
+ {
+  "id": "r10-089",
+  "session": "cell",
+  "command": "for r in main; do git update-ref refs/heads/$r HEAD; done",
+  "expect": "REFUSE",
+  "note": "after do"
+ },
+ {
+  "id": "r10-090",
+  "session": "cell",
+  "command": "if ($true) { git push . HEAD:main }",
+  "expect": "REFUSE",
+  "note": "PowerShell block"
+ },
+ {
+  "id": "r10-091",
+  "session": "cell",
+  "command": "git tag -l -d v1",
+  "expect": "REFUSE",
+  "note": "-l does not stop a delete"
+ },
+ {
+  "id": "r10-092",
+  "session": "cell",
+  "command": "git maintenance run --task=gc",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-093",
+  "session": "cell",
+  "command": "git repack -ad",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-094",
+  "session": "cell",
+  "command": "git notes add -m x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-095",
+  "session": "cell",
+  "command": "git rebase main",
+  "expect": "REFUSE",
+  "note": "rewrites the cell branch; informational"
+ },
+ {
+  "id": "r10-096",
+  "session": "cell",
+  "command": "git commit -am x",
+  "expect": "REFUSE",
+  "note": "the brief says no; hook allows; informational"
+ },
+ {
+  "id": "r10-097",
+  "session": "cell",
+  "command": "git reset --soft HEAD~1",
+  "expect": "REFUSE",
+  "note": "informational"
+ },
+ {
+  "id": "r10-098",
+  "session": "cell",
+  "command": "git stash drop",
+  "expect": "REFUSE",
+  "note": "informational"
+ },
+ {
+  "id": "r10-099",
+  "session": "cell",
+  "command": "git config --file ../../.git/config core.hooksPath x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-100",
+  "session": "cell",
+  "command": "git config core.hooksPath=/tmp/h",
+  "expect": "REFUSE",
+  "note": "one word: reads as a get; informational"
+ },
+ {
+  "id": "r10-101",
+  "session": "cell",
+  "command": "git remote set-url origin x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-102",
+  "session": "cell",
+  "command": "git worktree add ../x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-103",
+  "session": "cell",
+  "command": "git reflog delete HEAD@{1}",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-104",
+  "session": "cell",
+  "command": "git pack-refs --all",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-105",
+  "session": "cell",
+  "command": "git filter-branch --tree-filter x HEAD",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-106",
+  "session": "cell",
+  "command": "git fast-import < x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-107",
+  "session": "cell",
+  "command": "git branch --set-upstream-to=origin/main",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-108",
+  "session": "cell",
+  "command": "git branch --delete other",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-109",
+  "session": "cell",
+  "command": "git tag --delete v1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-110",
+  "session": "cell",
+  "command": "git remote add up x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-111",
+  "session": "cell",
+  "command": "git worktree prune",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-112",
+  "session": "cell",
+  "command": "git config --add remote.origin.fetch x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-113",
+  "session": "cell",
+  "command": "git config unset core.autocrlf",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-114",
+  "session": "cell",
+  "command": "git -C <fixture>/proj push . cell/c1:main",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-115",
+  "session": "cell",
+  "command": "Set-Location <fixture>\\proj; git update-ref refs/heads/main cell/c1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-116",
+  "session": "cell",
+  "command": "GIT_DIR=../../.git git update-ref refs/heads/main HEAD",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-117",
+  "session": "cell",
+  "command": "git symbolic-ref HEAD refs/heads/main",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r10-118",
+  "session": "cell",
+  "command": "git checkout --detach && git branch",
+  "expect": "REFUSE",
+  "note": "informational"
+ },
+ {
+  "id": "mail-119",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --kind question --body \"x\"",
+  "expect": "allow"
+ },
+ {
+  "id": "mail-120",
+  "session": "cell",
+  "command": "node \"$CLAUDE_PROJECT_DIR/../../kernel/src/mail.ts\" send --to root --kind question --body \"x\"",
+  "expect": "allow",
+  "note": "the env var the hooks themselves use"
+ },
+ {
+  "id": "mail-121",
+  "session": "cell",
+  "command": "cat <fixture>/proj/kernel/src/mail.ts | head -40",
+  "expect": "allow",
+  "note": "reading the main checkout's copy"
+ },
+ {
+  "id": "mail-122",
+  "session": "cell",
+  "command": "diff ../../kernel/src/mail.ts <fixture>/proj/kernel/src/mail.ts",
+  "expect": "allow",
+  "note": "comparing kernel copies (CRLF hunt)"
+ },
+ {
+  "id": "mail-123",
+  "session": "cell",
+  "command": "wc -l src/mail.ts",
+  "expect": "allow",
+  "note": "the cell's own file called mail.ts"
+ },
+ {
+  "id": "mail-124",
+  "session": "cell",
+  "command": "node --test src/mail.ts",
+  "expect": "allow",
+  "note": "the cell's own file called mail.ts"
+ },
+ {
+  "id": "mail-125",
+  "session": "cell",
+  "command": "npx tsc --noEmit src/mail.ts",
+  "expect": "allow",
+  "note": "the cell's own file called mail.ts"
+ },
+ {
+  "id": "mail-126",
+  "session": "cell",
+  "command": "grep -n \"release\" kernel/src/mail.ts",
+  "expect": "allow",
+  "note": "a wrong relative path, a read"
+ },
+ {
+  "id": "mail-127",
+  "session": "cell",
+  "command": "ls -la ../../kernel/src/mail.ts ../../../../proj/kernel/src/mail.ts",
+  "expect": "allow",
+  "note": "a read"
+ },
+ {
+  "id": "mail-128",
+  "session": "cell",
+  "command": "node <fixture>/proj-cells/c1/kernel/src/mail.ts status",
+  "expect": "allow",
+  "note": "own, Git Bash path"
+ },
+ {
+  "id": "mail-129",
+  "session": "cell",
+  "command": "node <fixture>\\proj-cells\\c1\\kernel\\src\\mail.ts status",
+  "expect": "allow",
+  "note": "own, Windows path"
+ },
+ {
+  "id": "mail-130",
+  "session": "cell",
+  "command": "node ..\\..\\kernel\\src\\mail.ts status",
+  "expect": "allow"
+ },
+ {
+  "id": "mail-131",
+  "session": "cell",
+  "command": "cd ../.. ; node kernel/src/mail.ts status",
+  "expect": "allow"
+ },
+ {
+  "id": "mail-132",
+  "session": "cell",
+  "command": "(cd ../.. && node kernel/src/mail.ts status)",
+  "expect": "allow"
+ },
+ {
+  "id": "mail-133",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts send --to root --kind blocked --body \"do not pass --root to mail.ts\"",
+  "expect": "allow",
+  "note": "the body names it"
+ },
+ {
+  "id": "mail-134",
+  "session": "cell",
+  "command": "node <fixture>/proj/kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-135",
+  "session": "cell",
+  "command": "cd <fixture>/proj && node kernel/src/mail.ts send --to c2 --body x",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-136",
+  "session": "cell",
+  "command": "pushd <fixture>\\proj; node kernel\\src\\mail.ts watch --as root",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-137",
+  "session": "cell",
+  "command": "node --experimental-strip-types <fixture>/proj/kernel/src/mail.ts watch",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-138",
+  "session": "cell",
+  "command": "Start-Process node -ArgumentList \"kernel/src/mail.ts\",\"watch\",\"--as\",\"root\" -WorkingDirectory <fixture>\\proj",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-139",
+  "session": "cell",
+  "command": "npm --prefix <fixture>/proj exec -- node kernel/src/mail.ts watch",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "mail-140",
+  "session": "cell",
+  "command": "if true; then cd <fixture>/proj; fi; node kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE",
+  "note": "cd after then"
+ },
+ {
+  "id": "mail-141",
+  "session": "cell",
+  "command": "node ../../kernel/src/mail.ts watch --as root",
+  "expect": "REFUSE",
+  "note": "own kernel, --as root: informational (CLI decides)"
+ },
+ {
+  "id": "mail-142",
+  "session": "cell",
+  "command": "node <fixture>/proj/kernel/src/cli.ts cell land --name c1 --message x",
+  "expect": "REFUSE",
+  "note": "main checkout's cli: informational"
+ },
+ {
+  "id": "copy-143",
+  "session": "root",
+  "command": "mv tmp/* .",
+  "expect": "allow",
+  "note": "unpack then move up"
+ },
+ {
+  "id": "copy-144",
+  "session": "root",
+  "command": "cp -r dist/* .",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-145",
+  "session": "root",
+  "command": "cp ../cellkit/templates/* .",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-146",
+  "session": "root",
+  "command": "cp /tmp/out/*.json cells/c1/",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-147",
+  "session": "root",
+  "command": "cp /tmp/out/* cells/c1/",
+  "expect": "allow",
+  "note": "files copied into a cell folder"
+ },
+ {
+  "id": "copy-148",
+  "session": "cell",
+  "command": "cp test/fixtures/* .",
+  "expect": "allow",
+  "note": "a glob copy into the cell folder"
+ },
+ {
+  "id": "copy-149",
+  "session": "cell",
+  "command": "mv exit/tmp/* exit/",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-150",
+  "session": "root",
+  "command": "Copy-Item ..\\kit\\templates\\* . -Recurse",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-151",
+  "session": "root",
+  "command": "cp 'notes[.md' docs/",
+  "expect": "allow",
+  "note": "a bracket in a file name: does the guard throw?"
+ },
+ {
+  "id": "copy-152",
+  "session": "root",
+  "command": "cp a[z-a].md docs/",
+  "expect": "allow",
+  "note": "a bad range: does the guard throw?"
+ },
+ {
+  "id": "copy-153",
+  "session": "root",
+  "command": "ln -s ../shared/assets docs",
+  "expect": "allow"
+ },
+ {
+  "id": "copy-154",
+  "session": "root",
+  "command": "cp -r backup/state/. state/",
+  "expect": "REFUSE",
+  "note": "the same restore, contents form"
+ },
+ {
+  "id": "copy-155",
+  "session": "root",
+  "command": "cp -rT backup/state state",
+  "expect": "REFUSE",
+  "note": "-T: no target directory"
+ },
+ {
+  "id": "copy-156",
+  "session": "root",
+  "command": "cp -r backup/state/. .",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-157",
+  "session": "root",
+  "command": "rsync -a backup/state/ state/",
+  "expect": "REFUSE",
+  "note": "rsync"
+ },
+ {
+  "id": "copy-158",
+  "session": "root",
+  "command": "robocopy backup\\state state /E /MIR",
+  "expect": "REFUSE",
+  "note": "the Windows tree copy"
+ },
+ {
+  "id": "copy-159",
+  "session": "root",
+  "command": "xcopy /E /Y backup\\state state\\",
+  "expect": "REFUSE",
+  "note": "xcopy"
+ },
+ {
+  "id": "copy-160",
+  "session": "root",
+  "command": "Copy-Item -Destination . -Path backup/state -Recurse",
+  "expect": "REFUSE",
+  "note": "named parameters, destination first"
+ },
+ {
+  "id": "copy-161",
+  "session": "root",
+  "command": "Copy-Item backup/state -Destination . -Recurse -Force",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-162",
+  "session": "root",
+  "command": "cp -r -t . backup/state",
+  "expect": "REFUSE",
+  "note": "-t target first"
+ },
+ {
+  "id": "copy-163",
+  "session": "root",
+  "command": "tar -xf backup.tar state",
+  "expect": "REFUSE",
+  "note": "tar restore"
+ },
+ {
+  "id": "copy-164",
+  "session": "root",
+  "command": "unzip -o backup.zip \"state/*\"",
+  "expect": "REFUSE",
+  "note": "unzip restore"
+ },
+ {
+  "id": "copy-165",
+  "session": "root",
+  "command": "Expand-Archive backup.zip -DestinationPath . -Force",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-166",
+  "session": "root",
+  "command": "cp -r backup/state <fixture>/proj",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-167",
+  "session": "root",
+  "command": "cp -r backup/state <fixture>\\proj",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-168",
+  "session": "root",
+  "command": "cp -r backup/state \\\n  .",
+  "expect": "REFUSE",
+  "note": "continued"
+ },
+ {
+  "id": "copy-169",
+  "session": "root",
+  "command": "for d in state docs; do cp -r backup/$d .; done",
+  "expect": "REFUSE",
+  "note": "variable source: by design"
+ },
+ {
+  "id": "copy-170",
+  "session": "root",
+  "command": "mv state state.old && mv backup/state .",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-171",
+  "session": "root",
+  "command": "cp -r backup/State .",
+  "expect": "REFUSE",
+  "note": "case"
+ },
+ {
+  "id": "copy-172",
+  "session": "root",
+  "command": "cp -r backup/{state,docs} .",
+  "expect": "REFUSE",
+  "note": "brace expansion"
+ },
+ {
+  "id": "copy-173",
+  "session": "root",
+  "command": "cp -r backup/[s]tate .",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-174",
+  "session": "root",
+  "command": "cmd /c \"xcopy backup\\state state /E /I /Y\"",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "copy-175",
+  "session": "root",
+  "command": "git checkout stash@{0} -- state",
+  "expect": "REFUSE",
+  "note": "old rule"
+ },
+ {
+  "id": "wt-176",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/*",
+  "expect": "REFUSE",
+  "note": "everything in the worktree"
+ },
+ {
+  "id": "wt-177",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/cells",
+  "expect": "REFUSE",
+  "note": "the cell's work"
+ },
+ {
+  "id": "wt-178",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/cells/c1",
+  "expect": "REFUSE",
+  "note": "the cell's folder"
+ },
+ {
+  "id": "wt-179",
+  "session": "root",
+  "command": "rm -rf <fixture>/proj-cells/c1/.git",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-180",
+  "session": "root",
+  "command": "rm -rf <fixture>/proj-cells/c1",
+  "expect": "REFUSE",
+  "note": "Git Bash path"
+ },
+ {
+  "id": "wt-181",
+  "session": "root",
+  "command": "Remove-Item -Recurse -Force <fixture>\\proj-cells\\c1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-182",
+  "session": "root",
+  "command": "Remove-Item -Path <fixture>\\proj-cells\\c1 -Recurse -Force",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-183",
+  "session": "root",
+  "command": "rd /s /q ..\\proj-cells\\c1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-184",
+  "session": "root",
+  "command": "cmd /c \"rmdir /s /q ..\\proj-cells\\c1\"",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-185",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-186",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c?",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-187",
+  "session": "root",
+  "command": "cd .. && rm -rf proj-cells",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-188",
+  "session": "root",
+  "command": "pushd ..; Remove-Item proj-cells -Recurse -Force",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-189",
+  "session": "root",
+  "command": "(cd ../proj-cells && rm -rf c1)",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-190",
+  "session": "root",
+  "command": "rm -rf \\\n ../proj-cells/c1",
+  "expect": "REFUSE",
+  "note": "continued"
+ },
+ {
+  "id": "wt-191",
+  "session": "root",
+  "command": "find ../proj-cells/c1 -delete",
+  "expect": "REFUSE",
+  "note": "find"
+ },
+ {
+  "id": "wt-192",
+  "session": "root",
+  "command": "git worktree remove -f -f ../proj-cells/c1",
+  "expect": "REFUSE",
+  "note": "git's own: allowed for root by the message"
+ },
+ {
+  "id": "wt-193",
+  "session": "root",
+  "command": "node -e \"require('fs').rmSync('../proj-cells/c1',{recursive:true,force:true})\"",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "wt-194",
+  "session": "root",
+  "command": "rm -rf ..",
+  "expect": "REFUSE",
+  "note": "a folder above"
+ },
+ {
+  "id": "wt-195",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1/cells/c1/test/tmp",
+  "expect": "allow"
+ },
+ {
+  "id": "wt-196",
+  "session": "root",
+  "command": "rm ../proj-cells-old/x",
+  "expect": "allow"
+ },
+ {
+  "id": "wt-197",
+  "session": "cell",
+  "command": "rm -rf test/tmp",
+  "expect": "allow"
+ },
+ {
+  "id": "wt-198",
+  "session": "cell",
+  "command": "rm -rf <fixture>/proj-cells/c1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-199",
+  "session": "cell",
+  "command": "cat > src/mask.ts << 'EOF'\nexport const re = /\\w+/;\nEOF",
+  "expect": "REFUSE",
+  "note": "a space after <<"
+ },
+ {
+  "id": "r11-200",
+  "session": "cell",
+  "command": "cat << 'EOF' > src/mask.ts\nexport const re = /\\w+/;\nEOF",
+  "expect": "REFUSE",
+  "note": "a space after <<"
+ },
+ {
+  "id": "r11-201",
+  "session": "cell",
+  "command": "cat <<- 'EOF' > src/mask.ts\n\tx\n\tEOF",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-202",
+  "session": "cell",
+  "command": "cat >src/mask.ts<<EOF\nx\nEOF",
+  "expect": "REFUSE",
+  "note": "no spaces"
+ },
+ {
+  "id": "r11-203",
+  "session": "cell",
+  "command": "cat > src/mask.ts <<'EOF'\r\nx\r\nEOF\r\n",
+  "expect": "REFUSE",
+  "note": "CRLF"
+ },
+ {
+  "id": "r11-204",
+  "session": "cell",
+  "command": "cat - > src/a.ts <<'EOF'\nx\nEOF",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-205",
+  "session": "cell",
+  "command": "tee src/a.ts << 'EOF'\nx\nEOF",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-206",
+  "session": "cell",
+  "command": "tee src/a.ts > /dev/null << 'EOF'\nx\nEOF",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-207",
+  "session": "cell",
+  "command": "{ echo 'const a = 1;'; echo 'const b = 2;'; } > src/a.ts",
+  "expect": "REFUSE",
+  "note": "a brace group redirected"
+ },
+ {
+  "id": "r11-208",
+  "session": "cell",
+  "command": "(echo 'const a = 1;'; echo 'const b = 2;') > src/a.ts",
+  "expect": "REFUSE",
+  "note": "a subshell redirected"
+ },
+ {
+  "id": "r11-209",
+  "session": "cell",
+  "command": "echo 'x' >| src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-210",
+  "session": "cell",
+  "command": "echo 'x' 1> src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-211",
+  "session": "cell",
+  "command": "echo 'x' \\\n > src/a.ts",
+  "expect": "REFUSE",
+  "note": "continued"
+ },
+ {
+  "id": "r11-212",
+  "session": "cell",
+  "command": "if true; then echo 'x' > src/a.ts; fi",
+  "expect": "REFUSE",
+  "note": "after then"
+ },
+ {
+  "id": "r11-213",
+  "session": "cell",
+  "command": "for f in a b; do echo 'x' >> src/a.ts; done",
+  "expect": "REFUSE",
+  "note": "after do"
+ },
+ {
+  "id": "r11-214",
+  "session": "cell",
+  "command": "Set-Content src/a.ts 'const a = 1'",
+  "expect": "REFUSE",
+  "note": "the value by position"
+ },
+ {
+  "id": "r11-215",
+  "session": "cell",
+  "command": "Add-Content src/a.ts \"const b = 2\"",
+  "expect": "REFUSE",
+  "note": "the value by position"
+ },
+ {
+  "id": "r11-216",
+  "session": "cell",
+  "command": "Add-Content -Path src/a.ts 'const b = 2'",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-217",
+  "session": "cell",
+  "command": "sc src/a.ts 'x'",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-218",
+  "session": "cell",
+  "command": "New-Item src/a.ts -ItemType File -Value 'const a = 1' -Force",
+  "expect": "REFUSE",
+  "note": "New-Item -Value"
+ },
+ {
+  "id": "r11-219",
+  "session": "cell",
+  "command": "'x' | Tee-Object -FilePath src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-220",
+  "session": "cell",
+  "command": "(Get-Content src/a.ts) -replace 'foo','bar' | Set-Content src/a.ts",
+  "expect": "REFUSE",
+  "note": "PowerShell's sed -i"
+ },
+ {
+  "id": "r11-221",
+  "session": "cell",
+  "command": "(Get-Content src/a.ts -Raw).Replace('foo','bar') | Set-Content src/a.ts -NoNewline",
+  "expect": "REFUSE",
+  "note": "PowerShell's sed -i"
+ },
+ {
+  "id": "r11-222",
+  "session": "cell",
+  "command": "$c = Get-Content src/a.ts -Raw; $c = $c -replace '\\w+', 'x'; Set-Content src/a.ts $c",
+  "expect": "REFUSE",
+  "note": "PowerShell's sed -i, in steps"
+ },
+ {
+  "id": "r11-223",
+  "session": "cell",
+  "command": "$c = (Get-Content src/a.ts) -replace 'a','b'; $c | Out-File src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-224",
+  "session": "cell",
+  "command": "[IO.File]::WriteAllText('src/a.ts', 'const a = 1')",
+  "expect": "REFUSE",
+  "note": ".NET, a literal"
+ },
+ {
+  "id": "r11-225",
+  "session": "cell",
+  "command": "if ($true) { 'const a = 1' | Set-Content src/a.ts }",
+  "expect": "REFUSE",
+  "note": "PowerShell block"
+ },
+ {
+  "id": "r11-226",
+  "session": "cell",
+  "command": "@'\nconst s = 'it''s';\n'@ | Set-Content src/a.ts",
+  "expect": "REFUSE",
+  "note": "a here-string with quotes in it"
+ },
+ {
+  "id": "r11-227",
+  "session": "cell",
+  "command": "@\"\nconst a = 1\n\"@ > src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-228",
+  "session": "cell",
+  "command": "$code = @'\nconst a = 1\n'@\n$code | Set-Content src/a.ts",
+  "expect": "REFUSE",
+  "note": "here-string in a variable, piped"
+ },
+ {
+  "id": "r11-229",
+  "session": "cell",
+  "command": "grep -rl foo src | xargs sed -i 's/foo/bar/g'",
+  "expect": "REFUSE",
+  "note": "the bulk rename idiom: target not named"
+ },
+ {
+  "id": "r11-230",
+  "session": "cell",
+  "command": "find src -name '*.ts' -exec sed -i 's/foo/bar/g' {} +",
+  "expect": "REFUSE",
+  "note": "find -exec sed -i"
+ },
+ {
+  "id": "r11-231",
+  "session": "cell",
+  "command": "sed -i '' 's/a/b/' src/a.ts",
+  "expect": "REFUSE",
+  "note": "BSD form"
+ },
+ {
+  "id": "r11-232",
+  "session": "cell",
+  "command": "sed -Ei 's/a/b/' src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-233",
+  "session": "cell",
+  "command": "sed -e 's/a/b/' -i src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-234",
+  "session": "cell",
+  "command": "sed -i 's/a/b/' src/*.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-235",
+  "session": "cell",
+  "command": "sed -i 's/a/b/' ./src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-236",
+  "session": "cell",
+  "command": "sed -i 's/a/b/' <fixture>/proj-cells/c1/cells/c1/src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-237",
+  "session": "cell",
+  "command": "sed -i 's/a/b/' <fixture>\\proj-cells\\c1\\cells\\c1\\src\\a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-238",
+  "session": "cell",
+  "command": "cd src && sed -i 's/a/b/' a.ts",
+  "expect": "REFUSE",
+  "note": "cd then a bare name"
+ },
+ {
+  "id": "r11-239",
+  "session": "cell",
+  "command": "cd src; echo 'x' > a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-240",
+  "session": "cell",
+  "command": "(cd src && echo 'x' > a.ts)",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-241",
+  "session": "cell",
+  "command": "awk -i inplace '{gsub(/a/,\"b\")}1' src/a.ts",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-242",
+  "session": "cell",
+  "command": "ed -s src/a.ts <<'EOF'\n1s/a/b/\nw\nEOF",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-243",
+  "session": "cell",
+  "command": "node -e \"require('fs').writeFileSync('src/a.ts', 'export const re = /\\w+/;')\"",
+  "expect": "REFUSE",
+  "note": "typed through node -e: informational"
+ },
+ {
+  "id": "r11-244",
+  "session": "cell",
+  "command": "python -c \"open('src/a.py','w').write('x = 1')\"",
+  "expect": "REFUSE",
+  "note": "informational"
+ },
+ {
+  "id": "r11-245",
+  "session": "cell",
+  "command": "echo 'x' > src/Dockerfile",
+  "expect": "REFUSE",
+  "note": "no extension: default list"
+ },
+ {
+  "id": "r11-246",
+  "session": "cell",
+  "command": "echo '@echo off' > tools/run.bat",
+  "expect": "REFUSE",
+  "note": ".bat not in the default list"
+ },
+ {
+  "id": "r11-247",
+  "session": "cell",
+  "command": "echo 'x' > src/a.gd",
+  "expect": "REFUSE",
+  "note": "Godot script (AI-MMO): not in the default list"
+ },
+ {
+  "id": "r11-248",
+  "session": "cell",
+  "command": "echo 'x' > src/a.lua",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "r11-249",
+  "session": "cell",
+  "command": "echo 'x' > src/a.TS",
+  "expect": "REFUSE",
+  "note": "case"
+ },
+ {
+  "id": "r11-250",
+  "session": "cell",
+  "command": "node gen.js > src/a.ts",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-251",
+  "session": "cell",
+  "command": "\"./tools/gen.sh\" > src/generated.ts",
+  "expect": "allow",
+  "note": "a quoted program, its output"
+ },
+ {
+  "id": "r11-252",
+  "session": "cell",
+  "command": "& \"tools\\gen.exe\" > src\\generated.ts",
+  "expect": "allow",
+  "note": "a quoted program, its output"
+ },
+ {
+  "id": "r11-253",
+  "session": "cell",
+  "command": "echo \"$(node gen.js)\" > src/a.json",
+  "expect": "allow",
+  "note": "a program's output through echo"
+ },
+ {
+  "id": "r11-254",
+  "session": "cell",
+  "command": "printf '%s\\n' \"$OUT\" > exit/result.json",
+  "expect": "allow",
+  "note": "a variable's content"
+ },
+ {
+  "id": "r11-255",
+  "session": "cell",
+  "command": "$j = node gen.js | ConvertFrom-Json; Set-Content -Path exit/out.json -Value ($j | ConvertTo-Json)",
+  "expect": "allow",
+  "note": "a computed -Value"
+ },
+ {
+  "id": "r11-256",
+  "session": "cell",
+  "command": "$c = Get-Content a.json -Raw; Set-Content -Path exit/b.json -Value $c",
+  "expect": "allow",
+  "note": "a variable -Value: a copy"
+ },
+ {
+  "id": "r11-257",
+  "session": "cell",
+  "command": "node gen.js | Out-File -FilePath exit/out.json -Encoding utf8",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-258",
+  "session": "cell",
+  "command": "Get-Content a.json | Set-Content exit/b.json",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-259",
+  "session": "cell",
+  "command": "perl -MJSON -e 'print 1' a.json b.json",
+  "expect": "allow",
+  "note": "-MJSON has an i after letters? no; control"
+ },
+ {
+  "id": "r11-260",
+  "session": "cell",
+  "command": "perl -Mstrict -ne 'print if /x/' src/a.ts src/b.ts",
+  "expect": "allow",
+  "note": "-Mstrict reads as -i"
+ },
+ {
+  "id": "r11-261",
+  "session": "cell",
+  "command": "sed -n '/a/p' src/a.ts",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-262",
+  "session": "cell",
+  "command": "sed -e 's/a/b/' src/a.ts > /tmp/a.ts",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-263",
+  "session": "cell",
+  "command": "echo done > exit/report.md",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-264",
+  "session": "cell",
+  "command": "echo x > exit/notes.txt 2> exit/err.json",
+  "expect": "allow",
+  "note": "stderr to a .json"
+ },
+ {
+  "id": "r11-265",
+  "session": "cell",
+  "command": "npm test 2> exit/err.json",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-266",
+  "session": "cell",
+  "command": "echo ok",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-267",
+  "session": "cell",
+  "command": "echo 'a.ts > b.ts'",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-268",
+  "session": "cell",
+  "command": "git commit -m 'echo x > src/a.ts'",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-269",
+  "session": "cell",
+  "command": "jq '.a = 1' in.json > exit/out.json",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-270",
+  "session": "cell",
+  "command": "echo '{}' | jq '.a = 1' > exit/out.json",
+  "expect": "allow",
+  "note": "jq is the last command"
+ },
+ {
+  "id": "r11-271",
+  "session": "cell",
+  "command": "curl -s https://example.com/x.json > exit/x.json",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-272",
+  "session": "cell",
+  "command": "echo \"\" > test/out.log",
+  "expect": "allow"
+ },
+ {
+  "id": "r11-273",
+  "session": "root",
+  "command": "echo 'x' > kernel/src/a.ts",
+  "expect": "allow",
+  "note": "root, no source.root: allowed by the rule"
+ },
+ {
+  "id": "r11-274",
+  "session": "root",
+  "command": "sed -i 's/a/b/' cells/c1/src/a.ts",
+  "expect": "allow",
+  "note": "root"
+ },
+ {
+  "id": "r11cd-001",
+  "session": "cell",
+  "command": "cd /tmp && cat > probe.mjs <<'EOF'\nconsole.log(1)\nEOF\nnode probe.mjs",
+  "expect": "allow",
+  "note": "a scratch script in the temp folder, after cd"
+ },
+ {
+  "id": "r11cd-002",
+  "session": "cell",
+  "command": "cd D:/temp/Windows && echo 'console.log(1)' > probe.js && node probe.js",
+  "expect": "allow",
+  "note": "the same, the temp folder by its Windows path"
+ },
+ {
+  "id": "r11cd-003",
+  "session": "cell",
+  "command": "mkdir -p /tmp/w && cd /tmp/w && printf '{\"a\":1}\\n' > in.json && node <fixture>/proj-cells/c1/cells/c1/src/a.ts in.json",
+  "expect": "allow",
+  "note": "a fixture in the temp folder"
+ },
+ {
+  "id": "r11cd-004",
+  "session": "cell",
+  "command": "Set-Location $env:TEMP; 'x' | Set-Content probe.ps1",
+  "expect": "allow",
+  "note": "PowerShell, temp folder"
+ },
+ {
+  "id": "r11cd-005",
+  "session": "cell",
+  "command": "pushd /tmp; sed -i 's/a/b/' copy.ts; popd",
+  "expect": "allow",
+  "note": "sed -i on a copy in the temp folder"
+ },
+ {
+  "id": "r11cd-006",
+  "session": "cell",
+  "command": "(cd /tmp && echo x > probe.py)",
+  "expect": "allow"
+ },
+ {
+  "id": "r11cd-007",
+  "session": "cell",
+  "command": "cd /tmp && echo x > <fixture>/proj-cells/c1/cells/c1/src/a.ts",
+  "expect": "REFUSE",
+  "note": "absolute path back into the cell"
+ },
+ {
+  "id": "r11cd-008",
+  "session": "cell",
+  "command": "cat > /tmp/probe.mjs <<'EOF'\nconsole.log(1)\nEOF",
+  "expect": "allow",
+  "note": "named by its temp path: allowed"
+ },
+ {
+  "id": "r11cd-009",
+  "session": "cell",
+  "command": "git -C ../.. show HEAD:kernel/src/shell.ts > /tmp/shell.ts",
+  "expect": "allow"
+ },
+ {
+  "id": "r11cd-010",
+  "session": "root",
+  "command": "cd /tmp && echo x > probe.ts",
+  "expect": "allow",
+  "note": "root, no source.root"
+ },
+ {
+  "id": "g-src-001",
+  "session": "cell",
+  "command": "echo 'FROM node' > Dockerfile",
+  "expect": "REFUSE",
+  "note": "glob with a capital letter"
+ },
+ {
+  "id": "g-src-002",
+  "session": "cell",
+  "command": "echo 'x' > src/a.md",
+  "expect": "REFUSE",
+  "note": "src/** by the project's list"
+ },
+ {
+  "id": "g-src-003",
+  "session": "cell",
+  "command": "cd src && echo 'x' > a.md",
+  "expect": "REFUSE",
+  "note": "the same after cd: rule 11 does not follow cd"
+ },
+ {
+  "id": "g-src-004",
+  "session": "cell",
+  "command": "echo 'x' > test/a.ts",
+  "expect": "REFUSE",
+  "note": "**/*.TS written in capitals"
+ },
+ {
+  "id": "g-src-005",
+  "session": "root",
+  "command": "echo 'x' > cells/c1/src/a.md",
+  "expect": "REFUSE",
+  "note": "root, source.root"
+ },
+ {
+  "id": "g-src-006",
+  "session": "root",
+  "command": "cd cells/c1 && echo 'x' > src/a.md",
+  "expect": "REFUSE",
+  "note": "root after cd"
+ },
+ {
+  "id": "g-src-007",
+  "session": "root",
+  "command": "echo 'x' > notes.md",
+  "expect": "allow"
+ },
+ {
+  "id": "g-home-001",
+  "session": "root",
+  "command": "rm -rf ../proj-cells/c1",
+  "expect": "REFUSE",
+  "note": "a worktree checked out before home was set (or with --path): git still lists it"
+ },
+ {
+  "id": "g-home-002",
+  "session": "root",
+  "command": "rm -rf ../.cells/proj/c1",
+  "expect": "REFUSE"
+ },
+ {
+  "id": "g-home-003",
+  "session": "root",
+  "command": "rm -rf ../.cells",
+  "expect": "REFUSE",
+  "note": "a folder above"
+ },
+ {
+  "id": "g-home-004",
+  "session": "root",
+  "command": "rm -rf ../.cells-old",
+  "expect": "allow"
+ }
+]
