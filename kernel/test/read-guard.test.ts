@@ -171,11 +171,16 @@ test('read guard: prose in a script\'s strings is text; Select-String reads text
   // #114 (apify-actor-dev): fed by a command the list doesn't know, or one with a variable in it, it is still refused,
   // and the refusal names what feeds it and the way that works; "give it the files" stays for one that nothing feeds
   const said = (command: string) => spawnSync(process.execPath, [join(src, 'hook-bash.ts')], { input: JSON.stringify({ cwd: `${r}/APP`, tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', CELLKIT_CONFIG: cfg }, encoding: 'utf8' }).stderr;
-  assert.match(said('ffmpeg -hide_banner -i a.mp4 2>&1 | Select-String "Video:"'), /^Blocked: Select-String with no path reads what feeds it, and "ffmpeg -hide_banner -i a\.mp4 2>&1" is not known to send only text.*Send its output to a file first and search that: <command> > out\.txt, then Select-String <pattern> -Path out\.txt\./);
+  assert.match(said('ffmpeg -hide_banner -i a.mp4 2>&1 | Select-String "Video:"'), /^Blocked: Select-String with no path reads what feeds it, and "ffmpeg -hide_banner -i a\.mp4 2>&1" is not known to send only text.*If it sends text \(a program's output\), send that to a file first and read the file: <command> > out\.txt, then Select-String <pattern> -Path out\.txt\. If it lists files, give Select-String the files themselves \(-Path\), or work in a subfolder\./);
+  assert.match(said('Get-ChildItem *.log | Get-Content'), /then Get-Content out\.txt\. If it lists files, give Get-Content the files themselves/);   // Get-Content takes no pattern
   assert.match(said('git log $range | Select-String fix'), /and "git log \$range" is not known to send only text: a command outside the guard's list of text producers, or one with a variable/);
   assert.match(said('git log | ffprobe -i - | Select-String x'), /and "ffprobe -i -" is not known/);          // the one in the pipeline that isn't
   assert.match(said('Select-String KEY'), /reads what feeds it; unless that is text.*Give it the files \(-Path\), or search a subfolder\./);
   assert.equal(sh('ffmpeg -i a.mp4 > out.txt 2>&1; Select-String "Video:" -Path out.txt'), 0);                  // the way the refusal gives
+  // a redirect's target is no path it reads (a review): the search is still fed by the listing
+  for (const c of ['Get-ChildItem -Recurse | Select-String KEY > out.txt', 'Get-ChildItem -Recurse | Get-Content > out.txt', 'gci -r | Select-String KEY 2>&1', 'gci -r | sls KEY >> "found.txt"'])
+    assert.equal(sh(c), 2, c);
+  for (const c of ['git log | Select-String fix > out.txt', 'Select-String KEY -Path kernel/src/a.ts > out.txt', 'Get-Content kernel/src/a.ts > out.txt']) assert.equal(sh(c), 0, c);
 });
 
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {

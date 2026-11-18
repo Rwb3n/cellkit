@@ -171,15 +171,19 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
     // ecom-lab: `schtasks … | Select-String "TaskName"` was refused). Text only when every command up the pipeline is a
     // known text producer with no expression in it (`echo (gci -r)` passes files); anything else, as before: a search
     // of the current folder. An allowlist on purpose: four reviews found ways around reading which commands list files.
-    if (/^\s*(Select-String|sls|Get-Content|gc)(?=\s|$)/i.test(unquoted) && tokens.length < 2) {
+    // (a redirect's target is where the result goes, not a path it reads: a review found `gci -r | Select-String KEY >
+    // out.txt` passing on it)
+    const reads = tokensOf(withoutPattern(raw.replace(/(\d|&)?>>?\s*(&\d|"[^"]*"|'[^']*'|[^\s|;&]+)/g, ' ')));
+    if (/^\s*(Select-String|sls|Get-Content|gc)(?=\s|$)/i.test(unquoted) && reads.length < 2) {
       if (up.length && up.every(textOnly)) return null;
       const h = treeHolds(cwd, '', own);
       if (!h) return null;
       // fed by a command the list doesn't know, or one with a variable or an expression in it (#114, apify-actor-dev:
-      // `ffmpeg -i $a 2>&1 | Select-String "Video:"`): say which, and the way that works, not "give it the files"
+      // `ffmpeg -i $a 2>&1 | Select-String "Video:"`): say which, and both ways on, since the guard can't tell which it is
       const fed = up.find((u) => !textOnly(u));
+      const search = /^(Select-String|sls)$/i.test(words[0] ?? '');
       return fed
-        ? `${words[0]} with no path reads what feeds it, and "${fed.length > 80 ? `${fed.slice(0, 80)}…` : fed}" is not known to send only text: a command outside the guard's list of text producers, or one with a variable or an expression in it, may send files, and then this is a search of ${cwd}, which would read ${h.path} (${h.why}). Send its output to a file first and search that: <command> > out.txt, then ${words[0]} <pattern> -Path out.txt.`
+        ? `${words[0]} with no path reads what feeds it, and "${fed.length > 80 ? `${fed.slice(0, 80)}…` : fed}" is not known to send only text: a command outside the guard's list of text producers, or one with a variable or an expression in it, may send files, and then this is a search of ${cwd}, which would read ${h.path} (${h.why}). If it sends text (a program's output), send that to a file first and read the file: <command> > out.txt, then ${search ? `${words[0]} <pattern> -Path out.txt` : `${words[0]} out.txt`}. If it lists files, give ${words[0]} the files themselves (-Path), or work in a subfolder.`
         : `${words[0]} with no path reads what feeds it; unless that is text, it is a search of ${cwd}, which would read ${h.path} (${h.why}). Give it the files (-Path), or search a subfolder.`;
     }
     if (searchVerb.test(unquoted) && !narrowedSearch.test(unquoted)) {

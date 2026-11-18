@@ -339,9 +339,9 @@ test('guards: a hook that can\'t load refuses; one that loads allows and blocks 
   // not the kit's to judge (#113, ecom-lab: its check of a git-ignored folder could not follow the swaps below).
   const KIT = ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts'];
   const commands = (settings: string) => (JSON.parse(readFileSync(settings, 'utf8')).hooks.PreToolUse as { hooks: { command: string }[] }[])
-    .flatMap((m) => m.hooks.map((h) => h.command)).filter((c) => KIT.some((h) => c.includes(h)));
+    .flatMap((m) => m.hooks.map((h) => h.command)).filter((c) => typeof c === 'string' && KIT.some((h) => c.includes(h)));   // a prompt hook has no command
   const withOwn = JSON.parse(readFileSync(join(repo, '.claude', 'settings.json'), 'utf8'));
-  withOwn.hooks.PreToolUse.push({ matcher: 'Write', hooks: [{ type: 'command', command: 'python -I "$CLAUDE_PROJECT_DIR/tools/own.py" hook' }] });
+  withOwn.hooks.PreToolUse.push({ matcher: 'Write', hooks: [{ type: 'command', command: 'python -I "$CLAUDE_PROJECT_DIR/tools/own.py" hook' }, { type: 'prompt', prompt: 'Is this write in order?' }] });
   writeFileSync(`${project}/own-settings.json`, JSON.stringify(withOwn));
   assert.deepEqual(commands(`${project}/own-settings.json`), commands(join(repo, '.claude', 'settings.json')));
   const sets = [
