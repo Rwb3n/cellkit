@@ -174,7 +174,13 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
     if (/^\s*(Select-String|sls|Get-Content|gc)(?=\s|$)/i.test(unquoted) && tokens.length < 2) {
       if (up.length && up.every(textOnly)) return null;
       const h = treeHolds(cwd, '', own);
-      return h ? `${words[0]} with no path reads what feeds it; unless that is text, it is a search of ${cwd}, which would read ${h.path} (${h.why}). Give it the files (-Path), or search a subfolder.` : null;
+      if (!h) return null;
+      // fed by a command the list doesn't know, or one with a variable or an expression in it (#114, apify-actor-dev:
+      // `ffmpeg -i $a 2>&1 | Select-String "Video:"`): say which, and the way that works, not "give it the files"
+      const fed = up.find((u) => !textOnly(u));
+      return fed
+        ? `${words[0]} with no path reads what feeds it, and "${fed.length > 80 ? `${fed.slice(0, 80)}…` : fed}" is not known to send only text: a command outside the guard's list of text producers, or one with a variable or an expression in it, may send files, and then this is a search of ${cwd}, which would read ${h.path} (${h.why}). Send its output to a file first and search that: <command> > out.txt, then ${words[0]} <pattern> -Path out.txt.`
+        : `${words[0]} with no path reads what feeds it; unless that is text, it is a search of ${cwd}, which would read ${h.path} (${h.why}). Give it the files (-Path), or search a subfolder.`;
     }
     if (searchVerb.test(unquoted) && !narrowedSearch.test(unquoted)) {
       const operands = tokens.slice(1);                                     // files or folders; none: the current folder

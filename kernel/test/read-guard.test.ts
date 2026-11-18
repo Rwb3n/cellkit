@@ -168,6 +168,14 @@ test('read guard: prose in a script\'s strings is text; Select-String reads text
     assert.equal(sh(c), 2, c);
   assert.equal(sh(`(cd ${r}/CASTLE/docs/decisions && grep -rn x .)`), 0);    // inside it, it holds
   assert.equal(sh('Select-String -Path src/*.ts -Pattern KEY'), 0);
+  // #114 (apify-actor-dev): fed by a command the list doesn't know, or one with a variable in it, it is still refused,
+  // and the refusal names what feeds it and the way that works; "give it the files" stays for one that nothing feeds
+  const said = (command: string) => spawnSync(process.execPath, [join(src, 'hook-bash.ts')], { input: JSON.stringify({ cwd: `${r}/APP`, tool_input: { command } }), env: { ...process.env, CLAUDE_PROJECT_DIR: '', CELLKIT_CONFIG: cfg }, encoding: 'utf8' }).stderr;
+  assert.match(said('ffmpeg -hide_banner -i a.mp4 2>&1 | Select-String "Video:"'), /^Blocked: Select-String with no path reads what feeds it, and "ffmpeg -hide_banner -i a\.mp4 2>&1" is not known to send only text.*Send its output to a file first and search that: <command> > out\.txt, then Select-String <pattern> -Path out\.txt\./);
+  assert.match(said('git log $range | Select-String fix'), /and "git log \$range" is not known to send only text: a command outside the guard's list of text producers, or one with a variable/);
+  assert.match(said('git log | ffprobe -i - | Select-String x'), /and "ffprobe -i -" is not known/);          // the one in the pipeline that isn't
+  assert.match(said('Select-String KEY'), /reads what feeds it; unless that is text.*Give it the files \(-Path\), or search a subfolder\./);
+  assert.equal(sh('ffmpeg -i a.mp4 > out.txt 2>&1; Select-String "Video:" -Path out.txt'), 0);                  // the way the refusal gives
 });
 
 test('read guard: the shell follows cd, and Git Bash drive paths are drive paths (#1)', () => {
