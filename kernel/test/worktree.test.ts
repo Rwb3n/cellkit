@@ -891,6 +891,49 @@ test('cell land: git-ignored files in the worktree are listed; with land.ignored
   assert.match(checkGuards({ land: { allow: [] } }).join(), /land: unknown key "allow"/);
 });
 
+// #115 (buying-machine): a program a cell ran, in the wrong working directory, saved pages under another cell's data/.
+// Git ignored them, so the audit saw nothing; the shell guard judges commands, not what a program writes.
+test('cell land: git-ignored files in another cell\'s folder stop the land, whatever land.ignored allows (#115)', (t) => {
+  const { main, wt, cellWt } = world(t);
+  const land = (...args: string[]) => run('cli.ts', ['cell', 'land', '--cell', main, '--name', 'demo', ...args]);
+  const onMain = (message: string) => { git(main, 'add', '-A'); git(main, 'commit', '-qm', message); git(wt, 'merge', '-q', 'main'); };
+  const put = (text: string, ...path: string[]) => { mkdirSync(dirname(join(...path)), { recursive: true }); writeFileSync(join(...path), text); };
+  writeFileSync(join(main, '.gitignore'), 'node_modules/\n**/state/views/\ndata/\nshared/\n');
+  onMain('ignores');
+  put('done\n', cellWt, 'exit', 'report.md');
+  put('<html>', cellWt, 'data', 'own.html');                                 // its own: listed
+  put('<html>', wt, 'cells', 'other', 'data', 'page.html');                  // another cell's: the land stops
+  put('{}', wt, 'cells', 'other', 'state', 'views', 'x.json');               // a view fold wrote there: never listed
+  const start = git(wt, 'rev-parse', 'HEAD').trim();
+  const refused = land('--message', 'the report');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /holds git-ignored files in another cell's folder: cells\/other\/data\/ \(1 file\(s\), 1 KB\)[\s\S]*Delete them from the worktree \(.*belongs in cells\/demo\//);
+  assert.doesNotMatch(refused.stderr, /cells\/demo\/data|state\/views|back where it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), start);
+  assert.match(git(wt, 'status', '--porcelain'), /report\.md/);              // refused whole: not even committed on its branch
+  // an allowlist that takes every data/ doesn't take another cell's; what it doesn't allow is said beside it
+  const guards = join(main, 'state', 'bedrock', 'guards.json');
+  put(JSON.stringify({ land: { ignored: ['**/data/**'] } }), guards);
+  onMain('guards');
+  put('k', cellWt, 'shared', 'k.bin');
+  const both = land('--message', 'the report');
+  assert.match(both.stderr, /in another cell's folder: cells\/other\/data\/ \(1 file[\s\S]*land\.ignored\) doesn't allow: cells\/demo\/shared\/ \(1 file/);
+  rmSync(join(cellWt, 'shared'), { recursive: true });
+  assert.doesNotMatch(land('--message', 'the report').stderr, /doesn't allow/);   // only the other cell's now
+  // a check that writes there: the land is undone
+  rmSync(join(wt, 'cells', 'other', 'data'), { recursive: true });
+  const writes = `node -e "const f=require('fs');f.mkdirSync('cells/other/data',{recursive:true});f.writeFileSync('cells/other/data/late.html','x')"`;
+  const merged = git(wt, 'rev-parse', 'HEAD').trim();                         // main's guards came in since
+  const undone = land('--message', 'the report', '--check', writes);
+  assert.equal(undone.status, 1);
+  assert.match(undone.stderr, /after the check: [\s\S]*in another cell's folder: cells\/other\/data\/ \(1 file[\s\S]*back where it was/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD').trim(), merged);
+  rmSync(join(wt, 'cells', 'other', 'data'), { recursive: true });
+  const ok = land('--message', 'the report');
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /allowed by land\.ignored\): cells\/demo\/data\/ \(1 file/);
+});
+
 test('cell land: the last thing it prints is the "Decisions to confirm" of each reply it lands, or that a reply has none (#74)', async (t) => {
   const { main, wt, cellWt } = world(t);
   const { decisionsIn } = await import('../src/land.ts');

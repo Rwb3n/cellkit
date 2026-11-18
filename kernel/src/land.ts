@@ -8,7 +8,8 @@
 // Refused whole, before anything changes, when: the cell has no worktree · its session is working on a message ·
 // root's checkout is not on <into> (default: the branch it is on) · root has uncommitted work of its own (anything but
 // state/log/, state/views/, docs/assumptions.md: mail and sync write those) · `cell audit` finds a change outside
-// cells/<name>/ · the worktree holds git-ignored files outside the project's `land.ignored` allowlist, if it set one ·
+// cells/<name>/ · the worktree holds git-ignored files in another cell's folder (#115), or outside the project's
+// `land.ignored` allowlist, if it set one ·
 // a reply being landed lists "Overturned" items and root gave no --checked (or gave one with nothing overturned).
 // Then, stopping at the first failure and undoing what it did on the cell's branch:
 //   1. commit the cell's uncommitted work on its branch (pathspec cells/<name> and the paths it owns)
@@ -127,11 +128,18 @@ function leftovers(main: string, wt: string, name: string): { note: string | nul
   const cfg = loadConfig(configPath(main));                               // an invalid one never gets here: the audit refuses it
   const all = ignoredEntries(wt);
   if (!all.length) return { note: null, refuse: null };
-  if (!cfg.landIgnored) return { note: `git-ignored in the worktree, not landed: ${show(all)}`, refuse: null };
+  const only = (keep: (path: string) => boolean) => all.map((e) => ({ entry: e.entry, files: e.files.filter((f) => keep(f.path)) })).filter((e) => e.files.length);
+  // In another cell's folder (#115; buying-machine: a program a cell ran, in the wrong working directory, saved five
+  // pages under cells/<other>/data/; git ignored them, so the audit saw nothing, and the shell guard judges commands, not
+  // what a program writes once it runs). Refused whatever land.ignored allows: a cell's work lies in its own folder and
+  // the paths it owns (never in cells/: config.ts), and that doesn't hang on a setting.
+  const others = only((p) => { const m = /^cells\/([^/]+)\//.exec(p); return !!m && m[1].toLowerCase() !== name.toLowerCase(); });
+  const strays = others.length ? `cell ${name}'s worktree holds git-ignored files in another cell's folder: ${show(others)}\nA program the cell ran wrote them there (the guards judge commands, not what a program writes). Delete them from the worktree (${wt}); what cell ${name} needs of them belongs in cells/${name}/` : null;
+  if (!cfg.landIgnored) return { note: `git-ignored in the worktree, not landed: ${show(all)}`, refuse: strays };
   const allow = cfg.landIgnored.map(globRe);
-  const over = all.map((e) => ({ entry: e.entry, files: e.files.filter((f) => !allow.some((re) => re.test(f.path.toLowerCase()))) })).filter((e) => e.files.length);
-  return { note: `git-ignored in the worktree, not landed (allowed by land.ignored): ${show(all)}`,
-    refuse: over.length ? `cell ${name}'s worktree holds git-ignored files that bedrock guards.json (land.ignored) doesn't allow: ${show(over)}\nDelete them (what a run left behind doesn't outlive it), or propose them for land.ignored (the operator approves)` : null };
+  const over = only((p) => !allow.some((re) => re.test(p.toLowerCase())));
+  const unallowed = over.length ? `cell ${name}'s worktree holds git-ignored files that bedrock guards.json (land.ignored) doesn't allow: ${show(over)}\nDelete them (what a run left behind doesn't outlive it), or propose them for land.ignored (the operator approves)` : null;
+  return { note: `git-ignored in the worktree, not landed (allowed by land.ignored): ${show(all)}`, refuse: strays && unallowed ? `${strays}\n${unallowed}` : strays ?? unallowed };
 }
 // The git-ignored paths the main checkout holds files in and the worktree doesn't (an empty folder of the same name is
 // not the data): what the check ran without. Names only: the main checkout can hold whole clones.
