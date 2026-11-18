@@ -335,15 +335,23 @@ test('guards: a hook that can\'t load refuses; one that loads allows and blocks 
     ? join(spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim(), '..', '..', '..', 'usr', 'bin', 'bash.exe') : 'bash';
   const project = mkdtempSync(join(tmpdir(), 'cellkit-load-')).replaceAll('\\', '/');
   cellNew(project, { name: 'c1' });
-  const commands = (settings: string) => (JSON.parse(readFileSync(settings, 'utf8')).hooks.PreToolUse as { hooks: { command: string }[] }[]).flatMap((m) => m.hooks.map((h) => h.command));
+  // The kit's own commands: those that run one of its three hooks. A project's own PreToolUse hook in root's settings is
+  // not the kit's to judge (#113, ecom-lab: its check of a git-ignored folder could not follow the swaps below).
+  const KIT = ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts'];
+  const commands = (settings: string) => (JSON.parse(readFileSync(settings, 'utf8')).hooks.PreToolUse as { hooks: { command: string }[] }[])
+    .flatMap((m) => m.hooks.map((h) => h.command)).filter((c) => KIT.some((h) => c.includes(h)));
+  const withOwn = JSON.parse(readFileSync(join(repo, '.claude', 'settings.json'), 'utf8'));
+  withOwn.hooks.PreToolUse.push({ matcher: 'Write', hooks: [{ type: 'command', command: 'python -I "$CLAUDE_PROJECT_DIR/tools/own.py" hook' }] });
+  writeFileSync(`${project}/own-settings.json`, JSON.stringify(withOwn));
+  assert.deepEqual(commands(`${project}/own-settings.json`), commands(join(repo, '.claude', 'settings.json')));
   const sets = [
     { dir: project, cmds: commands(join(repo, '.claude', 'settings.json')) },
     { dir: `${project}/cells/c1`, cmds: commands(`${project}/cells/c1/.claude/settings.json`) },
   ];
-  for (const hook of ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts']) assert.equal(sets.every((s) => s.cmds.some((c) => c.includes(hook))), true, hook);
+  for (const hook of KIT) assert.equal(sets.every((s) => s.cmds.some((c) => c.includes(hook))), true, hook);
   mkdirSync(`${project}/kernel/src`, { recursive: true });
   const status = (dir: string, cmd: string, body: string) => {
-    for (const h of ['hook-guard.ts', 'hook-bash.ts', 'hook-read.ts']) writeFileSync(`${project}/kernel/src/${h}`, body);
+    for (const h of KIT) writeFileSync(`${project}/kernel/src/${h}`, body);
     return spawnSync(bash, ['-c', cmd], { input: '{}', env: { ...process.env, CLAUDE_PROJECT_DIR: dir }, encoding: 'utf8' }).status;
   };
   // an existing cell gets it from `cell refresh` (the upgrade note's step)
