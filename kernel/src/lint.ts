@@ -7,6 +7,7 @@ import { check } from './schemas.ts';
 import { lintBedrock } from './bedrock.ts';
 import { lintBinding, lintCells } from './cell.ts';
 import { configPath, loadConfig } from './config.ts';
+import { declaredNames } from './start.ts';
 import { globRe } from './glob.ts';
 import { spawnSync } from 'node:child_process';
 import { inMain, insideMain, samePath, worktrees } from './worktree.ts';
@@ -33,6 +34,9 @@ export function lintOwnership(root: string): { errors: string[]; warnings: strin
   if (config.error) return { errors: [config.error], warnings };
   const owners = Object.entries(config.owns).filter(([, g]) => g.length);
   for (const [n] of owners) if (!existsSync(join(root, 'cells', n, 'binding.json'))) warnings.push(`guards.json: cells.${n} owns paths, but there is no cell ${n}`);
+  // the expected keys' names (#121): a file that isn't there or holds no names leaves the start report blind
+  const keys = config.keys ? declaredNames(root, config.keys) : null;
+  if (keys?.error) warnings.push(`guards.json keys: ${keys.error}, so session start can't say which keys are missing`);
   if (owners.length < 2) return { errors, warnings };
   const r = spawnSync('git', ['-C', root, '-c', 'core.quotepath=off', 'ls-files'], { encoding: 'utf8' });
   if (r.status !== 0) return { errors, warnings };

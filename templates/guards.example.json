@@ -14,5 +14,6 @@
   ],
   "worktrees": { "home": "../.cells/myproject" },
   "land": { "ignored": ["**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**", "cells/*/state/out/**"] },
-  "source": { "files": ["**/*.ts", "**/*.py", "**/*.json"], "root": false }
+  "source": { "files": ["**/*.ts", "**/*.py", "**/*.json"], "root": false },
+  "keys": { "names": ["ANTHROPIC_API_KEY", "SEARCH_API_KEY"] }
 }

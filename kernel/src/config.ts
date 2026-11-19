@@ -10,7 +10,12 @@
 //     "worktrees":     { "home": "../.cells/myproject" },                                      where cell checkout puts cells
 //     "land":          { "ignored": ["**/__pycache__/**", "cells/*/state/out/**"] }            git-ignored files a land accepts
 //     "source":        { "files": ["**/*.ts", "src/**"], "root": true }                        what no shell hand-types (#82)
+//     "keys":          { "names": ["API_KEY"] }  or  { "file": "keys.json", "at": "vars" }      the variables it expects (#121)
 //   }
+// keys (#121): the names (never values) of the variables the project expects, inline, or as the keys of an object in a
+// JSON file the project already keeps for its key store (`at`, a dotted path to it): one list, not two. Root's session start
+// (start.ts) names the ones in neither the main checkout's env file nor the environment; lint warns on a file that
+// isn't there or holds no names (a warning, not an invalid config: the file isn't bedrock).
 // source (#82): the files whose text is written with the Write and Edit tools, never typed through the shell (a heredoc,
 // echo or printf redirected, sed -i, a literal Set-Content), which eats backslashes and quotes on the way. In a cell's
 // session always; in root's too with "root": true. files: globs from the repository root; not set, a default list of
@@ -47,7 +52,9 @@ export const GUARDS = 'guards';
 export interface OperatorOnly { re: RegExp; message: string }
 export interface Guarded { re: RegExp; path: string; by?: string }
 export type MailLog = 'body' | 'hash';
-export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; source?: string[]; sourceRoot?: boolean; error?: string }
+export interface Keys { names?: string[]; file?: string; at?: string }
+export interface Config { operatorOnly: OperatorOnly[]; protected: Guarded[]; writers: RegExp[]; owns: Record<string, string[]>; mailLog: MailLog; unreadable: Unreadable[]; home?: string; landIgnored?: string[]; source?: string[]; sourceRoot?: boolean; keys?: Keys; error?: string }
+export const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // What counts as a source file when source.files is not set: code and structured text, by extension. Not prose or data
 // (.md, .txt, .csv, .log), which a shell writes as well as any tool.
 export const SOURCE_DEFAULT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|c|h|cpp|hpp|lua|gd|sh|bash|bat|cmd|ps1|psm1|sql|json|xml|ya?ml|toml|html?|css|scss|vue|svelte)$|(^|\/)(Dockerfile|Makefile)$/i;
@@ -62,6 +69,7 @@ interface Raw {
   worktrees?: { home?: string };
   land?: { ignored?: string[] };
   source?: { files?: string[]; root?: boolean };
+  keys?: Keys;
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -85,7 +93,27 @@ export function checkGuards(value: unknown): string[] {
   const out: string[] = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['guards.json must be an object'];
   const raw = value as Raw;
-  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees', 'land', 'source'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees, land, source)`);
+  for (const k of Object.keys(raw)) if (!['operator_only', 'protected', 'cells', 'mail', 'unreadable', 'worktrees', 'land', 'source', 'keys'].includes(k)) out.push(`unknown key "${k}" (operator_only, protected, cells, mail, unreadable, worktrees, land, source, keys)`);
+  if (raw.keys !== undefined) {
+    const k = raw.keys as Record<string, unknown>;
+    if (!k || typeof k !== 'object' || Array.isArray(k)) out.push('keys must be an object ({ "names": ["API_KEY", …] } or { "file": "keys.json", "at": "vars" })');
+    else {
+      for (const x of Object.keys(k)) if (!['names', 'file', 'at'].includes(x)) out.push(`keys: unknown key "${x}" (names, file, at)`);
+      if ((k.names === undefined) === (k.file === undefined)) out.push('keys needs exactly one of "names" or "file"');
+      if (k.names !== undefined) {
+        if (!Array.isArray(k.names) || !k.names.length) out.push('keys.names must be a list of at least one name');
+        else for (const [i, n] of k.names.entries()) if (typeof n !== 'string' || !VAR_NAME.test(n)) out.push(`keys.names[${i}] ${JSON.stringify(n)}: not a variable name`);
+      }
+      if (k.file !== undefined) {
+        if (typeof k.file !== 'string' || !k.file.trim()) out.push('keys.file must be a path (e.g. "keys.json")');
+        else if (/^[a-zA-Z]:|^[\\/]|^~|(^|[\\/])\.\.([\\/]|$)/.test(k.file)) out.push(`keys.file "${k.file}": a path inside the repository, from its root`);
+      }
+      if (k.at !== undefined) {
+        if (k.file === undefined) out.push('keys.at goes with "file" (the object in it whose keys are the names)');
+        else if (typeof k.at !== 'string' || !/^[^.\s]+(\.[^.\s]+)*$/.test(k.at)) out.push('keys.at must be a dotted path to an object in the file (e.g. "vars")');
+      }
+    }
+  }
   if (raw.land !== undefined) {
     if (!raw.land || typeof raw.land !== 'object' || Array.isArray(raw.land)) out.push('land must be an object ({ "ignored": ["<glob>", …] })');
     else {
@@ -189,6 +217,7 @@ export function loadConfig(path = configPath()): Config {
     landIgnored: raw.land?.ignored,
     source: raw.source?.files,
     sourceRoot: raw.source?.root === true,
+    keys: raw.keys,
   };
 }
 

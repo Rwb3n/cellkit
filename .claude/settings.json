@@ -25,6 +25,11 @@
         "hooks": [
           { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" cell sync && node \"$CLAUDE_PROJECT_DIR/kernel/src/cli.ts\" lint" }
         ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/kernel/src/start.ts\"" }
+        ]
       }
     ]
   }
