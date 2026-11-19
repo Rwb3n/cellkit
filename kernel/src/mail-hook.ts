@@ -9,7 +9,7 @@
 // Input (stdin): { cwd, transcript_path, last_assistant_message?, stop_hook_active, … }.
 import { readFileSync, existsSync } from 'node:fs';
 import { fileReply, hold, takeNext } from './mail.ts';
-import { misplaced } from './worktree.ts';
+import { inMain, isLinkedWorktree, misplaced } from './worktree.ts';
 
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
@@ -45,8 +45,14 @@ const until = Date.now() + waitS * 1000;
 let m = takeNext(cell);
 while (!m && Date.now() < until) { await new Promise((r) => setTimeout(r, 3000)); m = takeNext(cell); }
 
+// #120: a worktree holds tracked files only. A task about saved outputs (state/out/) finds none here; say where they are,
+// so the cell doesn't go looking, and that the copy there is read-only. Machine-specific, so here and not in the brief.
+const elsewhere = isLinkedWorktree(cell)
+  ? `This worktree holds tracked files only: git-ignored files (a cell's state/out/, data folders) exist only in the main checkout. If the task needs one, read it there, read-only: this folder's copy is ${inMain(cell)}. Never write there, and keep your tests off it.\n`
+  : '';
 if (m) {
   const reason = `📬 Task ${m.id} from ${m.from} (${m.at}). Do what it asks inside this cell, then end your turn with your answer — your final message is sent back as the reply automatically; don't write any reply file yourself.\n` +
+    elsewhere +
     `Blocked or need root to decide something before you can go on? Send it and end your turn (root's answer arrives as your next task):\n` +
     `  node "${process.env.CLAUDE_PROJECT_DIR ?? '.'}/../../kernel/src/mail.ts" send --to root --kind blocked|question --body "…"\n\n${m.body}`;
   console.log(JSON.stringify({ decision: 'block', reason }));

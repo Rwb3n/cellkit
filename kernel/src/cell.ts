@@ -55,6 +55,7 @@ ${owns.length ? `- **You also own, outside this folder:** ${owns.map((g) => `\`$
 ## Your worktree
 
 - You work in your own git worktree, on branch \`cell/${b.name}\`: nothing you change touches the main checkout or another cell until root merges it. Your log here travels on your branch; root-log writes (mail to root) land in the main checkout's log automatically.
+- **The worktree holds tracked files only.** Git-ignored files (saved outputs in \`state/out/\`, data folders) exist only in the main checkout. Each task's hand-over gives the path of this folder's copy there: read from it, read-only, when a task needs those files. Never write there, and never let a test depend on it.
 - **Don't run git commands that write** (commit, merge, checkout, reset, stash). Those that move another branch or change git's settings, objects, worktrees or remotes (push, update-ref, \`branch <name>\`, \`config\` writes, replace, update-index, gc) are refused by the hook. Root verifies your work, commits it on your branch, merges it, and merges main into your branch between tasks (that is how kernel changes reach you: your hooks run the kernel copy on your branch). Root's \`cell audit\` fails on any change outside this folder.
 - **Opened in the wrong checkout** (the main checkout's copy of this folder, or another cell's worktree)? The hooks refuse every write and no mail is handed over; the message says where to reopen. End your turn.
 

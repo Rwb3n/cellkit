@@ -77,6 +77,7 @@ test('worktree: cell checkout makes a worktree on branch cell/<name> beside the 
   git(main, 'worktree', 'prune');
   assert.ok(samePath(cellCheckout(main, { name: 'other' }), gone));
   assert.ok(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8').includes('branch `cell/demo`'));   // the brief says so
+  assert.ok(readFileSync(join(cellWt, 'AGENTS.md'), 'utf8').includes('The worktree holds tracked files only'));   // #120
   // node_modules is git-ignored, so the worktree has none: its kernel copy (the cell's hooks) loads the main checkout's
   assert.equal(existsSync(join(wt, 'kernel', 'node_modules')), false);
   const lint = spawnSync(process.execPath, [join(wt, 'kernel', 'src', 'cli.ts'), 'lint', '--cell', cellWt], { encoding: 'utf8' });
@@ -235,8 +236,14 @@ test('worktree: a session opened in the main checkout is refused — no writes, 
   assert.ok(s.stderr.includes(cellWt), s.stderr);
   assert.deepEqual(receive(main).map((m) => m.reply_to), [t1.id]);
   assert.deepEqual([status(cellWt).unread, current(cellWt)], [1, null]);
-  assert.ok(JSON.parse(stop(cellWt).stdout).reason.includes('second'));      // the right session takes it
+  const handed = JSON.parse(stop(cellWt).stdout).reason as string;
+  assert.ok(handed.includes('second'));                                      // the right session takes it
   assert.equal(current(cellWt), t2.id);
+  // #120: the hand-over says git-ignored files aren't in the worktree, and where the main checkout's copy is (read-only)
+  assert.ok(handed.includes(`this folder's copy is ${cellMain}`), handed);
+  // the advice is what the read guard allows (the write side can't be shown here: this world lives in the temp folder,
+  // which is open to a cell; outside it hook-guard refuses anything outside the cell's folder)
+  assert.equal(hook('hook-read.ts', cellWt, { file_path: join(cellMain, 'state', 'out', 'run.json') }).status, 0);
 });
 
 test('worktree: a session opened in another cell\'s worktree is refused', (t) => {
