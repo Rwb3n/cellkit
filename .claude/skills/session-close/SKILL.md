@@ -20,7 +20,7 @@ The next root session (fresh, compacted, or another model) must be able to resum
    Bedrock changes you proposed are staged and amended; tell the operator which wait for their approval.
 4. **Working tree:** `git status`. Commit your finished work. Root's log entries go with it (`cell land` commits its own). Explain anything you leave uncommitted on purpose.
 5. **State:** run `node kernel/src/cli.ts cell sync`, then `node kernel/src/cli.ts lint --all`. Both must be clean.
-6. **Push** to the backup remote.
+6. **Push** to the backup remote. Then check that every commit of this repo you named this session (issues, comments, mail, the handover) is on the remote: `git branch -r --contains <hash>`. A commit rewritten before its push leaves the old hash in whatever you posted about it; correct it there.
 7. **Handover:** if a routine or lesson changed this session, update `docs/ROOT.md`. Lint warns when it is 20 commits stale. Live state never goes in it.
 8. **Lessons for the kit:** anything this session learnt about the kit itself goes upstream as an issue, one per lesson, as [`templates/ROOT.md`](../../../templates/ROOT.md) → "Lessons for the kit" says (the kit's copy, which a kit merge keeps current; your `docs/ROOT.md` may predate it). Show the operator the drafts first; post only on their go.
 9. **Tell the operator** in a few lines:
