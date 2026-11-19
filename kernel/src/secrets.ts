@@ -6,6 +6,7 @@
 //     by folder name anywhere on the disk, never by drive, so a clone or a worktree is covered too; a trailing / is a
 //     folder, * matches within one name. Case-insensitive.
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { posix } from 'node:path';
 import { CD, expandEnv, firstCommand, isMark, OPEN, parts, PATTERNED, piped, simpleCommands, verbOf } from './shell.ts';
 
@@ -145,29 +146,166 @@ const textOnly = (u: string) => {
   return TEXT_PRODUCERS.test(w[0] ?? '') && !/[$@({`]/.test(u.replace(quoted, '""')) && simpleCommands(u).filter((c) => !isMark(c)).length === 1;
 };
 
+// A path as the shell would see it (#106, #108): a leading ~ is the home folder, and $X, ${X}, %X%, $env:X are what the
+// hook's own environment holds (an unset one stays as written). Judged as well as the text, never instead of it, so it
+// can only add a refusal; and a refusal names the real path, not <project>/~/….
+const home = (t: string) => expandEnv(t.replace(/^~(?=[\\/]|$)/, homedir().replaceAll('\\', '/')));
+
+// #106: the key an ssh login names as its identity is used, not read: scp's `-i <key>`, and the `-i <key>` of the ssh
+// that rsync's -e / --rsh runs (ssh itself reads nothing here). Only that word is let off, so the same file named again
+// (copied) is still a read. Options are read as OpenSSH's getopt reads them: until the first operand or `--`, a valued
+// option taking the rest of its word or the next word, so in `scp notes.txt -i ~/.ssh/key host:` the key is a file
+// copied, not an identity (review 1). rsync takes options anywhere; its own -i (--itemize-changes) takes no value, and
+// its --exclude, --include and --filter values are patterns, not paths. Only key material, or a path nothing denies,
+// is an identity: a file that is also an env or credentials file (`~/.ssh/prod.env`) is read.
+const SCP = /^scp(\.exe)?$/i, RSYNC = /^rsync(\.exe)?$/i;
+const SCP_VALUED = new Set('cDFiJloPSX'), SSH_VALUED = new Set('BbcDEeFIiJLlmOoPpQRSWw');
+const KEYS = new Set(['SSH keys', 'a key or certificate', 'a private SSH key', 'a hidden key file']);
+// getopt over ws: the index of each option's value, and whether it is -i's
+function getopt(ws: string[], valued: Set<string>): { at: number; i: boolean }[] {
+  const out: { at: number; i: boolean }[] = [];
+  for (let j = 0; j < ws.length; j++) {
+    const w = ws[j];
+    if (w === '--' || !/^-./.test(w)) break;
+    for (let k = 1; k < w.length; k++) {
+      if (!valued.has(w[k])) continue;
+      if (k === w.length - 1 && j + 1 < ws.length) out.push({ at: ++j, i: w[k] === 'i' });
+      break;                                                     // (an attached value is in a word starting with -: never a path)
+    }
+  }
+  return out;
+}
+// the words of an scp or rsync command that are options' values (none of them a file it copies): the identities among
+// them, rsync's patterns, and all of them
+function optionValues(words: string[]): { ids: string[]; patterns: string[]; values: string[]; at: number[] } {
+  const { verb, i } = verbOf(words);
+  const args = words.slice(i + 1), ids: string[] = [], patterns: string[] = [], values: string[] = [], at: number[] = [];
+  const ssh = (rsh: string) => {
+    const ws = rsh.trim().split(/\s+/);
+    if (!/^ssh(\.exe)?$/i.test((ws[0] ?? '').replace(/^.*[\\/]/, ''))) return;
+    for (const v of getopt(ws.slice(1), SSH_VALUED)) (v.i ? ids : values).push(ws[v.at + 1]);
+  };
+  if (SCP.test(verb)) for (const v of getopt(args, SCP_VALUED)) { (v.i ? ids : values).push(args[v.at]); at.push(v.at); }
+  else if (RSYNC.test(verb)) for (let j = 0; j < args.length && args[j] !== '--'; j++) {
+    // (the *-from and --password-file values are files rsync reads here: judged as reads, never as files copied)
+    const w = args[j], m = /^--(rsh|exclude|include|filter|exclude-from|include-from|files-from|password-file)=([\s\S]*)$/.exec(w);
+    const name = m ? m[1] : /^--(rsh|exclude|include|filter|exclude-from|include-from|files-from|password-file)$/.exec(w)?.[1] ?? (/^-[a-zA-Z]*e$/.test(w) ? 'rsh' : /^-[a-zA-Z]*f$/.test(w) ? 'filter' : null);
+    if (!name) continue;
+    const value = m ? m[2] : j + 1 < args.length ? args[++j] : '';
+    values.push(value);
+    if (!m) at.push(j);
+    if (name === 'rsh') ssh(value); else if (/^(exclude|include|filter)$/.test(name)) patterns.push(value);
+  }
+  return { ids, patterns, values: [...values, ...ids], at };
+}
+// An allowlist, not a finer reading (reviews 2 and 3: a folder copied takes its .env along, at any depth, and where the
+// copy goes was misread behind a redirect or a trailing option): the identity is let off only for a copy whose every
+// source is a file on the other machine or a literal path that is no folder here, and whose destination is on the other
+// machine or a literal path. Anything else (a folder, `.`, a glob, a $variable, a substitution) keeps the old verdict:
+// the key is named, so it is refused. Pushing a folder with a key stays the operator's, as before.
+// Each of these fails closed, never reads finer (reviews 4 and 5): the folder lost (a `cd` before the copy the guard
+// couldn't follow, here or in a command around a nested shell: it would judge `Roaming` in the wrong folder); a quoted
+// redirect, `&`, `|` or `;` in the copy's own text (a word list can't tell it from a real one); `--` (a dash word after
+// it is an operand); `~+`, `~user`; an rsync cluster in which a letter before e or f takes its own value (-Te: T's
+// value is e, the next word an operand).
+const REDIRECT = /^(\d*|&)(>>?|<|>&)$/;
+const MOVES_DIR = /(^|[\s;&|(){}])(cd|chdir|pushd|popd|Set-Location|sl|Push-Location|Pop-Location)(\s|;|\.\.|\\|$)/i;
+// `been`: every folder the command has been in (review 6: a cd that didn't run, behind `false &&`, to a folder that isn't
+// there, leaves the copy in the folder before it)
+function plainCopy(words: string[], been: string[], raw: string, lost: boolean): boolean {
+  if (lost || /"[^"]*[<>&|;][^"]*"|'[^']*[<>&|;][^']*'|\\[<>&|;]/.test(raw)) return false;
+  const { verb, i } = verbOf(words);
+  const args = words.slice(i + 1), skip = new Set(optionValues(words).at);
+  if (args.includes('--') || args.some((w) => /^~[^/\\]/.test(w))) return false;
+  if (RSYNC.test(verb) && args.some((w) => /^-[^-]/.test(w) && (/[BMT]/.test(w) || /[ef]./.test(w)))) return false;
+  const ops: string[] = [];
+  for (let k = 0; k < args.length; k++) {
+    if (REDIRECT.test(args[k])) { k++; continue; }
+    if (skip.has(k) || /^[-<>]|^\d*>/.test(args[k]) || /[|;&]/.test(args[k])) continue;
+    ops.push(args[k]);
+  }
+  if (!COPY.test(verb) || ops.length < 2) return false;
+  // A word bash can't split or expand into more words: literal, or wholly in double quotes in the copy's text with
+  // nothing in it but $NAME / ${NAME} (the replay's `"$D/"`). Review 7: an unquoted $D, {a,b}, `…` or ${IFS} in a pull's
+  // destination made a local source of it.
+  // (every time the word stands in the text it is in double quotes: the same word quoted elsewhere, as a redirect's
+  // target, vouches for nothing, review 8)
+  const quoted = (w: string) => raw.split(w).length === raw.split(`"${w}"`).length && raw.includes(`"${w}"`) && !/`|\$\(/.test(w) && !/\$(?!\{?\w+\}?)/.test(w);
+  // a local source must be known here, to tell it from a folder: in quotes only for its spaces, never a $variable
+  const known = (w: string) => !/[*?[\]{}$%`\s]/.test(home(w)) || (quoted(w) && !/[$%]/.test(home(w)));
+  const literal = (w: string) => known(w) || quoted(w);
+  // remote: a remote file's glob is the other machine's to expand, but nothing that splits here
+  const remote = (w: string) => !/^[a-zA-Z]:[\\/]/.test(w) && REMOTE.test(w) && (!/[{}$%`\s]/.test(w) || quoted(w));
+  // a folder by either reading of a backslash: a separator (PowerShell, `.\dist`) or an escape (bash, `b\ackup`)
+  const folder = (w: string) => been.some((cwd) => isDir(absPath(home(w), cwd)) || isDir(absPath(home(w.replace(/\\(.)/g, '$1')), cwd)));
+  // a pull (every source on the other machine) takes nothing from here, wherever it lands (`"$D/"`: the replay of real
+  // commands, a project's pulls with its own key), as long as the destination is one word
+  const sources = ops.slice(0, -1), dest = ops.at(-1)!;
+  return sources.every((w) => remote(w) || (known(w) && !folder(w))) && (remote(dest) || literal(dest));
+}
+const reasons = (abs: string, own: Unreadable[]) => [...ANYWHERE.filter((d) => d.re.test(abs)), ...own.filter((u) => entryRe(u.path).test(abs))].map((d) => d.why);
+const isIdentity = (w: string, cwd: string, own: Unreadable[]) =>
+  [...reasons(absPath(home(w), cwd), own), ...reasons(absPath(w, cwd), own)].every((r) => KEYS.has(r));
+// each of `drop` taken out of `from` once (the same path named twice stays once)
+const less = (from: string[], drop: string[]) => { const out = [...from]; for (const d of drop) { const k = out.indexOf(d); if (k >= 0) out.splice(k, 1); } return out; };
+const count = (a: string[], t: string) => a.filter((x) => x === t).length;
+const COPY = /^(scp|rsync)(\.exe)?$/i;
+// [user@]host:path, an operand on the other machine (not a drive: C:/x)
+// (review 7: a user part of letters only, no `{backup,me@`; and no / inside an [ipv6] host: scp reads `[./x]:y` as local)
+const REMOTE = /^(?:[\w.-]+@)?(?:[\w.-]{2,}|\[[^\]/\\]+\]):(.*)$/;
+const copyRefusal = (what: string, why: string) => `that command copies ${what} (${why}) between machines: no session does. Copying a secret from one machine to another is the operator's: ask them to run it from their own prompt with "!". Write the line for the shell that prompt runs: on Windows that can be Git Bash even when this session's commands run in PowerShell.`;
+
 // A `cd` moves the folder later segments are judged from (#1: `cd <another repo> && grep -r …` was judged against this
 // project). One it can't judge ($x, %x%, ~, `…`) goes back to the session's folder, as before.
-export function shellRefusal(command: string, session: string, own: Unreadable[] = [], depth = 0): string | null {
+// `lost` (#106): the folder may not be what cwd says (a cd it couldn't follow, here or around a nested shell): only an
+// identity's let-off reads it, and fails closed on it.
+export function shellRefusal(command: string, session: string, own: Unreadable[] = [], depth = 0, lost = false): string | null {
   const p = parts(command);
   let cwd = session;
+  const been = [session];                                                   // every folder it has been in (#106)
   const saved: string[] = [];                                               // a subshell's cd ends at its close
   const mark = (w: string[]) => { if (w[0] === OPEN) saved.push(cwd); else cwd = saved.pop() ?? cwd; };
   const judge = (raw: string, words: string[], up: string[]): string | null => {
-    if (/^popd$/i.test(words[0] ?? '')) { cwd = session; return null; }    // back where it was: judged from the session's folder
+    if (/^(popd|pop-location)$/i.test(words[0] ?? '')) { cwd = session; lost = true; return null; }   // back where it was: judged from the session's folder
+    if (/^(cd|chdir)(\.\.|\\)/i.test(words[0] ?? '')) lost = true;          // PowerShell's cd.. and cd\: not followed
+    if (/^(eval|Invoke-Expression|iex)$/i.test(verbOf(words).verb)) lost = true;   // a cd inside one word (review 6)
+    if (words.slice(1).some((w) => CD.test(w) || /^(popd|pop-location)$/i.test(w))) lost = true;   // a cd behind then, do, {: not followed
     if (CD.test(words[0] ?? '')) {
       const args = words.slice(1).filter((w) => !/^-/.test(w));
       const to = expandEnv(args.length > 1 && /^\/d$/i.test(args[0]) ? args[1] : args[0] ?? '');   // cmd's `cd /d D:\x`; Git Bash's `cd /d` is D:/
       if (to) cwd = /[$%~`]/.test(to) ? session : absPath(to, cwd);
+      been.push(cwd);
+      if (!to || /[$%~`]/.test(to)) lost = true;
       return null;
     }
     // past the words that open a compound command: `if cat .env; then`, `! grep -r KEY .`, `{ cat .env; }` (review 3)
     raw = raw.replace(/^(\s*(if|then|else|elif|do|while|until|!|\{)\s+)+/, '');
     const unquoted = raw.replace(quoted, '""');
     if (!startsRead.test(unquoted) && !readPrimitive.test(unquoted)) return null;
-    const tokens = tokensOf(withoutPattern(raw));
+    // #106: an identity and rsync's patterns are let off, each only when its tokens stand in the text as often as in
+    // the words (a quote can't make one word stand for another: `scp -i id_"rsa" id_rsa host:`)
+    const all = tokensOf(withoutPattern(raw)), wordTokens = words.flatMap(tokensOf);
+    const { ids, patterns, values } = optionValues(words);
+    // and never when the shell would make more words of it than the guard sees (review 2: `-i ~/.ssh/id_rsa{,}`, `-i
+    // ~/.ssh/id_*`, `-i\ -i <key>`): the extra words are operands, copied
+    const split = /\\ /.test(raw);
+    const off = (w: string) => (!split && !/[*?[\]{}]/.test(w) && tokensOf(w).every((t) => count(all, t) === count(wordTokens, t)) ? tokensOf(w) : []);
+    // rsync's patterns are not let off (that would be a second loosening, not decided): they are refused with their own text
+    // a segment cut at an escaped metacharacter (`a\&b` is one word to bash; the reader ends the command at the &)
+    const cut = /\\$/.test(raw.trimEnd()) && [...'&;|<>'].some((ch) => p.text.includes(raw.trimEnd() + ch));
+    const letOff = ids.length && !cut && plainCopy(words, [cwd, ...been], raw, lost) ? ids.filter((w) => isIdentity(w, cwd, own)).flatMap(off) : [];
+    const tokens = less(all, letOff);
+    const patterned = patterns.flatMap(tokensOf);
+    // what a copy names as its files: its words less the verb and every option's value
+    const copy = COPY.test(verbOf(words).verb);
+    const copied = copy ? less(wordTokens.slice(1), values.flatMap(tokensOf)) : [];
     for (const t of tokens) {
-      const d = denied(t, cwd, own);
-      if (d) return `that command reads ${d.path} (${d.why}): no session reads it. ${how}`;
+      const there = copy && !/^[a-zA-Z]:[\\/]/.test(t) ? REMOTE.exec(t) : null;
+      const d = there ? denied(there[1] || '.', '/', own) : denied(home(t), cwd, own) ?? denied(t, cwd, own);
+      if (!d) continue;
+      if (copied.includes(t)) return copyRefusal(there ? `${t}, on the other machine` : d.path, d.why);
+      if (patterned.includes(t)) return `that command names ${t} (${d.why}) in an rsync pattern (--exclude, --include, --filter), and the guard reads every such word as a path. Put the patterns in a file and pass it with --exclude-from=<file> (or --include-from), or ask the operator to run the command.`;
+      return `that command reads ${d.path} (${d.why}): no session reads it. ${how}`;
     }
     // Select-String or Get-Content with no path reads what feeds it: text, or files when what feeds it lists them (#60,
     // ecom-lab: `schtasks … | Select-String "TaskName"` was refused). Text only when every command up the pipeline is a
@@ -219,7 +357,7 @@ export function shellRefusal(command: string, session: string, own: Unreadable[]
     }
   }
   if (depth < 4) for (const s of p.shell) {
-    const r = shellRefusal(s, cwd, own, depth + 1);
+    const r = shellRefusal(s, cwd, own, depth + 1, lost || MOVES_DIR.test(command));
     if (r) return r;
   }
   return null;

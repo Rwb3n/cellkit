@@ -29,7 +29,7 @@ Root is the cell that contains the others. Its session is the operator's working
 
 ## Resume (every new root session) — the `/session-open` skill runs this
 
-1. SessionStart already ran `cell sync` and `lint`. If lint shows errors, fix those first. Run `lint --all` if any cell worked since the last session.
+1. SessionStart already ran `cell sync` and `lint`. If lint shows errors, fix those first. Run `lint --all` if any cell worked since the last session. It also printed a `kit …` line (is a newer kit out?) and, if `guards.json` declares `keys`, a `keys:` line (which expected keys are missing on this machine). Put both in the brief; an upgrade or a key is the operator's.
 2. Read `AGENTS.md`, then this file.
 3. Mail: `mail.ts status`, then `watch --as root`. If a reply is in, land it (below).
 4. Reviews: `review list --all`. Tell the operator about any open one; never decide it.
@@ -83,3 +83,4 @@ No secrets and no personal data; only as much of the project's own content as th
 ## The operator
 
 - <how they like to work: sketch first? recommendation + trade-off table? what is theirs alone?>
+- **Know which shell the operator's `!` prompt runs before giving them a line for it.** On Windows it can be Git Bash even when your own commands run in PowerShell: apify-actor-dev's operator pasted a PowerShell line and it failed (#106). The guards send the operator some acts (an `approve`, a secrets file copied between machines); write the line in that shell's syntax so it runs as pasted.
